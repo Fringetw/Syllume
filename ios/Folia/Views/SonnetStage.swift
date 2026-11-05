@@ -22,7 +22,7 @@ struct SonnetStage: View {
                           ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
-            if let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translation {
+            if let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
                 Text(translation).font(.callout).foregroundStyle(.white.opacity(0.8))
                     .multilineTextAlignment(.center).padding(.horizontal, 24).padding(.bottom, 18)
                     .allowsHitTesting(false)

@@ -1,5 +1,6 @@
 import { getConverter, transformLines } from './upstream/mods/opencc-traditional-lyrics/converter.mjs';
 import { createChineseSelector } from './upstream/mods/opencc-traditional-lyrics/selectChinese.mjs';
+import { chineseTranslation } from './upstream/mods/opencc-traditional-lyrics/lyricQuality.mjs';
 
 export const defaults = Object.freeze({ active: true, enabled: true, target: 'tw', convertOriginal: true,
     convertTranslation: true, protectJapanese: true, autoSelectChinese: true, fallbackOnFailure: true,
@@ -9,9 +10,11 @@ export const defaults = Object.freeze({ active: true, enabled: true, target: 'tw
 export function createSubtitleEngine({ request, publish, report, toast = () => {} }) {
     let settings = { ...defaults }, providers = [], input = null, selector = null, account = '';
     let reportTimer = null;
+    const searchReady = () => input && (input.song.source !== 'ytm'
+        || (input.duration > 0 && input.song.artist?.trim() && input.song.title !== 'YouTube 影片'));
     const folium = {
         host: { folia: 'Folia-iOS/0.3.1' },
-        playback: { getState: () => input && ({ song: input.song, duration: input.duration }) },
+        playback: { getState: () => input && ({ song: searchReady() ? input.song : null, duration: input.duration }) },
         lyrics: { getLines: () => input?.lines ?? [] },
         omni: {
             listProviders: () => providers,
@@ -23,6 +26,10 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
     };
     function diagnostics() {
         if (!selector || !input) return;
+        if (!searchReady()) {
+            report({ token: input.token, text: '等待 YouTube 提供歌曲名稱、歌手與時長；離線簡轉繁仍正常運作。', value: null });
+            return;
+        }
         report({ token: input.token, text: selector.reportText(), value: selector.getReport() });
     }
     function scheduleReport() {
@@ -31,8 +38,12 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
     }
     function refresh() {
         if (!input) return;
-        const lines = !settings.active || !selector ? input.lines
+        let lines = !settings.active || !selector ? input.lines
             : transformLines(selector.transform(input.song, input.lines), settings);
+        if (settings.active) lines = lines.map(line => {
+            const displayTranslation = chineseTranslation(line, getConverter()).text || line.translation;
+            return displayTranslation ? { ...line, displayTranslation } : line;
+        });
         publish({ token: input.token, lines });
         scheduleReport();
     }
@@ -58,8 +69,8 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
         },
         load(next) {
             input = next;
-            if (selector) selector.songChanged(next?.song ?? null);
-            if (next) { refresh(); selector?.loaded(next.song, next.lines); }
+            if (selector) selector.songChanged(searchReady() ? next.song : null);
+            if (next) { refresh(); if (searchReady()) selector?.loaded(next.song, next.lines); }
             else { clearTimeout(reportTimer); publish({ token: null, lines: [] }); report({ token: null, text: '目前沒有歌曲。', value: null }); }
         },
         command(name) {

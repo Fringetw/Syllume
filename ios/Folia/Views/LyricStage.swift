@@ -149,10 +149,10 @@ struct LyricRow: View {
             }
             .font(.system(.title, design: .serif, weight: .semibold))
             .fixedSize(horizontal: false, vertical: true)
-            if let romanization = line.romanization, !romanization.isEmpty {
+            if let romanization = line.romanizationText, !romanization.isEmpty {
                 Text(romanization).font(.footnote).foregroundStyle(.secondary)
             }
-            if let translation = line.translation, !translation.isEmpty {
+            if let translation = line.translationText, !translation.isEmpty {
                 Text(translation).font(.callout).foregroundStyle(active ? FoliaPalette.accent : .secondary)
             }
             if case .array(let vocals)? = line.extra["backgroundVocals"] {

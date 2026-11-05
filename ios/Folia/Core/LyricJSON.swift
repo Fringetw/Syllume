@@ -53,6 +53,18 @@ extension LyricWord {
 }
 
 extension LyricLine {
+    var translationText: String? {
+        extra["displayTranslation"]?.text ?? translation ?? alternateText(role: "translation")
+    }
+    var romanizationText: String? { romanization ?? alternateText(role: "romanization") }
+    private func alternateText(role: String) -> String? {
+        guard case .array(let texts)? = extra["alternateTexts"] else { return nil }
+        for value in texts {
+            if case .object(let text) = value, text["role"]?.text == role,
+               let value = text["text"]?.text, !value.isEmpty { return value }
+        }
+        return nil
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: LyricKey.self)
         let known = ["startTime", "endTime", "fullText", "translation", "romanization", "words"]

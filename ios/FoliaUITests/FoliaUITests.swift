@@ -9,6 +9,9 @@ final class FoliaUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["demoTrack"].waitForExistence(timeout: 15))
         app.buttons["demoTrack"].tap()
+        let transport = app.buttons["playerToggle"]
+        XCTAssertTrue(transport.waitForExistence(timeout: 10))
+        if transport.label == "暫停" { transport.tap() }
         app.segmentedControls.buttons["歌詞"].tap()
         XCTAssertTrue(app.staticTexts["頭髮發現"].waitForExistence(timeout: 15))
         capture(app, name: "Built-in-subtitles-converted")
@@ -24,6 +27,8 @@ final class FoliaUITests: XCTestCase {
         app.launchArguments = ["--subtitle-fixture"]
         app.launch()
         app.buttons["demoTrack"].tap()
+        XCTAssertTrue(transport.waitForExistence(timeout: 10))
+        if transport.label == "暫停" { transport.tap() }
         app.segmentedControls.buttons["歌詞"].tap()
         XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
         app.buttons["繁體字幕設定"].tap()

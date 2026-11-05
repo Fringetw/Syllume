@@ -54,6 +54,7 @@ struct Checks {
         let originalObject = try JSONSerialization.jsonObject(with: enriched) as! NSArray
         precondition(roundTrip == originalObject)
         precondition(LyricTimeline(lines: preserved).lines[0].extra == preserved[0].extra)
+        precondition(preserved[0].translationText == "髮絲")
         precondition((try? LyricTimeline(folia: Data(#"{"format":"folia-lyricdata","version":2,"lyrics":{"lines":[]}}"#.utf8))) == nil)
 
         let spacing = LyricTimeline(lines: [

@@ -122,3 +122,35 @@ test('the shipped browser bundle starts and converts without network access', ()
     assert.equal(sent.filter(m => m.type === 'request').length, 0);
     window.FoliaSubtitles.configure({ ...defaults, active: false }, [], 'account');
 });
+
+test('YouTube converts immediately but waits for real metadata before searching', async () => {
+    const queries = [];
+    const h = harness(async (method, params) => { queries.push(params.query); return { items: [] }; });
+    h.engine.configure(defaults, [provider]);
+    const raw = [{ fullText: '头发', startTime: 0, endTime: 4, words: [] }, ...lines];
+    h.engine.load({ token: 'pending', song: { ...song, source: 'ytm', title: 'YouTube 影片', artist: '', durationMs: 0 }, duration: 0, lines: raw });
+    await wait(20);
+    assert.equal(queries.length, 0);
+    assert.equal(h.last().lines[0].fullText, '頭髮');
+    h.engine.configure(defaults, [provider], 'new-account'); await wait(10);
+    assert.equal(queries.length, 0);
+    h.engine.load({ token: 'ready', song: { ...song, source: 'ytm' }, duration: 60, lines: raw });
+    await wait(30);
+    assert.ok(queries.length > 0);
+    assert.equal(queries.some(query => query.includes('YouTube 影片')), false);
+    h.engine.dispose();
+});
+
+test('native display uses the plugin’s Chinese alternate-text choice without replacing other languages', () => {
+    const h = harness();
+    const raw = [{ ...lines[0], translation: 'An English sentence', alternateTexts: [
+        { role: 'translation', language: 'en', text: 'An English sentence' },
+        { role: 'translation', language: 'zh-CN', text: '摺一架蓝色纸飞机' },
+    ] }];
+    h.engine.configure({ ...defaults, autoSelectChinese: false, fallbackOnFailure: false }, []);
+    h.engine.load({ token: 'alternate', song, duration: 60, lines: raw });
+    assert.equal(h.last().lines[0].displayTranslation, '摺一架藍色紙飛機');
+    assert.equal(h.last().lines[0].translation, 'An English sentence');
+    assert.equal(h.last().lines[0].alternateTexts[0].text, 'An English sentence');
+    h.engine.dispose();
+});
