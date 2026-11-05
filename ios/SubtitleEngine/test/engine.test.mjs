@@ -154,3 +154,14 @@ test('native display uses the plugin’s Chinese alternate-text choice without r
     assert.equal(h.last().lines[0].alternateTexts[0].text, 'An English sentence');
     h.engine.dispose();
 });
+
+test('reenabling the built-in module restarts search for the current song', async () => {
+    let reads = 0;
+    const h = harness(async () => { reads++; return { items: [] }; });
+    h.engine.configure({ ...defaults, active: false }, [provider]);
+    h.engine.load({ token: 'current', song, duration: 60, lines });
+    await wait(10); assert.equal(reads, 0);
+    h.engine.configure(defaults, [provider]);
+    await wait(30); assert.ok(reads > 0);
+    h.engine.dispose();
+});

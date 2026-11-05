@@ -63,6 +63,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
 
     func load(_ next: SubtitleInput?, timeline rawTimeline: LyricTimeline) {
         guard input != next else { return }
+        let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
+        let previousRaw = raw.lines
         if input?.song.id != next?.song.id || input?.song.source != next?.song.source { cancelRequests() }
         input = next; raw = rawTimeline; token = UUID().uuidString
         #if DEBUG
@@ -71,7 +73,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                 words: [LyricWord(text: "头发", startTime: 0, endTime: 15), LyricWord(text: "发现", startTime: 15, endTime: 30)])])
         }
         #endif
-        timeline = raw; revision = UUID()
+        if !sameSong || previousRaw != raw.lines { apply(raw) }
         reportText = next == nil ? "目前沒有歌曲。" : next?.loading == true ? "正在載入原字幕。" : "正在準備字幕檢查。"
         reportJSON = Data("{}".utf8)
         sendInput()
@@ -87,7 +89,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
     private func configureEngine() {
         guard ready else { return }
-        if !preferences.active { cancelRequests(); timeline = raw; revision = UUID(); reportJSON = Data("{}".utf8) }
+        if !preferences.active { cancelRequests(); apply(raw); reportJSON = Data("{}".utf8) }
         var providers: [[String: Any]] = [
             ["providerId": "local", "displayName": "本機歌詞", "configured": library != nil, "supports": ["search": true, "lyrics": true]],
             ["providerId": "lrclib", "displayName": "LRCLIB", "configured": !fixture, "supports": ["search": true, "lyrics": true]],
@@ -123,10 +125,14 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         if type == "request" { request(body); return }
         if type == "toast", let text = body["text"] as? String { notice = text; return }
         guard body["token"] as? String == token else { return }
+        if !preferences.active {
+            apply(raw); reportText = "內建模組已停用；顯示原字幕。"; reportJSON = Data("{}".utf8)
+            return
+        }
         if type == "display", let lines = body["lines"], JSONSerialization.isValidJSONObject(lines),
            let data = try? JSONSerialization.data(withJSONObject: lines), data.count <= 16_000_000,
            let decoded = try? JSONDecoder().decode([LyricLine].self, from: data), decoded.count <= 20_000 {
-            timeline = LyricTimeline(lines: decoded); revision = UUID()
+            apply(LyricTimeline(lines: decoded))
         } else if type == "report" {
             reportText = body["text"] as? String ?? "目前沒有報告。"
             if let report = body["value"], JSONSerialization.isValidJSONObject(report),
@@ -137,6 +143,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private func cancelRequests() {
         for task in tasks.values { task.cancel() }; tasks.removeAll()
         candidates.removeAll(); candidateOrder.removeAll()
+    }
+    private func apply(_ next: LyricTimeline) {
+        guard timeline.lines != next.lines else { return }
+        timeline = next; revision = UUID()
     }
     private func register(_ song: SubtitleSong, _ value: Candidate) -> [String: Any] {
         let ref = UUID().uuidString; candidates[ref] = value; candidateOrder.append(ref)
@@ -210,7 +220,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         decisionHandler(navigationAction.request.url?.isFileURL == true ? .allow : .cancel)
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        ready = false; cancelRequests(); timeline = raw; revision = UUID()
+        ready = false; cancelRequests(); apply(raw)
         engineError = "字幕引擎已停止，暫時顯示原字幕；重新開啟 App 可恢復。"
     }
 }

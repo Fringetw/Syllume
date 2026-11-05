@@ -18,7 +18,7 @@ final class FoliaUITests: XCTestCase {
         app.buttons["繁體字幕設定"].tap()
         let conversion = app.switches["subtitleConversion"]
         XCTAssertTrue(conversion.waitForExistence(timeout: 10))
-        conversion.tap()
+        setSwitch("subtitleConversion", to: false, in: app)
         capture(app, name: "Built-in-subtitle-settings")
         app.buttons["關閉"].tap()
         assertLyric("头发发现", in: app)
@@ -32,12 +32,12 @@ final class FoliaUITests: XCTestCase {
         app.segmentedControls.buttons["歌詞"].tap()
         assertLyric("头发发现", in: app)
         app.buttons["繁體字幕設定"].tap()
-        app.switches["subtitleConversion"].tap()
-        app.switches["subtitleActive"].tap()
+        setSwitch("subtitleConversion", to: true, in: app)
+        setSwitch("subtitleActive", to: false, in: app)
         app.buttons["關閉"].tap()
         assertLyric("头发发现", in: app)
         app.buttons["繁體字幕設定"].tap()
-        app.switches["subtitleActive"].tap()
+        setSwitch("subtitleActive", to: true, in: app)
         app.buttons["關閉"].tap()
         assertLyric("頭髮發現", in: app)
         app.buttons["關閉播放畫面"].tap()
@@ -57,12 +57,13 @@ final class FoliaUITests: XCTestCase {
         demo.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        // Keep the short sample alive while a cold simulator initializes the graphics context.
+        app.buttons["循環佇列"].tap()
+        if toggle.label == "播放" { toggle.tap() }
         let stage = app.descendants(matching: .any)["foliaSonnetStage"].firstMatch
         XCTAssertTrue(stage.waitForExistence(timeout: 30))
         let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: stage)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 45), .completed, "Sonnet: \(String(describing: stage.value))")
-        // The 30-second sample can finish while a cold simulator obtains UI snapshots.
-        app.buttons["循環佇列"].tap()
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 90), .completed, "Sonnet: \(String(describing: stage.value))")
         if toggle.label == "播放" { toggle.tap() }
         XCTAssertEqual(toggle.label, "暫停")
         wait(2)
@@ -116,6 +117,18 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(app.links["開啟 Google Cloud 憑證設定"].exists)
         capture(app, name: "YouTube-account-info")
         app.buttons["關閉"].tap()
+    }
+
+    private func setSwitch(_ identifier: String, to enabled: Bool, in app: XCUIApplication) {
+        let control = app.switches[identifier]
+        XCTAssertTrue(control.waitForExistence(timeout: 10))
+        let target = enabled ? "1" : "0"
+        if control.value as? String != target {
+            // SwiftUI exposes the complete Form row as a switch; its thumb is on the trailing edge.
+            control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        }
+        let changed = expectation(for: NSPredicate(format: "value == %@", target), evaluatedWith: control)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
     }
 
     private func assertLyric(_ text: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {

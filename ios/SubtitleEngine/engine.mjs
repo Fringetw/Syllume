@@ -42,7 +42,7 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
             : transformLines(selector.transform(input.song, input.lines), settings);
         if (settings.active) lines = lines.map(line => {
             const displayTranslation = chineseTranslation(line, getConverter()).text || line.translation;
-            return displayTranslation ? { ...line, displayTranslation } : line;
+            return displayTranslation && displayTranslation !== line.translation ? { ...line, displayTranslation } : line;
         });
         publish({ token: input.token, lines });
         scheduleReport();
@@ -51,6 +51,7 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
         if (!selector && settings.active) {
             selector = createChineseSelector(folium, () => settings, refresh, getConverter());
             selector.subscribeReport(scheduleReport);
+            selector.start();
         }
     }
     return {
