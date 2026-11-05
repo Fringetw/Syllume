@@ -9,13 +9,15 @@ final class FoliaUITests: XCTestCase {
         let demo = app.buttons["demoTrack"]
         XCTAssertTrue(demo.waitForExistence(timeout: 15))
         demo.tap()
-        XCTAssertTrue(app.buttons["暫停"].waitForExistence(timeout: 10))
+        let toggle = app.buttons["playerToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        XCTAssertEqual(toggle.label, "暫停")
         wait(2)
         capture(app, name: "Lyrics-playing-02")
         wait(3)
         capture(app, name: "Lyrics-playing-05")
-        app.buttons["暫停"].tap()
-        XCTAssertTrue(app.buttons["播放"].exists)
+        toggle.tap()
+        XCTAssertEqual(toggle.label, "播放")
         capture(app, name: "Lyrics-paused")
         app.buttons["關閉播放畫面"].tap()
 

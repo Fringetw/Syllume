@@ -142,6 +142,7 @@ private struct TransportControls: View {
                         .background(FoliaPalette.accent, in: Circle())
                 }
                 .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
+                .accessibilityIdentifier("playerToggle")
                 .padding(.horizontal, 10)
 
                 Button { player.next() } label: {
