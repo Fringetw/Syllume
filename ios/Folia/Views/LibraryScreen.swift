@@ -239,9 +239,9 @@ struct LibraryScreen: View {
     private func playYouTubeEntry(_ entry: LibraryEntry, _ entries: [LibraryEntry]) {
         let videos = entries.compactMap { entry -> YouTubeVideo? in
             guard let id = YouTubeVideo.identifier(from: entry.url.absoluteString) else { return nil }
-            return YouTubeVideo(id: id, title: entry.title, artist: entry.subtitle)
+            return YouTubeVideo(id: id, title: entry.title, artist: entry.subtitle, queueID: entry.id)
         }
-        guard let id = YouTubeVideo.identifier(from: entry.url.absoluteString), let selected = videos.first(where: { $0.id == id }) else {
+        guard let selected = videos.first(where: { $0.queueID == entry.id }) else {
             message = "這個項目沒有可播放的 YouTube 影片。"; return
         }
         player.pauseForExternalPlayback(); youtubePlayer.play(videos, selected: selected); showingYouTubePlayer = true

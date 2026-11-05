@@ -22,6 +22,7 @@ final class YouTubePlayback {
     private(set) var visible = false
     @ObservationIgnored private var lyricTask: Task<Void, Never>?
     @ObservationIgnored private var attemptedMatch: String?
+    @ObservationIgnored private var matchAttempts = 0
     @ObservationIgnored private var pendingPlayback: Bool?
     @ObservationIgnored private var pendingSeek: (time: Double, date: Date)?
     @ObservationIgnored private let manualLyricRoot: URL?
@@ -38,7 +39,7 @@ final class YouTubePlayback {
 
     func play(_ videos: [YouTubeVideo], selected: YouTubeVideo) {
         guard videos.allSatisfy({ YouTubeVideo.validID($0.id) }) else { return }
-        guard let index = videos.firstIndex(where: { $0.id == selected.id }) else { return }
+        guard let index = videos.firstIndex(of: selected) else { return }
         queue = videos; self.index = index; load()
     }
 
@@ -79,7 +80,7 @@ final class YouTubePlayback {
         if let title = snapshot.title, !title.isEmpty, title != queue[index].title { queue[index].title = title }
         if let author = snapshot.author, !author.isEmpty, author != queue[index].artist { queue[index].artist = author }
         if snapshot.state == 0, pendingSeek == nil { if wantsPlayback && canAdvance { next() } else { pause() }; return }
-        if attemptedMatch != "manual", duration > 0, let track = current {
+        if attemptedMatch != "manual", matchAttempts < 4, duration > 0, let track = current {
             let signature = [track.title, track.artist, String(Int(duration.rounded()))].joined(separator: "|")
             if signature != attemptedMatch {
                 attemptedMatch = signature
@@ -127,6 +128,7 @@ final class YouTubePlayback {
     private func load() {
         lyricTask?.cancel(); session = UUID(); error = nil; position = 0; duration = 0
         isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
+        matchAttempts = 0
         pendingPlayback = true; pendingSeek = nil
         timeline = LyricTimeline(lines: []); timelineRevision = UUID(); lyricsSource = nil; lyricsLoading = false
         guard let track = current, let directory = try? lyricDirectory() else { return }
@@ -149,6 +151,7 @@ final class YouTubePlayback {
         lyricTask = Task { [weak self] in
             do { try await Task.sleep(nanoseconds: 400_000_000) } catch { return }
             guard !Task.isCancelled else { return }
+            self?.matchAttempts += 1
             let record = try? await lookup(track.title, artist, duration)
             guard let self, self.session == request, !Task.isCancelled else { return }
             lyricsLoading = false

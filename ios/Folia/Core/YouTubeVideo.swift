@@ -5,6 +5,7 @@ struct YouTubeVideo: Identifiable, Equatable, Sendable {
     let id: String
     var title: String
     var artist: String
+    var queueID: String? = nil
 
     static func identifier(from text: String) -> String? {
         guard let url = URLComponents(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),

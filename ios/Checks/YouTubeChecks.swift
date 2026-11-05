@@ -17,6 +17,10 @@ enum YouTubeChecks {
         let model = YouTubePlayback(lyricDirectory: root) { _, _, _ in nil }
         let a = YouTubeVideo(id: id, title: "A", artist: "Artist")
         let b = YouTubeVideo(id: "dQw4w9WgXcQ", title: "B", artist: "Artist")
+        var duplicateA = a, duplicateB = a
+        duplicateA.queueID = "first-row"; duplicateB.queueID = "second-row"
+        model.play([duplicateA, duplicateB], selected: duplicateB)
+        precondition(model.index == 1 && !model.canAdvance)
         model.play([a, b], selected: a); model.setVisible(true)
         let session = model.session
         func sample(_ state: Int, _ time: Double, _ otherSession: UUID? = nil, _ otherID: String? = nil) -> YouTubeSnapshot {
