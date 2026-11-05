@@ -64,7 +64,7 @@ private struct SonnetWebView: UIViewRepresentable {
     }
     func updateUIView(_ view: WKWebView, context: Context) {
         context.coordinator.parent = self; context.coordinator.update()
-        view.accessibilityValue = failed ? "載入失敗" : ready ? "已就緒" : "載入中"
+        view.accessibilityValue = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
         if let index = timeline.activeIndex(at: time) {
             view.accessibilityLabel = "商籟歌詞舞台，" + lines[index].fullText
         }
@@ -78,6 +78,7 @@ private struct SonnetWebView: UIViewRepresentable {
         var parent: SonnetWebView
         weak var view: WKWebView?
         var loaded = false
+        var failureDetail = ""
         var sentSong = ""
         var lastTime = 0.0
         var lastStamp = Date.distantPast
@@ -87,14 +88,14 @@ private struct SonnetWebView: UIViewRepresentable {
             guard loaded, let view else { return }
             let key = [parent.songID, parent.revision.uuidString, String(parent.reduceMotion), parent.title, parent.artist].joined(separator: "|")
             if sentSong != key {
-                sentSong = key
+                sentSong = key; failureDetail = ""
                 DispatchQueue.main.async { self.parent.ready = false; self.parent.failed = false }
                 let song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
                     "reduceMotion": parent.reduceMotion, "lines": parent.lines.map { line -> [String: Any] in
                         ["startTime": line.startTime, "endTime": line.endTime, "fullText": line.fullText,
                          "words": line.words.map { ["text": $0.text, "startTime": $0.startTime, "endTime": $0.endTime] as [String: Any] }]
                     }]
-                view.callAsyncJavaScript("window.FoliaStage.setSong(song)", arguments: ["song": song], in: nil, contentWorld: .page, completionHandler: nil)
+                view.callAsyncJavaScript("window.FoliaStage.setSong(song)", arguments: ["song": song], in: nil, in: .page, completionHandler: nil)
                 lastStamp = .distantPast
             }
             let elapsed = Date().timeIntervalSince(lastStamp)
@@ -103,14 +104,14 @@ private struct SonnetWebView: UIViewRepresentable {
                 lastTime = parent.time; lastPlaying = parent.playing; lastStamp = Date()
                 view.callAsyncJavaScript("window.FoliaStage.setClock(snapshot)", arguments: ["snapshot":
                     ["time": parent.time, "playing": parent.playing, "reduceMotion": parent.reduceMotion]],
-                    in: nil, contentWorld: .page, completionHandler: nil)
+                    in: nil, in: .page, completionHandler: nil)
             }
         }
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             if type == "loaded" { loaded = true; update() }
             else if type == "ready" { parent.ready = true; parent.failed = false }
-            else if type == "error" { parent.failed = true }
+            else if type == "error" { failureDetail = body["detail"] as? String ?? ""; parent.failed = true }
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { parent.failed = true }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {

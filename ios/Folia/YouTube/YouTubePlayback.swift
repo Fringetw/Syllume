@@ -21,7 +21,7 @@ final class YouTubePlayback {
     private(set) var seekRevision = UUID()
     private(set) var visible = false
     @ObservationIgnored private var lyricTask: Task<Void, Never>?
-    @ObservationIgnored private var attemptedMatch = false
+    @ObservationIgnored private var attemptedMatch: String?
     @ObservationIgnored private var pendingPlayback: Bool?
     @ObservationIgnored private var pendingSeek: (time: Double, date: Date)?
     @ObservationIgnored private let manualLyricRoot: URL?
@@ -79,7 +79,14 @@ final class YouTubePlayback {
         if let title = snapshot.title, !title.isEmpty, title != queue[index].title { queue[index].title = title }
         if let author = snapshot.author, !author.isEmpty, author != queue[index].artist { queue[index].artist = author }
         if snapshot.state == 0, pendingSeek == nil { if wantsPlayback && canAdvance { next() } else { pause() }; return }
-        if !attemptedMatch, duration > 0 { attemptedMatch = true; matchLyrics() }
+        if attemptedMatch != "manual", duration > 0, let track = current {
+            let signature = [track.title, track.artist, String(Int(duration.rounded()))].joined(separator: "|")
+            if signature != attemptedMatch {
+                attemptedMatch = signature
+                if lyricsSource == "LRCLIB" { timeline = LyricTimeline(lines: []); timelineRevision = UUID(); lyricsSource = nil }
+                matchLyrics()
+            }
+        }
     }
 
     func failed(_ code: Int, session: String) {
@@ -95,7 +102,7 @@ final class YouTubePlayback {
 
     func useLyrics(_ record: LyricSearchRecord) {
         guard let text = record.syncedLyrics else { return }
-        lyricTask?.cancel(); lyricsLoading = false
+        lyricTask?.cancel(); lyricsLoading = false; attemptedMatch = "manual"
         timeline = LyricTimeline(lrc: text); timelineRevision = UUID(); lyricsSource = "LRCLIB · \(record.trackName) / \(record.artistName)"
     }
 
@@ -114,24 +121,25 @@ final class YouTubePlayback {
         try data.write(to: directory.appendingPathComponent(current.id + "." + ext), options: .atomic)
         let other = directory.appendingPathComponent(current.id + (ext == "fia" ? ".lrc" : ".fia"))
         if FileManager.default.fileExists(atPath: other.path) { try FileManager.default.removeItem(at: other) }
-        lyricTask?.cancel(); lyricsLoading = false; timeline = parsed; timelineRevision = UUID(); lyricsSource = "手動附加歌詞"
+        lyricTask?.cancel(); lyricsLoading = false; attemptedMatch = "manual"; timeline = parsed; timelineRevision = UUID(); lyricsSource = "手動附加歌詞"
     }
 
     private func load() {
         lyricTask?.cancel(); session = UUID(); error = nil; position = 0; duration = 0
-        isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = false
+        isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
         pendingPlayback = true; pendingSeek = nil
         timeline = LyricTimeline(lines: []); timelineRevision = UUID(); lyricsSource = nil; lyricsLoading = false
         guard let track = current, let directory = try? lyricDirectory() else { return }
         for ext in ["fia", "lrc"] {
             if let data = try? Data(contentsOf: directory.appendingPathComponent(track.id + "." + ext)),
                let parsed = try? parseLyrics(data, ext: ext), !parsed.lines.isEmpty {
-                timeline = parsed; timelineRevision = UUID(); lyricsSource = "手動附加歌詞"; attemptedMatch = true; return
+                timeline = parsed; timelineRevision = UUID(); lyricsSource = "手動附加歌詞"; attemptedMatch = "manual"; return
             }
         }
     }
 
     private func matchLyrics() {
+        lyricTask?.cancel()
         guard let track = current else { return }
         let request = session
         let artist = track.artist.replacingOccurrences(of: " - Topic", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -139,6 +147,8 @@ final class YouTubePlayback {
         let lookup = lookup
         lyricsLoading = true
         lyricTask = Task { [weak self] in
+            do { try await Task.sleep(nanoseconds: 400_000_000) } catch { return }
+            guard !Task.isCancelled else { return }
             let record = try? await lookup(track.title, artist, duration)
             guard let self, self.session == request, !Task.isCancelled else { return }
             lyricsLoading = false

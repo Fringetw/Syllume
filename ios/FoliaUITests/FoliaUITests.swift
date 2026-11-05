@@ -14,7 +14,7 @@ final class FoliaUITests: XCTestCase {
         let stage = app.descendants(matching: .any)["foliaSonnetStage"].firstMatch
         XCTAssertTrue(stage.waitForExistence(timeout: 30))
         let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: stage)
-        wait(for: [ready], timeout: 45)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 45), .completed, "Sonnet: \(String(describing: stage.value))")
         // The 30-second sample can finish while a cold simulator obtains UI snapshots.
         app.buttons["循環佇列"].tap()
         if toggle.label == "播放" { toggle.tap() }

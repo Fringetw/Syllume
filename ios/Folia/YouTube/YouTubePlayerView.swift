@@ -48,11 +48,11 @@ struct YouTubePlayerView: UIViewRepresentable {
             let wants = player.wantsPlayback && player.visible
             if sentPlayback != wants {
                 sentPlayback = wants
-                view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants)", arguments: ["wants": wants], in: nil, contentWorld: .page, completionHandler: nil)
+                view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants)", arguments: ["wants": wants], in: nil, in: .page, completionHandler: nil)
             }
             if sentSeek != player.seekRevision {
                 sentSeek = player.seekRevision
-                view.callAsyncJavaScript("window.FoliaYouTube.seek(time)", arguments: ["time": player.seekTime], in: nil, contentWorld: .page, completionHandler: nil)
+                view.callAsyncJavaScript("window.FoliaYouTube.seek(time)", arguments: ["time": player.seekTime], in: nil, in: .page, completionHandler: nil)
             }
         }
 
