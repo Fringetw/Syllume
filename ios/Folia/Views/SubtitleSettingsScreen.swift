@@ -48,6 +48,7 @@ private struct SubtitleSettingsContent: View {
     @State private var exporting = false
     @State private var exportError: String?
     @State private var exportedReport = Data()
+    @State private var neteaseDraft = ""
     var body: some View {
         Form {
             Section {
@@ -85,11 +86,16 @@ private struct SubtitleSettingsContent: View {
             Section("字幕來源") {
                 Label("本機附加歌詞、LRCLIB、已連接的 Navidrome", systemImage: "text.magnifyingglass")
                     .font(.subheadline)
-                TextField("網易雲 API HTTPS 位址（選填）", text: $subtitles.preferences.neteaseAPI)
+                TextField("網易雲 API HTTPS 位址（選填）", text: $neteaseDraft)
                     .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                if !subtitles.preferences.neteaseAPI.isEmpty, SubtitleNetwork.neteaseURL(subtitles.preferences.neteaseAPI) == nil {
+                if !neteaseDraft.isEmpty, SubtitleNetwork.neteaseURL(neteaseDraft) == nil {
                     Text("請使用不含帳密、查詢參數的 HTTPS API 位址。").font(.caption).foregroundStyle(.orange)
                 }
+                Button("儲存字幕來源") {
+                    subtitles.preferences.neteaseAPI = neteaseDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                }
+                .disabled(neteaseDraft == subtitles.preferences.neteaseAPI
+                    || (!neteaseDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && SubtitleNetwork.neteaseURL(neteaseDraft) == nil))
                 Text("搜尋會將歌名與歌手送到上述可用來源。網易雲欄位可沿用桌面版管理者部署的相容 API；未設定便跳過，不影響離線簡轉繁。音樂仍由原來源播放。")
                     .font(.caption).foregroundStyle(.secondary)
             }
@@ -123,6 +129,7 @@ private struct SubtitleSettingsContent: View {
             }
         }
         .navigationTitle("繁體字幕").navigationBarTitleDisplayMode(.inline)
+        .onAppear { neteaseDraft = subtitles.preferences.neteaseAPI }
         .fileExporter(isPresented: $exporting, document: SubtitleReportDocument(data: exportedReport),
                       contentType: .json, defaultFilename: "Folia-字幕診斷") { result in
             if case .failure = result { exportError = "未能儲存報告，可改用複製。" }
