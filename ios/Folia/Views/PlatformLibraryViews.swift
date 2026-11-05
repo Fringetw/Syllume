@@ -55,6 +55,7 @@ private struct PlatformEntries: View {
     @State private var loaded = false
     @State private var loading = false
     @State private var error: String?
+    @State private var requestID = UUID()
 
     private var isPlaylists: Bool { collection == .playlists }
 
@@ -111,7 +112,15 @@ private struct PlatformEntries: View {
         .scrollContentBackground(.hidden)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(isPlaylists ? .hidden : .visible, for: .navigationBar)
-        .task(id: connection.sessionID) { await load(reset: true) }
+        .task(id: connection.sessionID) {
+            requestID = UUID()
+            entries = []
+            cursor = nil
+            loaded = false
+            loading = false
+            error = nil
+            await load(reset: true)
+        }
         .refreshable { await load(reset: true) }
     }
 
@@ -135,20 +144,22 @@ private struct PlatformEntries: View {
     private func load(reset: Bool) async {
         guard !loading, connection.connected else { return }
         let revision = connection.sessionID
+        let ticket = UUID()
+        requestID = ticket
         let previousCursor = reset ? nil : cursor
         loading = true
         error = nil
-        defer { loading = false }
+        defer { if requestID == ticket { loading = false } }
         do {
             let page = try await connection.page(collection, cursor: previousCursor)
-            guard !Task.isCancelled, revision == connection.sessionID else { return }
+            guard !Task.isCancelled, revision == connection.sessionID, requestID == ticket else { return }
             var seen = Set<String>()
             entries = ((reset ? [] : entries) + page.entries).filter { seen.insert($0.id).inserted }
             cursor = page.next == previousCursor ? nil : page.next
             loaded = true
         } catch is CancellationError {
         } catch {
-            guard !Task.isCancelled, revision == connection.sessionID else { return }
+            guard !Task.isCancelled, revision == connection.sessionID, requestID == ticket else { return }
             self.error = (error as? PlatformError)?.errorDescription ?? "曲庫讀取失敗，請確認網路後重試。"
         }
     }

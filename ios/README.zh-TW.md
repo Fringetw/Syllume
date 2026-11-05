@@ -52,9 +52,9 @@ Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/docume
 
 ## 驗證
 
-從解壓後的根目錄執行 `bash ios/Checks/run.sh`，需 Swift 6。這會驗證歌詞時間軸、範例歌詞、Xcode 專案引用和背景音訊宣告。交付前已在 Linux 執行這些檢查、Swift 語法解析及上游 TypeScript 型別檢查。Apple SDK 編譯與實機測試待在 Mac、GitHub Actions 或 iPhone 上執行。
+從專案根目錄執行 `bash ios/Checks/run.sh`，需 Swift 6。這會驗證歌詞時間軸、曲庫回應與分頁、重複歌曲、OAuth 回呼驗證、範例歌詞、Xcode 專案引用和背景音訊宣告。GitHub Actions 在 macOS 上執行這些檢查、Apple SDK 編譯和模擬器介面測試，畫面截圖會存入 `Folia-iOS-UI-checks` 建置產物。
 
-經過兩輪獨立程式碼審查。第一輪修正 LRC 記憶體膨脹、佇列歌詞更新、檔案讀取阻塞、Navidrome 歌詞時間、播放重試與殘留匯入檔案。第二輪修正本機歌詞重新解析、舊匯入結果覆蓋狀態和伺服器回應大小上限。第二輪修正後已重跑本機檢查。
+0.1.0 曾經過兩輪獨立程式碼審查，修正歌詞記憶體使用、佇列更新、匯入與重試問題。0.2.0 的帳號連接仍需用實際平台 Client ID 與授權帳號驗證；自動化檢查涵蓋回應格式和介面，不代表已完成真實帳號登入。實機動畫、電量消耗和平台資料範圍仍需在 iPhone 驗證。
 
 在實機上可依序確認以下操作。
 

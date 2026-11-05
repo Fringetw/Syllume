@@ -67,6 +67,7 @@ final class PlatformConnection {
             url.queryItems?.append(contentsOf: [.init(name: "access_type", value: "offline"), .init(name: "prompt", value: "consent")])
         }
         UserDefaults.standard.set(candidate, forKey: "Folia.ClientID." + platform.rawValue)
+        clientID = candidate
         let callback = try await authorizer.authenticate(url: url.url!, scheme: redirect.scheme!)
         let code = try OAuthCallback.code(from: callback, expected: redirect, state: state)
         let token = try await exchange([
