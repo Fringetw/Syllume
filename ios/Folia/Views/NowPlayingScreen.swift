@@ -64,7 +64,7 @@ struct NowPlayingScreen: View {
             .padding(.bottom, 12)
             .frame(maxWidth: 630)
             .frame(maxWidth: .infinity)
-            .background(FoliaAtmosphere().ignoresSafeArea())
+            .background(PlaybackAtmosphere(playing: player.isPlaying).ignoresSafeArea())
             .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
         } else {
             Color.clear.onAppear { dismiss() }

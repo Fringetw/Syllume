@@ -1,4 +1,4 @@
-# Folia iOS 0.1.0
+# Folia iOS 0.2.0
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 專案沒有外部套件依賴。這版介面提供臺灣繁體中文。
 
@@ -12,6 +12,31 @@
 
 此版保留 Folia 以全螢幕歌詞為主的體驗，採用一套新的原生歌詞畫面。桌面版的動畫樣式、第三方線上音源及 Folium 插件留待後續移植。
 
+## 0.2.0 更新
+
+- 歌詞換句時使用彈性捲動、位移與縮放，依距離調整模糊和透明度；目前歌詞帶有流動掃光。普通逐句 LRC 也能看到動畫，逐字著色仍依歌詞提供的時間資料。
+- 播放背景使用持續移動的柔光。暫停、離開播放畫面或 App 進入背景後停止逐幀動畫，並遵循 iOS「減少動態效果」。
+- 首頁增加 Spotify、YouTube 來源頁。使用系統瀏覽器登入，讀取歌單、收藏及分頁，點選歌曲會在原平台開啟。平台授權憑證存於鑰匙圈，可在帳號設定中移除。
+
+### Spotify 首次設定
+
+1. 在 [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) 建立自己的應用程式，選擇 iOS / Web API，Redirect URI 登記 `folia-spotify://callback`。
+2. 開發模式的應用程式擁有者需有 Spotify Premium。將實際登入的 Spotify 帳號加入應用程式的測試使用者名單。
+3. 在 Folia 的 Spotify 頁按「設定並登入」，填入 **Client ID**，按「登入並讀取曲庫」，在 Spotify 官方驗證視窗授權。
+4. 可瀏覽帳號歌單、喜歡的歌曲，或開啟原平台。依 2026 年開發模式規則，只有自己擁有或協作歌單能讀取內容，其他歌單可能回覆 403。
+
+### YouTube Music 首次設定
+
+1. 在 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 建立專案，啟用 **YouTube Data API v3**。
+2. 設定 OAuth 同意畫面，加入自己的 Google 帳號作為測試使用者，建立 **iOS 類型的 OAuth Client ID**。Bundle ID 請使用 Folia 帳號設定頁顯示的實際值，側載工具可能變更它。
+3. 在 Folia 的 YouTube 頁填入此 Client ID，按「登入並讀取曲庫」，授權 `youtube.readonly`。
+4. 系統驗證工作階段使用 Client ID 的反向網域作為回呼 scheme，搭配 PKCE 與隨機 state 驗證。應用程式內不需要 Client Secret。
+5. 這裡讀取的是 YouTube Data API 提供的帳號歌單與喜歡的影片（含音樂）。YouTube Music 專屬的收藏、專輯、動態混音等，可能不在這個 API 範圍內。點選項目會開啟對應的 YouTube Music 網址。
+
+平台帳號讀取與本機音樂播放各自運作。Spotify / YouTube Music 的音訊由原平台播放；Folia 內的歌詞動畫目前用於本機與 Navidrome 播放。首次連接需自行建立平台 Client ID，GitHub 建置不會帶入帳號或登入憑證。
+
+Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/documentation/design)，僅用於平台內容歸屬標示。
+
 ## 在 Mac 建置並裝到 iPhone
 
 1. 使用 Xcode 16 或更新版本開啟 `ios/Folia.xcodeproj`。
@@ -23,7 +48,7 @@
 
 將 ZIP 內的 `ios/` 與 `.github/workflows/folia-ios.yml` 一起放進自己有寫入權限的 GitHub 儲存庫根目錄。用 Git 推送變更後，在該儲存庫的 **Actions → Folia native iOS** 看結果。若工作流程已在預設分支，也可用 **Run workflow** 手動執行。
 
-工作流程會檢查歌詞邏輯、編譯模擬器與 iPhone 版本，最後上傳 `Folia-iOS-unsigned.ipa`。該 IPA 必須用適用於裝置的憑證及佈建描述檔簽署後才能安裝。若用自己的 Mac 和 iPhone，直接從 Xcode 按 **Run** 即可由 Xcode 處理開發簽署。
+工作流程會檢查歌詞及曲庫邏輯、編譯模擬器與 iPhone 版本，並在 iPhone 模擬器執行播放與平台設定介面測試，最後上傳 `Folia-iOS-unsigned.ipa`。該 IPA 必須用適用於裝置的憑證及佈建描述檔簽署後才能安裝。若用自己的 Mac 和 iPhone，直接從 Xcode 按 **Run** 即可由 Xcode 處理開發簽署。
 
 ## 驗證
 

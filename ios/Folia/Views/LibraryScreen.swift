@@ -7,6 +7,9 @@ struct LibraryScreen: View {
     let player: PlaybackModel
     let navidrome: NavidromeConnection
 
+    @State private var spotify = PlatformConnection(.spotify)
+    @State private var youtube = PlatformConnection(.youtube)
+
     @State private var showingPlayer = false
     @State private var showingServer = false
     @State private var showingImporter = false
@@ -16,7 +19,7 @@ struct LibraryScreen: View {
     @State private var query = ""
     @State private var source: Source = .local
 
-    private enum Source: Hashable { case local, navidrome }
+    private enum Source: Hashable { case local, navidrome, spotify, youtube }
     private static let lyricTypes: [UTType] = [
         UTType(importedAs: "org.folia.lyrics.lrc"), UTType(importedAs: "org.folia.lyrics.fia")
     ]
@@ -26,8 +29,10 @@ struct LibraryScreen: View {
             VStack(spacing: 0) {
                 masthead
                 Picker("音樂來源", selection: $source) {
-                    Text("本機曲庫").tag(Source.local)
+                    Text("本機").tag(Source.local)
                     Text("Navidrome").tag(Source.navidrome)
+                    Text("Spotify").tag(Source.spotify)
+                    Text("YouTube").tag(Source.youtube)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 22)
@@ -40,6 +45,10 @@ struct LibraryScreen: View {
                         player.play(tracks, from: track, client: client)
                         showingPlayer = true
                     }
+                case .spotify:
+                    PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: { player.pause() })
+                case .youtube:
+                    PlatformLibraryScreen(connection: youtube, pauseLocalPlayback: { player.pause() })
                 }
             }
             .background(FoliaPalette.surface.ignoresSafeArea())
@@ -172,6 +181,7 @@ struct LibraryScreen: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("試聽潮汐之間，30 秒同步歌詞示範")
+        .accessibilityIdentifier("demoTrack")
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {

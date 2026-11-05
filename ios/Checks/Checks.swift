@@ -4,6 +4,7 @@ import Foundation
 @main
 struct Checks {
     static func main() throws {
+        try PlatformChecks.run()
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let lrc = LyricTimeline(lrc: """
             [offset:500]

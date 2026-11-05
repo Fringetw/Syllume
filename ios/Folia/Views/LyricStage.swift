@@ -19,6 +19,39 @@ struct FoliaAtmosphere: View {
     }
 }
 
+// A low-frequency canvas runs only while the visible player is playing.
+struct PlaybackAtmosphere: View {
+    let playing: Bool
+    @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !playing || reduceMotion || scenePhase != .active)) { timeline in
+            Canvas(opaque: true, rendersAsynchronously: true) { context, size in
+                context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(FoliaPalette.surface))
+                let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
+                let colors: [Color] = [.init(red: 0.12, green: 0.46, blue: 0.43),
+                                       .init(red: 0.31, green: 0.17, blue: 0.47),
+                                       .init(red: 0.10, green: 0.24, blue: 0.40)]
+                context.addFilter(.blur(radius: 65))
+                for index in colors.indices {
+                    let phase = time * 0.23 + Double(index) * 2.1
+                    let center = CGPoint(x: size.width * (0.5 + sin(phase) * 0.46),
+                                         y: size.height * (0.45 + cos(phase * 0.83) * 0.38))
+                    let radius = size.width * 0.92
+                    let rect = CGRect(x: center.x - radius, y: center.y - radius,
+                                      width: radius * 2, height: radius * 2)
+                    context.fill(Path(ellipseIn: rect), with: .radialGradient(
+                        Gradient(colors: [colors[index].opacity(0.65), .clear]), center: center,
+                        startRadius: 0, endRadius: radius))
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
 struct LyricStage: View {
     let player: PlaybackModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -41,7 +74,8 @@ struct LyricStage: View {
             }
         } else {
             let index = timeline.activeIndex(at: player.position)
-            ScrollViewReader { reader in
+            GeometryReader { geometry in
+              ScrollViewReader { reader in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
                         ForEach(timeline.lines.indices, id: \.self) { row in
@@ -50,7 +84,8 @@ struct LyricStage: View {
                             Button {
                                 player.seek(to: line.startTime)
                             } label: {
-                                LyricRow(line: line, active: active, position: active ? player.position : 0)
+                                LyricRow(line: line, active: active, position: active ? player.position : 0,
+                                         playing: player.isPlaying, distance: index.map { abs(row - $0) } ?? 0)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)
@@ -59,8 +94,10 @@ struct LyricStage: View {
                             .id(row)
                         }
                     }
-                    .padding(.vertical, 25)
+                    .padding(.top, geometry.size.height * 0.38)
+                    .padding(.bottom, geometry.size.height * 0.48)
                 }
+                .scrollIndicators(.hidden)
                 .defaultScrollAnchor(.top)
                 .mask {
                     VStack(spacing: 0) {
@@ -72,10 +109,11 @@ struct LyricStage: View {
                 }
                 .onChange(of: index, initial: true) { _, next in
                     guard let next else { return }
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.40)) {
+                    withAnimation(reduceMotion ? nil : .spring(response: 0.7, dampingFraction: 0.84)) {
                         reader.scrollTo(next, anchor: .center)
                     }
                 }
+              }
             }
         }
     }
@@ -85,13 +123,31 @@ private struct LyricRow: View {
     let line: LyricLine
     let active: Bool
     let position: Double
+    let playing: Bool
+    let distance: Int
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            Text(lyricText)
-                .font(.system(.title, design: .serif, weight: .semibold))
-                .fixedSize(horizontal: false, vertical: true)
+            TimelineView(.animation(minimumInterval: 1.0 / 30,
+                                    paused: !active || !playing || reduceMotion || scenePhase != .active)) { timeline in
+                let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3.2) / 3.2
+                Text(lyricText)
+                    .foregroundStyle(active ? FoliaPalette.accent : .white)
+                    .overlay {
+                        if active && !reduceMotion {
+                            LinearGradient(colors: [.clear, .white.opacity(0.55), .clear],
+                                           startPoint: UnitPoint(x: phase * 2 - 1, y: 0),
+                                           endPoint: UnitPoint(x: phase * 2, y: 1))
+                                .mask(Text(line.fullText).frame(maxWidth: .infinity, alignment: .leading))
+                                .allowsHitTesting(false).accessibilityHidden(true)
+                        }
+                    }
+                    .shadow(color: FoliaPalette.accent.opacity(active ? 0.26 : 0), radius: active ? 10 : 0)
+            }
+            .font(.system(.title, design: .serif, weight: .semibold))
+            .fixedSize(horizontal: false, vertical: true)
             if let romanization = line.romanization, !romanization.isEmpty {
                 Text(romanization).font(.footnote).foregroundStyle(.secondary)
             }
@@ -99,11 +155,14 @@ private struct LyricRow: View {
                 Text(translation).font(.callout).foregroundStyle(active ? FoliaPalette.accent : .secondary)
             }
         }
-        .opacity(active ? 1 : 0.61)
-        .offset(x: active && !reduceMotion ? 4 : 0)
-        .padding(.trailing, 4)
+        .scaleEffect(active || reduceMotion ? 1 : 0.92, anchor: .leading)
+        .blur(radius: reduceMotion || active ? 0 : distance > 1 ? 1.4 : 0.4)
+        .opacity(active ? 1 : distance > 1 ? 0.35 : 0.58)
+        .offset(x: active && !reduceMotion ? 10 : 0)
+        .padding(.trailing, 12)
         .contentShape(Rectangle())
-        .animation(reduceMotion ? nil : .easeOut(duration: 0.28), value: active)
+        .animation(reduceMotion ? nil : .spring(response: 0.58, dampingFraction: 0.78), value: active)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.5), value: distance)
     }
 
     private var lyricText: AttributedString {
