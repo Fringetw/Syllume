@@ -22,6 +22,15 @@ enum PlatformChecks {
             bundleID: "org.folia.community.ios.resigned", schemes: ["com.googleusercontent.apps.123-test"]).issue == .bundleMismatch)
         precondition(GoogleClientConfiguration(clientID: config.clientID, registeredBundleID: "org.folia.community.ios",
             bundleID: "org.folia.community.ios", schemes: []).issue == .missingCallback)
+        let sourceID = "org.folia.community.ios"
+        let signedID = sourceID + ".TESTTEAM01"
+        let schemes = ["com.googleusercontent.apps.123-test"]
+        precondition(GoogleClientConfiguration(clientID: config.clientID, registeredBundleID: signedID,
+            bundleID: sourceID, schemes: schemes).issue == .bundleMismatch)
+        precondition(GoogleClientConfiguration(clientID: config.clientID, registeredBundleID: signedID,
+            bundleID: signedID, schemes: schemes).isReady)
+        precondition(GoogleClientConfiguration(clientID: config.clientID, registeredBundleID: signedID,
+            bundleID: signedID + ".TESTTEAM01", schemes: schemes).issue == .bundleMismatch)
         let callback = URL(string: "folia-spotify://callback?code=auth-code&state=nonce")!
         let code = try OAuthCallback.code(from: callback, expected: redirect, state: "nonce")
         precondition(code == "auth-code")

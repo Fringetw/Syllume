@@ -1,6 +1,6 @@
 # Google／YouTube：維護者設定與發布教學
 
-適用 Folia iOS 0.2.1。目標是由維護者設定一次 Google 應用程式，安裝者只需按「連接 Google 帳號」、登入及授權，不建立 Google Cloud 專案，也不填 Client ID。
+適用 Folia iOS 0.2.2。目標是由維護者設定一次 Google 應用程式，安裝者只需按「連接 Google 帳號」、登入及授權，不建立 Google Cloud 專案，也不填 Client ID。
 
 ## 你的專案目前到哪裡
 
@@ -18,7 +18,17 @@ org.folia.community.ios
 
 若目前用 Sideloadly 安裝 0.2.0，請在手機開啟 Folia → YouTube →「設定並登入」，抄下頁面顯示的 Bundle ID。0.2.1 若顯示設定不相符，可在「連線說明 → 提供給 App 提供者的版本資訊」取得實際識別碼。
 
-如果看到的值與上面不同，先使用實際值規劃測試版本，不要把專案預設值當成手機的值。Google Cloud 登記的值、GitHub 建置的值及簽署安裝後的值，必須一致。更改 Bundle ID 也可能讓 iPhone 將它視為另一個 App，原本的本機曲庫不會自動移過去。
+如果看到的值與上面不同，先使用實際值規劃測試版本，不要把專案預設值當成手機的值。Google Cloud 登記的值、GitHub 的 `GOOGLE_IOS_BUNDLE_ID` 及簽署安裝後的值，必須一致。編譯前的識別碼則由 `FOLIA_BUILD_BUNDLE_ID` 控制；側載工具會改寫它時，這個值可以不同。更改 Bundle ID 也可能讓 iPhone 將它視為另一個 App，原本的本機曲庫不會自動移過去。
+
+若 Sideloadly 自動在識別碼後加上簽署後綴，請保持以下區分，避免每次重建又多一段：
+
+| 用途 | 設定值範例 |
+|---|---|
+| `FOLIA_BUILD_BUNDLE_ID`：編譯前 | `org.folia.community.ios`（預設值，通常不必另設） |
+| `GOOGLE_IOS_BUNDLE_ID`：Google 登記、預期安裝後 | `org.folia.community.ios.TEAMID` |
+| 手機實際安裝後 | 必須剛好等於 Google 登記值；不應繼續變成 `.TEAMID.TEAMID` |
+
+`TEAMID` 只是範例，請用你的實際登記值。不要把側載後的後綴再放回原始建置識別碼。若要使用自訂的 TestFlight／App Store 識別碼，則把建置與 Google 登記兩個值設為同一個正式識別碼。
 
 你自行側載測試可先固定自己的識別碼；若每名使用者各用自己的 Apple 帳號重簽，側載工具可能分別改寫識別碼，一組 iOS Client ID 不保證能直接通用。正式對外分發應規劃由維護者統一簽署的 TestFlight／App Store 版本，保留一致的 Bundle ID。
 
@@ -96,7 +106,8 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 | Name | Value |
 |---|---|
 | `GOOGLE_IOS_CLIENT_ID` | 第 5 步取得的完整 iOS Client ID |
-| `GOOGLE_IOS_BUNDLE_ID` | 此 Client ID 在 Google Cloud 登記的 Bundle ID |
+| `GOOGLE_IOS_BUNDLE_ID` | 此 Client ID 在 Google Cloud 登記的 Bundle ID（簽署安裝後的值） |
+| `FOLIA_BUILD_BUNDLE_ID`（選填） | 編譯前的識別碼；未設定時為 `org.folia.community.ios`。自訂原生識別碼時填正式值 |
 
 5. 每一項輸入後按「Add variable」。Client ID 是 App 識別碼，這裡使用 Variables；不要填入 Client Secret 或登入憑證。
 
@@ -104,11 +115,11 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 
 ## 7. 建置與安裝測試
 
-1. 確認這份 0.2.1 工作流程已在你要建置的分支。
+1. 確認這份 0.2.2 工作流程已在你要建置的分支。
 2. 開啟 GitHub「Actions」→「Folia native iOS」→「Run workflow」。
-3. 選取包含 0.2.1 更新的分支。更新尚在 PR 時，不要選仍是舊版本的 `main`。
+3. 選取包含 0.2.2 更新的分支。更新尚在 PR 時，不要選仍是舊版本的 `main`。
 4. 勾選 **Require the maintainer Google login configuration**，再按「Run workflow」。如果缺少兩個變數或值不合法，這次工作會直接失敗，避免把未設定的版本當成可登入版本。
-5. 建置摘要應顯示 `Google login configured: true`，並列出你登記的 Bundle ID。
+5. 建置摘要應顯示 `Google login configured: true`，並分別列出 `Build Bundle ID (before signing)` 與 `Google registered Bundle ID (after signing)`。前者是編譯前的值，後者才是 Google 登記且手機安裝後必須符合的值。
 6. 等歌詞／曲庫檢查、iPhone 與模擬器編譯、介面測試全部成功。
 7. 從 Artifacts 下載 `Folia-iOS-unsigned`，解壓後保留 `.ipa`。同包的 `google-login-build-info.json` 中，`google_configured` 應為 `true`。
 8. 沿用你的簽署方式安裝。若想覆蓋舊 App 並沿用本機曲庫，必須保留相同 App 識別碼與簽署身分；不要先刪除舊 App。
@@ -127,7 +138,7 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 4. 在「資料存取權」只保留實際需要的範圍。對每個需驗證範圍，準備「為什麼功能必須用它」的具體說明。
 5. 準備示範影片，清楚展示 App、Google 登入／授權畫面、使用該權限的歌單功能，以及與申請內容一致的應用程式名稱。
 6. 到「驗證中心」依控制台要求提交品牌與範圍驗證；依審核要求補件。申請通過與否由 Google 決定，按「發布應用程式」不等於已完成驗證。
-7. 依控制台要求完成正式發布狀態，使用正式 Client ID 與固定 Bundle ID 重新建置並簽署。用未列入舊測試名單的獨立帳號驗證正式流程。
+7. 依控制台要求完成正式發布狀態，使用正式 Client ID 與固定 Bundle ID 重新建置並簽署，正式版本的 `FOLIA_BUILD_BUNDLE_ID` 也設為這個固定值。用未列入舊測試名單的獨立帳號驗證正式流程。
 8. Apple TestFlight／App Store 的分發設定與審查另行完成。Google OAuth 驗證不會替 IPA 簽署或讓 iPhone 直接安裝。
 
 ## 出錯時先看哪裡
@@ -135,7 +146,7 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 | 現象 | 維護者要檢查的內容 |
 |---|---|
 | 「這個版本尚未啟用 Google 登入」 | 是否已設定兩個 Repository Variables、是否已重新建置、拿到的是否為該次新 IPA |
-| 「這個安裝版本的 Google 登入設定不相符」 | Google 登記、建置摘要及手機實際 Bundle ID 是否一致；側載是否改寫了 ID |
+| 「這個安裝版本的 Google 登入設定不相符」 | Google 登記值、`GOOGLE_IOS_BUNDLE_ID` 與手機實際值是否一致；再檢查 `FOLIA_BUILD_BUNDLE_ID` 是否誤放了側載後的後綴 |
 | `access_denied`／測試帳號無權使用 | 實際登入帳號是否已列入同一專案的測試使用者 |
 | `redirect_uri_mismatch` | 是否建立 iOS 類型用戶端、是否用到正確 Client ID、是否安裝剛重新建置的版本 |
 | `invalid_client` | 是否誤貼 API key、Web Client ID 或不完整的 Client ID |

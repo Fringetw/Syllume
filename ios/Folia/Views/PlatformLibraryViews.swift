@@ -227,9 +227,16 @@ private struct PlatformAccountSettings: View {
                         if let message = connection.googleConfiguration.userMessage {
                             Text(message).foregroundStyle(.orange)
                             DisclosureGroup("提供給 App 提供者的版本資訊") {
+                                Text("目前安裝的識別碼").font(.caption).foregroundStyle(.secondary)
                                 Text(Bundle.main.bundleIdentifier ?? "無法取得安裝識別碼")
                                     .font(.footnote.monospaced()).textSelection(.enabled)
                                     .accessibilityIdentifier("installedBundleID")
+                                if let registered = Bundle.main.object(forInfoDictionaryKey: "FoliaGoogleBundleID") as? String,
+                                   !registered.isEmpty {
+                                    Text("Google 登記的識別碼").font(.caption).foregroundStyle(.secondary)
+                                    Text(registered).font(.footnote.monospaced()).textSelection(.enabled)
+                                        .accessibilityIdentifier("googleRegisteredBundleID")
+                                }
                             }
                         }
                     }

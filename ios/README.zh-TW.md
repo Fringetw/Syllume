@@ -1,4 +1,4 @@
-# Folia iOS 0.2.1
+# Folia iOS 0.2.2
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 專案沒有外部套件依賴。這版介面提供臺灣繁體中文。
 
@@ -12,10 +12,16 @@
 
 此版保留 Folia 以全螢幕歌詞為主的體驗，採用一套新的原生歌詞畫面。桌面版的動畫樣式、第三方線上音源及 Folium 插件留待後續移植。
 
+## 0.2.2 更新
+
+- 修正側載 Bundle ID 後綴重複：編譯前的識別碼與 Google 登記的安裝後識別碼分開設定。`FOLIA_BUILD_BUNDLE_ID` 預設為原始的 `org.folia.community.ios`；`GOOGLE_IOS_BUNDLE_ID` 保留 Google 實際登記的值。
+- 建置摘要與安裝包資訊會分別列出兩個識別碼；版本診斷頁也會同時顯示手機實際值與 Google 登記值。App 仍要求安裝後的識別碼與 Google 登記值完全相符。
+- 原生簽署使用自訂識別碼時，維護者須把 `FOLIA_BUILD_BUNDLE_ID` 設為正式 App 的固定識別碼。
+
 ## 0.2.1 更新
 
 - Google／YouTube 改由維護者在 GitHub Repository Variables 設定一次，使用者按「連接 Google 帳號」直接登入，無需填入 Client ID。
-- 建置時自動帶入公開 Client ID、註冊回呼 scheme 與 Bundle ID。App 會檢查簽署安裝後的識別碼，並避免沿用其他 Google 用戶端的舊授權。
+- 建置時自動帶入公開 Client ID、註冊回呼 scheme 與 Google 登記識別碼。App 會檢查簽署安裝後的識別碼，並避免沿用其他 Google 用戶端的舊授權。
 - 設定尚未帶入的版本會停用 Google 登入並顯示說明；正式登入測試建置可要求設定必須存在。
 - 維護者請依照 [Google／YouTube 完整設定教學](docs/Google-YouTube-maintainer.zh-TW.md) 完成 Cloud、測試使用者、用戶端與建置設定。Spotify 仍沿用原本的個別設定流程。
 
@@ -38,7 +44,7 @@
 
 使用者在 Folia 的 YouTube 頁直接按「連接 Google 帳號」並授權即可。測試階段的登入帳號仍需由維護者加入 Google Cloud 測試使用者名單。
 
-Google iOS 用戶端登記的 Bundle ID 必須與實際安裝版本一致。側載工具若改寫它，Google 登入會顯示版本不相符；由每位安裝者各自重簽的 IPA 不保證能共用相同用戶端。正式分發需規劃維護者統一簽署與固定識別碼。
+Google iOS 用戶端登記的 Bundle ID 必須與實際安裝版本一致；側載前的建置識別碼是獨立的 `FOLIA_BUILD_BUNDLE_ID`，預設保持專案原始值。側載工具若改寫它，Google 登入會顯示版本不相符；由每位安裝者各自重簽的 IPA 不保證能共用相同用戶端。正式分發需規劃維護者統一簽署與固定識別碼。
 
 平台帳號讀取與本機音樂播放各自運作。Spotify／YouTube Music 的音訊由原平台播放；Folia 內的歌詞動畫目前用於本機與 Navidrome 播放。Google 入口讀取官方 YouTube API 提供的帳號歌單與喜歡影片，可取得範圍與 YouTube Music 完整曲庫可能不同。
 

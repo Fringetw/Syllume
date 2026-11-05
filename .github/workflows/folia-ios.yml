@@ -29,6 +29,7 @@ jobs:
         env:
           GOOGLE_IOS_CLIENT_ID: ${{ vars.GOOGLE_IOS_CLIENT_ID }}
           GOOGLE_IOS_BUNDLE_ID: ${{ vars.GOOGLE_IOS_BUNDLE_ID }}
+          FOLIA_BUILD_BUNDLE_ID: ${{ vars.FOLIA_BUILD_BUNDLE_ID }}
           REQUIRE_GOOGLE_LOGIN: ${{ inputs.require_google_login || false }}
         run: |
           if [ "$REQUIRE_GOOGLE_LOGIN" = "true" ]; then
@@ -75,7 +76,7 @@ jobs:
           cp -R "$RUNNER_TEMP/FoliaDevice/Build/Products/Release-iphoneos/Folia.app" "$RUNNER_TEMP/FoliaPackage/Payload/"
           cd "$RUNNER_TEMP/FoliaPackage"
           /usr/bin/zip -qry Folia-iOS-unsigned.ipa Payload
-          python3 -c 'import json,os; print(json.dumps({"google_configured":os.environ.get("FOLIA_GOOGLE_READY")=="true","version":"0.2.1"}))' > google-login-build-info.json
+          python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Folia.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
       - uses: actions/upload-artifact@v4
         with:
           name: Folia-iOS-unsigned
