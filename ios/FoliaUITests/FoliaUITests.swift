@@ -2,6 +2,47 @@ import XCTest
 
 @MainActor
 final class FoliaUITests: XCTestCase {
+    func testBuiltInTraditionalSubtitles() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--subtitle-fixture", "--subtitle-reset"]
+        app.launch()
+        XCTAssertTrue(app.buttons["demoTrack"].waitForExistence(timeout: 15))
+        app.buttons["demoTrack"].tap()
+        app.segmentedControls.buttons["歌詞"].tap()
+        XCTAssertTrue(app.staticTexts["頭髮發現"].waitForExistence(timeout: 15))
+        capture(app, name: "Built-in-subtitles-converted")
+        app.buttons["繁體字幕設定"].tap()
+        let conversion = app.switches["subtitleConversion"]
+        XCTAssertTrue(conversion.waitForExistence(timeout: 10))
+        conversion.tap()
+        capture(app, name: "Built-in-subtitle-settings")
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
+
+        app.terminate()
+        app.launchArguments = ["--subtitle-fixture"]
+        app.launch()
+        app.buttons["demoTrack"].tap()
+        app.segmentedControls.buttons["歌詞"].tap()
+        XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
+        app.buttons["繁體字幕設定"].tap()
+        app.switches["subtitleConversion"].tap()
+        app.switches["subtitleActive"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
+        app.buttons["繁體字幕設定"].tap()
+        app.switches["subtitleActive"].tap()
+        app.buttons["關閉"].tap()
+        XCTAssertTrue(app.staticTexts["頭髮發現"].waitForExistence(timeout: 10))
+        app.buttons["關閉播放畫面"].tap()
+        app.buttons["Folia 設定"].tap()
+        XCTAssertTrue(app.buttons["builtInTraditionalLyrics"].waitForExistence(timeout: 10))
+        app.buttons["builtInTraditionalLyrics"].tap()
+        XCTAssertTrue(app.switches["subtitleActive"].waitForExistence(timeout: 5))
+        capture(app, name: "Built-in-module-entry")
+    }
+
     func testAnimatedPlayback() {
         continueAfterFailure = false
         let app = XCUIApplication()

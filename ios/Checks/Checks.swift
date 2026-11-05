@@ -48,6 +48,12 @@ struct Checks {
         precondition(fia.lines[0].translation == "flower")
         precondition(fia.lines[0].romanization == "hana")
         precondition(fia.lines[0].words[0].startTime == 2.2)
+        let enriched = Data(#"[{"startTime":0,"endTime":4,"fullText":"頭髮","words":[{"text":"頭髮","startTime":0,"endTime":4,"syllables":[{"text":"頭","startTime":0,"endTime":2,"ruby":[{"text":"tou","startTime":0,"endTime":2}]}]}],"wordSegments":["頭","髮"],"backgroundVocals":[{"text":"風","startTime":1,"endTime":2,"words":[]}],"alternateTexts":[{"role":"translation","language":"zh-Hant","text":"髮絲"}]}]"#.utf8)
+        let preserved = try JSONDecoder().decode([LyricLine].self, from: enriched)
+        let roundTrip = try JSONSerialization.jsonObject(with: JSONEncoder().encode(preserved)) as! NSArray
+        let originalObject = try JSONSerialization.jsonObject(with: enriched) as! NSArray
+        precondition(roundTrip == originalObject)
+        precondition(LyricTimeline(lines: preserved).lines[0].extra == preserved[0].extra)
         precondition((try? LyricTimeline(folia: Data(#"{"format":"folia-lyricdata","version":2,"lyrics":{"lines":[]}}"#.utf8))) == nil)
 
         let spacing = LyricTimeline(lines: [
@@ -78,6 +84,9 @@ struct Checks {
         precondition(navidrome.lines[0].words.map(\.endTime) == [1.8, 4.3])
         precondition(navidrome.lines[0].translation == "藍色月亮")
         precondition(navidrome.lines[0].romanization == "blu mun")
+        if case .array(let vocals)? = navidrome.lines[0].extra["backgroundVocals"],
+           case .object(let vocal)? = vocals.first { precondition(vocal["text"] == .string("Backing")) }
+        else { preconditionFailure("Navidrome harmony was dropped") }
         precondition(navidrome.activeIndex(at: 5) == nil)
         let demo = try String(contentsOf: ios.appending(path: "Folia/Resources/tide.lrc"), encoding: .utf8)
         precondition(LyricTimeline(lrc: demo).lines.count == 5)

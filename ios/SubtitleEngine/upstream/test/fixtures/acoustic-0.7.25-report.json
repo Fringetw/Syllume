@@ -1,0 +1,47 @@
+{
+  "host": {
+    "folia": "0.7.25",
+    "folium": {
+      "major": 1,
+      "minor": 7
+    }
+  },
+  "song": {
+    "source": "ytm",
+    "title": "青のすみか (Acoustic ver.) - Where Our Blue Is (Acoustic version)",
+    "artist": "Tatsuya Kitani",
+    "album": "Where Our Blue Is (Acoustic version)",
+    "durationSeconds": 204
+  },
+  "candidates": [
+    {
+      "source": "netease",
+      "title": "青のすみか (Acoustic ver.)",
+      "artist": "キタニタツヤ",
+      "album": "青のすみか (Acoustic ver.)",
+      "durationSeconds": 203.592
+    },
+    {
+      "source": "kugou",
+      "title": "青のすみか (Acoustic ver.)",
+      "artist": "キタニタツヤ",
+      "album": "青のすみか (Acoustic ver.)",
+      "durationSeconds": 203
+    },
+    {
+      "source": "qq",
+      "title": "青のすみか (Acoustic ver.)",
+      "artist": "キタニタツヤ",
+      "album": "青のすみか (Acoustic ver.)",
+      "durationSeconds": 203
+    },
+    {
+      "source": "spotify",
+      "title": "青のすみか (Acoustic ver.)",
+      "artist": "Tatsuya Kitani",
+      "album": "青のすみか (Acoustic ver.)",
+      "durationSeconds": 203.542
+    }
+  ],
+  "notice": "Metadata from user diagnostic; lyric bodies in tests are synthetic."
+}

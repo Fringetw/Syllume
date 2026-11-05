@@ -4,11 +4,13 @@ import UIKit
 // Playback controls and lyric stage are separate clock consumers.
 struct NowPlayingScreen: View {
     let player: PlaybackModel
+    let subtitles: SubtitleController
 
     @Environment(\.dismiss) private var dismiss
     @State private var mode: Mode = .sonnet
     @State private var controlsVisible = true
     @State private var showingQueue = false
+    @State private var showingSubtitles = false
 
     private enum Mode: Hashable { case sonnet, cover, lyrics }
 
@@ -24,6 +26,8 @@ struct NowPlayingScreen: View {
                         .foregroundStyle(FoliaPalette.accent)
                         .accessibilityLabel("現正播放")
                     Spacer()
+                    Button { showingSubtitles = true } label: { Image(systemName: "character.book.closed").frame(width: 44, height: 44) }
+                        .accessibilityLabel("繁體字幕設定")
                     Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
                         .accessibilityLabel("進入沉浸模式")
                     Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
@@ -43,13 +47,13 @@ struct NowPlayingScreen: View {
                 Group {
                     switch mode {
                     case .sonnet:
-                        if player.timeline.lines.isEmpty { LyricStage(player: player) }
+                        if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline) }
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
-                                        timeline: player.timeline, revision: player.timelineRevision,
+                                        timeline: subtitles.timeline, revision: subtitles.revision,
                                         position: player.position, playing: player.isPlaying && !player.isBuffering)
                         }
-                    case .lyrics: LyricStage(player: player).id(track.id)
+                    case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
                     case .cover: artwork
                     }
                 }
@@ -90,6 +94,12 @@ struct NowPlayingScreen: View {
                 }
             }
             .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
+            .sheet(isPresented: $showingSubtitles) { SubtitleSettingsScreen(subtitles: subtitles) }
+            .onChange(of: SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue,
+                title: track.title, artist: track.artist ?? "", durationMs: player.duration * 1000),
+                revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in
+                subtitles.load(next, timeline: player.timeline)
+            }
         } else {
             Color.clear.onAppear { dismiss() }
         }

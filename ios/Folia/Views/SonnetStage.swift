@@ -90,11 +90,10 @@ private struct SonnetWebView: UIViewRepresentable {
             if sentSong != key {
                 sentSong = key; failureDetail = ""
                 DispatchQueue.main.async { self.parent.ready = false; self.parent.failed = false }
+                let data = try? JSONEncoder().encode(parent.lines)
+                let lines = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
                 let song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
-                    "reduceMotion": parent.reduceMotion, "lines": parent.lines.map { line -> [String: Any] in
-                        ["startTime": line.startTime, "endTime": line.endTime, "fullText": line.fullText,
-                         "words": line.words.map { ["text": $0.text, "startTime": $0.startTime, "endTime": $0.endTime] as [String: Any] }]
-                    }]
+                    "reduceMotion": parent.reduceMotion, "lines": lines]
                 view.callAsyncJavaScript("window.FoliaStage.setSong(song)", arguments: ["song": song], in: nil, in: .page, completionHandler: nil)
                 lastStamp = .distantPast
             }

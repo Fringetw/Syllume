@@ -1,19 +1,21 @@
 import Foundation
 
 // Native timeline for Folia .fia documents and timed LRC files.
-struct LyricWord: Decodable, Equatable, Sendable {
+struct LyricWord: Codable, Equatable, Sendable {
     let text: String
     let startTime: Double
     let endTime: Double
+    var extra: [String: LyricJSON] = [:]
 }
 
-struct LyricLine: Decodable, Equatable, Sendable {
+struct LyricLine: Codable, Equatable, Sendable {
     let startTime: Double
     var endTime: Double
     let fullText: String
     var translation: String? = nil
     var romanization: String? = nil
     var words: [LyricWord] = []
+    var extra: [String: LyricJSON] = [:]
 }
 
 struct LyricTimeline: Sendable {
@@ -35,6 +37,9 @@ struct LyricTimeline: Sendable {
             $0.startTime.isFinite && $0.endTime.isFinite && $0.endTime >= $0.startTime
         }.map { line in
             var line = line
+            if line.extra["backgroundVocals"] == nil, let legacy = line.extra["backgroundVocal"] {
+                line.extra["backgroundVocals"] = .array([legacy])
+            }
             line.words = Self.alignWords(line.words, to: line.fullText)
             return line
         }.sorted { $0.startTime < $1.startTime }
@@ -138,7 +143,7 @@ struct LyricTimeline: Sendable {
         return matched.enumerated().map { index, pair in
             let start = index == 0 ? fullText.startIndex : pair.1.lowerBound
             let end = index + 1 < matched.count ? matched[index + 1].1.lowerBound : fullText.endIndex
-            return LyricWord(text: String(fullText[start..<end]), startTime: pair.0.startTime, endTime: pair.0.endTime)
+            return LyricWord(text: String(fullText[start..<end]), startTime: pair.0.startTime, endTime: pair.0.endTime, extra: pair.0.extra)
         }
     }
 

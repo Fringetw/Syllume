@@ -4,9 +4,11 @@ import UniformTypeIdentifiers
 // The official video stays visible above Folia's desktop lyric stage and native controls.
 struct YouTubeNowPlayingScreen: View {
     let player: YouTubePlayback
+    let subtitles: SubtitleController
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var showingSearch = false
+    @State private var showingSubtitles = false
     @State private var showingImporter = false
     @State private var showList = false
     @State private var importError: String?
@@ -24,6 +26,7 @@ struct YouTubeNowPlayingScreen: View {
                     Text("YouTube · Folia").font(.subheadline.weight(.semibold))
                     Spacer()
                     Menu {
+                        Button("繁體字幕設定") { player.pause(); showingSubtitles = true }
                         Button(showList ? "使用商籟動畫" : "使用歌詞清單") { showList.toggle() }
                         Button("尋找歌詞") { player.pause(); showingSearch = true }
                         Button("附加 LRC／FIA 歌詞", action: importLyrics)
@@ -35,11 +38,11 @@ struct YouTubeNowPlayingScreen: View {
                     .padding(.horizontal, 12)
 
                 Group {
-                    if !player.timeline.lines.isEmpty {
-                        if showList { YouTubeLyricList(player: player) }
+                    if !subtitles.timeline.lines.isEmpty {
+                        if showList { YouTubeLyricList(player: player, timeline: subtitles.timeline) }
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist,
-                                        timeline: player.timeline, revision: player.timelineRevision,
+                                        timeline: subtitles.timeline, revision: subtitles.revision,
                                         position: player.position, playing: player.isPlaying && !player.isBuffering)
                         }
                     } else if player.lyricsLoading { ProgressView("正在匹配同步歌詞") }
@@ -90,6 +93,12 @@ struct YouTubeNowPlayingScreen: View {
             .onAppear { player.setVisible(true) }
             .onDisappear { player.setVisible(false) }
             .onChange(of: scenePhase) { _, phase in if phase != .active { player.pause() } }
+            .onChange(of: SubtitleInput(song: SubtitleSong(id: track.id, source: "ytm", title: track.title,
+                artist: track.artist, durationMs: player.duration * 1000),
+                revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in
+                subtitles.load(next, timeline: player.timeline)
+            }
+            .sheet(isPresented: $showingSubtitles) { SubtitleSettingsScreen(subtitles: subtitles) }
             .sheet(isPresented: $showingSearch) {
                 OnlineLyricSearchScreen(title: track.title, artist: track.artist.replacingOccurrences(of: " - Topic", with: "")) { record in
                     player.useLyrics(record)
@@ -112,16 +121,17 @@ struct YouTubeNowPlayingScreen: View {
 
 private struct YouTubeLyricList: View {
     let player: YouTubePlayback
+    let timeline: LyricTimeline
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
-        let index = player.timeline.activeIndex(at: player.position)
+        let index = timeline.activeIndex(at: player.position)
         ScrollViewReader { reader in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 18) {
-                    ForEach(player.timeline.lines.indices, id: \.self) { row in
-                        Button { player.seek(to: player.timeline.lines[row].startTime) } label: {
-                            Text(player.timeline.lines[row].fullText)
-                                .font(.title2.weight(.semibold)).foregroundStyle(row == index ? FoliaPalette.accent : .secondary)
+                    ForEach(timeline.lines.indices, id: \.self) { row in
+                        Button { player.seek(to: timeline.lines[row].startTime) } label: {
+                            LyricRow(line: timeline.lines[row], active: row == index, position: player.position,
+                                     playing: player.isPlaying, distance: index.map { abs(row - $0) } ?? 0)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         }.id(row)
                     }

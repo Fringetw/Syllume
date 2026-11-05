@@ -54,10 +54,11 @@ struct PlaybackAtmosphere: View {
 
 struct LyricStage: View {
     let player: PlaybackModel
+    var displayTimeline: LyricTimeline? = nil
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        let timeline = player.timeline
+        let timeline = displayTimeline ?? player.timeline
         if timeline.lines.isEmpty {
             if player.lyricsLoading {
                 ProgressView("正在載入歌詞")
@@ -119,7 +120,7 @@ struct LyricStage: View {
     }
 }
 
-private struct LyricRow: View {
+struct LyricRow: View {
     let line: LyricLine
     let active: Bool
     let position: Double
@@ -153,6 +154,16 @@ private struct LyricRow: View {
             }
             if let translation = line.translation, !translation.isEmpty {
                 Text(translation).font(.callout).foregroundStyle(active ? FoliaPalette.accent : .secondary)
+            }
+            if case .array(let vocals)? = line.extra["backgroundVocals"] {
+                ForEach(vocals.indices, id: \.self) { index in
+                    if case .object(let vocal) = vocals[index], let text = vocal["text"]?.text {
+                        Text(text).font(.callout).foregroundStyle(.secondary)
+                        if let translation = vocal["translation"]?.text {
+                            Text(translation).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
         .scaleEffect(active || reduceMotion ? 1 : 0.92, anchor: .leading)

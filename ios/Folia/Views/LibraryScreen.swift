@@ -10,6 +10,8 @@ struct LibraryScreen: View {
     @State private var spotify = PlatformConnection(.spotify)
     @State private var youtube = PlatformConnection(.youtube)
     @State private var youtubePlayer = YouTubePlayback()
+    @State private var subtitles = SubtitleController()
+    @State private var showingSettings = false
     @State private var showingYouTubePlayer = false
     @State private var youtubeLink = ""
 
@@ -87,10 +89,17 @@ struct LibraryScreen: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player) }
-        .fullScreenCover(isPresented: $showingYouTubePlayer) { YouTubeNowPlayingScreen(player: youtubePlayer) }
+        .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player, subtitles: subtitles) }
+        .fullScreenCover(isPresented: $showingYouTubePlayer) { YouTubeNowPlayingScreen(player: youtubePlayer, subtitles: subtitles) }
+        .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
-        .onChange(of: navidrome.account) { _, _ in player.clearNavidrome() }
+        .onAppear { subtitles.sources(library: library, account: navidrome.account) }
+        .onChange(of: navidrome.account) { _, _ in
+            player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
+        }
+        .onChange(of: subtitleInput, initial: true) { _, next in
+            subtitles.load(next, timeline: player.externalPlayback ? youtubePlayer.timeline : player.timeline)
+        }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: lyricTarget == nil ? [.audio] + Self.lyricTypes : Self.lyricTypes,
                       allowsMultipleSelection: lyricTarget == nil, onCompletion: handleImport)
@@ -118,12 +127,12 @@ struct LibraryScreen: View {
                     .accessibilityAddTraits(.isHeader)
             }
             Spacer()
-            Button { showingServer = true } label: {
+            Button { showingSettings = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.title3).frame(width: 44, height: 44)
                     .background(.white.opacity(0.06), in: Circle())
             }
-            .accessibilityLabel("Navidrome 設定")
+            .accessibilityLabel("Folia 設定")
             Button {
                 lyricTarget = nil
                 showingImporter = true
@@ -145,6 +154,19 @@ struct LibraryScreen: View {
         return text.isEmpty ? library.tracks : library.tracks.filter {
             $0.title.localizedStandardContains(text) || $0.subtitle.localizedStandardContains(text)
         }
+    }
+
+    private var subtitleInput: SubtitleInput? {
+        if player.externalPlayback {
+            guard let track = youtubePlayer.current else { return nil }
+            return SubtitleInput(song: SubtitleSong(id: track.id, source: "ytm", title: track.title,
+                artist: track.artist, durationMs: youtubePlayer.duration * 1000),
+                revision: youtubePlayer.timelineRevision, loading: youtubePlayer.lyricsLoading)
+        }
+        guard let track = player.current else { return nil }
+        return SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue, title: track.title,
+            artist: track.artist ?? "", durationMs: player.duration * 1000),
+            revision: player.timelineRevision, loading: player.lyricsLoading)
     }
 
     private var localLibrary: some View {
