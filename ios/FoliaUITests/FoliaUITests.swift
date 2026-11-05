@@ -11,6 +11,10 @@ final class FoliaUITests: XCTestCase {
         demo.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        let stage = app.descendants(matching: .any)["foliaSonnetStage"].firstMatch
+        XCTAssertTrue(stage.waitForExistence(timeout: 30))
+        let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: stage)
+        wait(for: [ready], timeout: 45)
         // The 30-second sample can finish while a cold simulator obtains UI snapshots.
         app.buttons["循環佇列"].tap()
         if toggle.label == "播放" { toggle.tap() }
@@ -23,7 +27,25 @@ final class FoliaUITests: XCTestCase {
         let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
         wait(for: [paused], timeout: 10)
         capture(app, name: "Lyrics-paused")
+        app.buttons["進入沉浸模式"].tap()
+        capture(app, name: "Sonnet-immersive")
+        app.buttons["顯示播放控制"].tap()
         app.buttons["關閉播放畫面"].tap()
+    }
+
+    func testYouTubeStaysInsideFolia() {
+        continueAfterFailure = false
+        let app = XCUIApplication(); app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let link = app.textFields["貼上 YouTube／YouTube Music 連結"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.tap(); link.typeText("https://www.youtube.com/watch?v=M7lc1UVf-VE")
+        app.buttons["播放"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["YouTube · Folia"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.webViews["youtubeEmbeddedPlayer"].waitForExistence(timeout: 15))
+        XCTAssertEqual(app.state, .runningForeground)
+        capture(app, name: "YouTube-inside-Folia")
+        app.buttons["關閉 YouTube 播放畫面"].tap()
     }
 
     func testPlatformSetup() {

@@ -12,7 +12,9 @@ final class PlaybackModel {
     private(set) var isBuffering = false
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
-    private(set) var timeline = LyricTimeline(lines: [])
+    private(set) var timeline = LyricTimeline(lines: []) { didSet { timelineRevision = UUID() } }
+    private(set) var timelineRevision = UUID()
+    private(set) var externalPlayback = false
     private(set) var artwork: UIImage?
     private(set) var lyricsLoading = false
     private(set) var error: String?
@@ -41,6 +43,7 @@ final class PlaybackModel {
 
     func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil) {
         guard let index = tracks.firstIndex(of: selected) else { return }
+        externalPlayback = false
         self.client = client
         queue = tracks
         load(index)
@@ -49,6 +52,7 @@ final class PlaybackModel {
     func toggle() { isPlaying ? pause() : resume() }
 
     func resume() {
+        guard !externalPlayback else { return }
         if let index, error != nil, player.currentItem?.status == .failed || player.currentItem == nil {
             load(index)
         } else {
@@ -78,6 +82,13 @@ final class PlaybackModel {
         player.pause()
         isPlaying = false
         refreshTransport()
+    }
+
+    func pauseForExternalPlayback() {
+        pause()
+        externalPlayback = true
+        system?.updateCommands(model: self)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     func next() {
@@ -293,7 +304,7 @@ final class PlaybackModel {
     }
 
     private func publishNowPlaying() {
-        guard let track = current else {
+        guard !externalPlayback, let track = current else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }

@@ -1,6 +1,6 @@
 # Google／YouTube：維護者設定與發布教學
 
-適用 Folia iOS 0.2.2。目標是由維護者設定一次 Google 應用程式，安裝者只需按「連接 Google 帳號」、登入及授權，不建立 Google Cloud 專案，也不填 Client ID。
+適用 Folia iOS 0.3.0。目標是由維護者設定一次 Google 應用程式，安裝者只需按「連接 Google 帳號」、登入及授權，不建立 Google Cloud 專案，也不填 Client ID。
 
 ## 你的專案目前到哪裡
 
@@ -115,18 +115,20 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 
 ## 7. 建置與安裝測試
 
-1. 確認這份 0.2.2 工作流程已在你要建置的分支。
+1. 確認這份 0.3.0 工作流程已在你要建置的分支。
 2. 開啟 GitHub「Actions」→「Folia native iOS」→「Run workflow」。
-3. 選取包含 0.2.2 更新的分支。更新尚在 PR 時，不要選仍是舊版本的 `main`。
+3. 選取包含 0.3.0 更新的分支。更新尚在 PR 時，不要選仍是舊版本的 `main`。
 4. 勾選 **Require the maintainer Google login configuration**，再按「Run workflow」。如果缺少兩個變數或值不合法，這次工作會直接失敗，避免把未設定的版本當成可登入版本。
 5. 建置摘要應顯示 `Google login configured: true`，並分別列出 `Build Bundle ID (before signing)` 與 `Google registered Bundle ID (after signing)`。前者是編譯前的值，後者才是 Google 登記且手機安裝後必須符合的值。
 6. 等歌詞／曲庫檢查、iPhone 與模擬器編譯、介面測試全部成功。
 7. 從 Artifacts 下載 `Folia-iOS-unsigned`，解壓後保留 `.ipa`。同包的 `google-login-build-info.json` 中，`google_configured` 應為 `true`。
 8. 沿用你的簽署方式安裝。若想覆蓋舊 App 並沿用本機曲庫，必須保留相同 App 識別碼與簽署身分；不要先刪除舊 App。
 9. 手機開 Folia → YouTube →「連接 Google 帳號」→ 選第 4 步的測試帳號 → 核對應用程式名稱與要求的唯讀權限 → 授權。
-10. 確認能讀到自己的歌單與喜歡的影片，結束 App 後重開，再確認登入狀態可恢復。最後測試「帳號設定 → 中斷連線」。
+10. 確認能讀到自己的歌單與喜歡的影片，點一支允許嵌入的影片，在 Folia 內測試播放與歌詞動畫。找不到歌詞時，從播放選項搜尋或附加 LRC／FIA。結束 App 後重開確認登入狀態，最後測試「帳號設定 → 中斷連線」。
 
 未設定變數的程式碼檢查仍可以成功，並產出明確標示尚未啟用 Google 登入的測試版本；這種結果不代表真實帳號登入已驗證。
+
+YouTube 播放使用保持可見的官方嵌入播放器，和 OAuth 曲庫授權是不同的部分；不會將 Google 憑證交給播放器。影片不允許嵌入時會顯示原因，YouTube 不支援隱藏影片與鎖定螢幕的背景播放。
 
 ## 8. 正式公開前由你完成的工作
 

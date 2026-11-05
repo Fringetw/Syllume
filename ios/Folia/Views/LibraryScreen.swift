@@ -9,6 +9,9 @@ struct LibraryScreen: View {
 
     @State private var spotify = PlatformConnection(.spotify)
     @State private var youtube = PlatformConnection(.youtube)
+    @State private var youtubePlayer = YouTubePlayback()
+    @State private var showingYouTubePlayer = false
+    @State private var youtubeLink = ""
 
     @State private var showingPlayer = false
     @State private var showingServer = false
@@ -38,28 +41,54 @@ struct LibraryScreen: View {
                 .padding(.horizontal, 22)
                 .padding(.bottom, 8)
 
+                if source == .youtube {
+                    HStack {
+                        TextField("貼上 YouTube／YouTube Music 連結", text: $youtubeLink)
+                            .font(.footnote).textFieldStyle(.roundedBorder).keyboardType(.URL)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .submitLabel(.go).onSubmit(playYouTubeLink)
+                        Button("播放", action: playYouTubeLink).disabled(youtubeLink.isEmpty)
+                    }
+                    .padding(.horizontal, 22).padding(.bottom, 6)
+                }
+
                 switch source {
                 case .local: localLibrary
                 case .navidrome:
                     NavidromeSearch(account: navidrome.account, configure: { showingServer = true }) { track, tracks, client in
+                        youtubePlayer.stop()
                         player.play(tracks, from: track, client: client)
                         showingPlayer = true
                     }
                 case .spotify:
-                    PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: { player.pause() })
+                    PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: pauseForPlatform, playYouTube: playYouTubeEntry)
                 case .youtube:
-                    PlatformLibraryScreen(connection: youtube, pauseLocalPlayback: { player.pause() })
+                    PlatformLibraryScreen(connection: youtube, pauseLocalPlayback: pauseForPlatform, playYouTube: playYouTubeEntry)
                 }
             }
             .background(FoliaPalette.surface.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let track = player.current {
+                if let video = youtubePlayer.current {
+                    HStack {
+                        Button { showingYouTubePlayer = true } label: {
+                            Label(video.title, systemImage: "play.rectangle").lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        Button {
+                            if youtubePlayer.isPlaying { youtubePlayer.pause() }
+                            else { youtubePlayer.prepareToPlay(); showingYouTubePlayer = true }
+                        } label: { Image(systemName: youtubePlayer.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }
+                        .accessibilityLabel("打開 YouTube 播放畫面")
+                    }
+                    .buttonStyle(.plain).padding(.horizontal, 14).background(.regularMaterial, in: .rect(cornerRadius: 16))
+                    .padding(.horizontal, 14).padding(.bottom, 6)
+                } else if let track = player.current {
                     MiniPlayer(track: track, player: player, open: { showingPlayer = true })
                 }
             }
         }
         .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player) }
+        .fullScreenCover(isPresented: $showingYouTubePlayer) { YouTubeNowPlayingScreen(player: youtubePlayer) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
         .onChange(of: navidrome.account) { _, _ in player.clearNavidrome() }
         .fileImporter(isPresented: $showingImporter,
@@ -138,6 +167,7 @@ struct LibraryScreen: View {
                     if visibleTracks.isEmpty { Text("沒有符合的歌曲。").foregroundStyle(.secondary) }
                     ForEach(visibleTracks) { track in
                         TrackRow(track: track, active: player.current?.source == .local && player.current?.id == track.id) {
+                            youtubePlayer.stop()
                             player.play(visibleTracks, from: track)
                             showingPlayer = true
                         }
@@ -158,6 +188,7 @@ struct LibraryScreen: View {
 
     private var demoCard: some View {
         Button {
+            youtubePlayer.stop()
             player.play([.demo], from: .demo)
             showingPlayer = true
         } label: {
@@ -166,7 +197,7 @@ struct LibraryScreen: View {
                     Text("F O L I A   S E S S I O N   /   0 1").font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(FoliaPalette.accent)
                     Text("潮汐之間").font(.system(.title2, design: .serif, weight: .semibold))
-                    Text("試聽 30 秒 · 同步歌詞").font(.footnote).foregroundStyle(.secondary)
+                    Text("試看商籟動畫 · 30 秒音樂示範").font(.footnote).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: "play.fill")
@@ -202,6 +233,26 @@ struct LibraryScreen: View {
         case .failure(let error):
             if (error as NSError).code != NSUserCancelledError { message = "無法從「檔案」讀取選取的內容。" }
         }
+    }
+
+    private func pauseForPlatform() { youtubePlayer.pause(); player.pauseForExternalPlayback() }
+    private func playYouTubeEntry(_ entry: LibraryEntry, _ entries: [LibraryEntry]) {
+        let videos = entries.compactMap { entry -> YouTubeVideo? in
+            guard let id = YouTubeVideo.identifier(from: entry.url.absoluteString) else { return nil }
+            return YouTubeVideo(id: id, title: entry.title, artist: entry.subtitle)
+        }
+        guard let id = YouTubeVideo.identifier(from: entry.url.absoluteString), let selected = videos.first(where: { $0.id == id }) else {
+            message = "這個項目沒有可播放的 YouTube 影片。"; return
+        }
+        player.pauseForExternalPlayback(); youtubePlayer.play(videos, selected: selected); showingYouTubePlayer = true
+    }
+    private func playYouTubeLink() {
+        guard let id = YouTubeVideo.identifier(from: youtubeLink) else {
+            message = "請貼上 YouTube 或 YouTube Music 的單支影片連結。"; return
+        }
+        let video = YouTubeVideo(id: id, title: "YouTube 影片", artist: "")
+        player.pauseForExternalPlayback(); youtubePlayer.play([video], selected: video)
+        youtubeLink = ""; showingYouTubePlayer = true
     }
 }
 

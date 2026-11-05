@@ -1,0 +1,26 @@
+{
+  "name": "folia-ios-sonnet",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "1.48.0",
+    "pixi.js": "8.21.0",
+    "motion-dom": "13.4.2",
+    "framer-motion": "13.4.3",
+    "react": "19.3.0",
+    "eventemitter3": "5.0.4",
+    "motion-utils": "13.3.0",
+    "tiny-lru": "11.4.7",
+    "parse-svg-path": "0.2.0",
+    "earcut": "3.2.3",
+    "@chenglou/pretext": "0.0.9",
+    "@pixi/colord": "2.9.6",
+    "ismobilejs": "1.1.1",
+    "@xmldom/xmldom": "0.9.12",
+    "react-dom": "19.3.0",
+    "vite": "8.3.1"
+  }
+}

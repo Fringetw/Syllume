@@ -3,6 +3,7 @@ import SwiftUI
 struct PlatformLibraryScreen: View {
     let connection: PlatformConnection
     let pauseLocalPlayback: () -> Void
+    let playYouTube: (LibraryEntry, [LibraryEntry]) -> Void
     @State private var showingSettings = false
     @State private var loginTask: Task<Void, Never>?
     @State private var loginError: String?
@@ -17,7 +18,7 @@ struct PlatformLibraryScreen: View {
             }
             .padding(.horizontal, 22).padding(.vertical, 12)
             if connection.connected {
-                PlatformEntries(connection: connection, collection: .playlists, pauseLocalPlayback: pauseLocalPlayback)
+                PlatformEntries(connection: connection, collection: .playlists, pauseLocalPlayback: pauseLocalPlayback, playYouTube: playYouTube)
                     .id(connection.sessionID)
             } else {
                 ContentUnavailableView {
@@ -25,7 +26,7 @@ struct PlatformLibraryScreen: View {
                 } description: {
                     Text(connection.platform == .spotify
                          ? "登入後瀏覽歌單與喜歡的歌曲，點歌曲可在 Spotify 開啟。首次連接需要開發者 Client ID。"
-                         : "登入 Google 帳號即可讀取你的 YouTube 歌單與喜歡的影片，點選項目可在 YouTube Music 開啟。可取得內容依平台提供的範圍為準。")
+                         : "登入 Google 帳號讀取 YouTube 歌單與喜歡的影片，並在 Folia 內播放、顯示同步歌詞動畫。也可直接貼上影片連結。")
                 } actions: {
                     if connection.platform == .youtube {
                         Button(connection.connecting ? "正在登入…" : "連接 Google 帳號", action: connectGoogle)
@@ -77,6 +78,7 @@ private struct PlatformEntries: View {
     let connection: PlatformConnection
     let collection: LibraryCollection
     let pauseLocalPlayback: () -> Void
+    let playYouTube: (LibraryEntry, [LibraryEntry]) -> Void
     @Environment(\.openURL) private var openURL
     @State private var entries: [LibraryEntry] = []
     @State private var cursor: String?
@@ -92,13 +94,13 @@ private struct PlatformEntries: View {
             if !isPlaylists {
                 Section {
                     PlatformBrand(platform: connection.platform)
-                    Text("點選項目會在 \(connection.platform.title) 開啟。").font(.footnote).foregroundStyle(.secondary)
+                    Text("點選項目可播放。").font(.footnote).foregroundStyle(.secondary)
                 }
             }
             if isPlaylists {
                 Section {
                     NavigationLink {
-                        PlatformEntries(connection: connection, collection: .liked, pauseLocalPlayback: pauseLocalPlayback)
+                        PlatformEntries(connection: connection, collection: .liked, pauseLocalPlayback: pauseLocalPlayback, playYouTube: playYouTube)
                             .navigationTitle(connection.platform == .spotify ? "喜歡的歌曲" : "喜歡的影片")
                     } label: {
                         Label(connection.platform == .spotify ? "喜歡的歌曲" : "喜歡的影片（含音樂）", systemImage: "heart.fill")
@@ -113,13 +115,16 @@ private struct PlatformEntries: View {
                 ForEach(entries) { entry in
                     if isPlaylists {
                         NavigationLink {
-                            PlatformEntries(connection: connection, collection: .playlist(entry.id), pauseLocalPlayback: pauseLocalPlayback)
+                            PlatformEntries(connection: connection, collection: .playlist(entry.id), pauseLocalPlayback: pauseLocalPlayback, playYouTube: playYouTube)
                                 .navigationTitle(entry.title)
-                                .toolbar { ToolbarItem(placement: .primaryAction) { Button("在平台開啟") { open(entry.url) } } }
+                                .toolbar { if connection.platform == .spotify { ToolbarItem(placement: .primaryAction) { Button("在平台開啟") { open(entry.url) } } } }
                         } label: { row(entry) }
                     } else {
-                        Button { open(entry.url) } label: { row(entry) }
-                            .accessibilityHint("在 \(connection.platform.title) 開啟")
+                        Button {
+                            if connection.platform == .youtube { playYouTube(entry, entries) }
+                            else { open(entry.url) }
+                        } label: { row(entry) }
+                            .accessibilityHint(connection.platform == .youtube ? "在 Folia 內播放" : "在 Spotify 開啟")
                     }
                 }
                 if loaded && entries.isEmpty && error == nil { Text("這個帳號目前沒有可取得的項目。").foregroundStyle(.secondary) }
@@ -132,8 +137,8 @@ private struct PlatformEntries: View {
                     Button("載入更多") { Task { await load(reset: false) } }.disabled(loading)
                 }
             }
-            Section {
-                Button("在 \(connection.platform.title) 查看曲庫") { open(connection.platform.libraryURL) }
+            if connection.platform == .spotify {
+                Section { Button("在 Spotify 查看曲庫") { open(connection.platform.libraryURL) } }
             }
         }
         .listStyle(.plain)
@@ -206,7 +211,7 @@ private struct PlatformAccountSettings: View {
             Form {
                 Section {
                     PlatformBrand(platform: connection.platform)
-                    Text("連接後可在 Folia 瀏覽歌單與收藏，播放會交由原平台。")
+                    Text("連接後可在 Folia 瀏覽歌單與收藏。YouTube 影片可在 App 內播放，並搭配 Folia 歌詞動畫；Spotify 會交由原平台播放。")
                 }
                 if connection.platform == .spotify {
                     Section {

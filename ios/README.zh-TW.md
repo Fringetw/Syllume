@@ -1,6 +1,6 @@
-# Folia iOS 0.2.2
+# Folia iOS 0.3.0
 
-以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 專案沒有外部套件依賴。這版介面提供臺灣繁體中文。
+以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。原生 Xcode 專案無須下載額外套件；Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
 ## 第一版功能
 
@@ -10,7 +10,17 @@
 - 以自己的 HTTPS Navidrome 伺服器搜尋與串流，讀取封面和伺服器提供的同步歌詞。伺服器使用有效且受信任的 TLS 憑證。帳號資訊與密碼存於 iPhone 的鑰匙圈。
 - 內建 30 秒「潮汐之間」示範音軌與歌詞，可離線試用。
 
-此版保留 Folia 以全螢幕歌詞為主的體驗，採用一套新的原生歌詞畫面。桌面版的動畫樣式、第三方線上音源及 Folium 插件留待後續移植。
+0.1.0 採用原生歌詞清單；0.3.0 開始直接使用桌面版 Sonnet 引擎。其他桌面動畫樣式與 Folium 插件尚未移植。
+
+## 0.3.0：商籟與 App 內播放
+
+- 播放頁預設使用真正的電腦版 Sonnet 引擎，包括文字拆分、構圖、鏡頭移動與轉場；不是原先只有捲動的歌詞清單。可切換「商籟／歌詞／封面」，按取景框進入沉浸模式。
+- YouTube 歌單、喜歡影片的播放按鈕改為 Folia 內的官方播放器。也能在 YouTube 頁直接貼上單支 YouTube／YouTube Music 連結，無須先登入即可播放允許嵌入的公開影片。
+- 播放器的實際時間驅動 Sonnet；處理暫停、緩衝、拖曳、舊頁面回應與切歌，切換本機播放時停止 YouTube，避免同時出聲。
+- 依歌曲名稱、歌手與時長向 LRCLIB 自動匹配同步歌詞。不相符時不套用；可從播放選項手動搜尋版本或附加 LRC／FIA。手動附加的歌詞按影片 ID 保存在裝置上，來源標記為 LRCLIB 或手動附加。
+- YouTube 官方影片區保持可見且至少 200 × 200；不提供分離音訊、隱藏影片或鎖定螢幕的 YouTube 背景播放。離開畫面、開啟歌詞選擇器或 App 切到背景時暫停。本機與 Navidrome 的背景音訊功能仍可使用。
+- 部分影片、私人影片、年齡或區域限制內容無法嵌入；App 會顯示錯誤，不會自動跳去外部 App。
+- 這不是 YouTube Music 完整客戶端；帳號曲庫範圍仍受官方 YouTube Data API 限制。移植的桌面原始碼、版本與建置方式見 [Visualizer](Visualizer/README.md)。
 
 ## 0.2.2 更新
 
@@ -46,7 +56,7 @@
 
 Google iOS 用戶端登記的 Bundle ID 必須與實際安裝版本一致；側載前的建置識別碼是獨立的 `FOLIA_BUILD_BUNDLE_ID`，預設保持專案原始值。側載工具若改寫它，Google 登入會顯示版本不相符；由每位安裝者各自重簽的 IPA 不保證能共用相同用戶端。正式分發需規劃維護者統一簽署與固定識別碼。
 
-平台帳號讀取與本機音樂播放各自運作。Spotify／YouTube Music 的音訊由原平台播放；Folia 內的歌詞動畫目前用於本機與 Navidrome 播放。Google 入口讀取官方 YouTube API 提供的帳號歌單與喜歡影片，可取得範圍與 YouTube Music 完整曲庫可能不同。
+Spotify 仍使用原平台播放；YouTube 改為 App 內的官方影片播放器，搭配 Folia 歌詞動畫。Google 入口讀取官方 YouTube API 提供的帳號歌單與喜歡影片，可取得範圍與 YouTube Music 完整曲庫可能不同。
 
 Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/documentation/design)，僅用於平台內容歸屬標示。
 
@@ -78,4 +88,4 @@ Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/docume
 
 ## 授權
 
-原專案與圖示來自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)。此移植依 GNU AGPL v3 提供原始碼與授權全文，見 [LICENSE](LICENSE)。內建示範音軌為本專案合成的音訊。
+原專案與圖示來自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)。此移植依 GNU AGPL v3 提供原始碼與授權全文，見 [LICENSE](../LICENSE)。內建示範音軌為本專案合成的音訊。

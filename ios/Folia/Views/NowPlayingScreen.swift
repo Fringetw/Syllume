@@ -6,14 +6,16 @@ struct NowPlayingScreen: View {
     let player: PlaybackModel
 
     @Environment(\.dismiss) private var dismiss
-    @State private var mode: Mode = .lyrics
+    @State private var mode: Mode = .sonnet
+    @State private var controlsVisible = true
     @State private var showingQueue = false
 
-    private enum Mode: Hashable { case cover, lyrics }
+    private enum Mode: Hashable { case sonnet, cover, lyrics }
 
     var body: some View {
         if let track = player.current {
             VStack(spacing: 16) {
+              if controlsVisible {
                 HStack {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }
                         .accessibilityLabel("關閉播放畫面")
@@ -22,20 +24,31 @@ struct NowPlayingScreen: View {
                         .foregroundStyle(FoliaPalette.accent)
                         .accessibilityLabel("現正播放")
                     Spacer()
+                    Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
+                        .accessibilityLabel("進入沉浸模式")
                     Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
                         .accessibilityLabel("播放佇列")
                 }
                 .buttonStyle(.plain)
 
                 Picker("播放畫面", selection: $mode) {
+                    Text("商籟").tag(Mode.sonnet)
                     Text("歌詞").tag(Mode.lyrics)
                     Text("封面").tag(Mode.cover)
                 }
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 240)
+              }
 
                 Group {
                     switch mode {
+                    case .sonnet:
+                        if player.timeline.lines.isEmpty { LyricStage(player: player) }
+                        else {
+                            SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
+                                        timeline: player.timeline, revision: player.timelineRevision,
+                                        position: player.position, playing: player.isPlaying && !player.isBuffering)
+                        }
                     case .lyrics: LyricStage(player: player).id(track.id)
                     case .cover: artwork
                     }
@@ -43,6 +56,7 @@ struct NowPlayingScreen: View {
                 .frame(maxHeight: .infinity)
                 .layoutPriority(1)
 
+              if controlsVisible {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
                         .accessibilityAddTraits(.isHeader)
@@ -58,6 +72,7 @@ struct NowPlayingScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 TransportControls(player: player).id(track.id)
+              }
             }
             .padding(.horizontal, 22)
             .padding(.top, 4)
@@ -65,6 +80,15 @@ struct NowPlayingScreen: View {
             .frame(maxWidth: 630)
             .frame(maxWidth: .infinity)
             .background(PlaybackAtmosphere(playing: player.isPlaying).ignoresSafeArea())
+            .overlay(alignment: .bottomTrailing) {
+                if !controlsVisible {
+                    Button { controlsVisible = true } label: {
+                        Image(systemName: "slider.horizontal.3").frame(width: 48, height: 48)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("顯示播放控制").padding(18)
+                }
+            }
             .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
         } else {
             Color.clear.onAppear { dismiss() }

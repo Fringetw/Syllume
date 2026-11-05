@@ -3,8 +3,9 @@ import Foundation
 // Cross-platform checks run without an iPhone or a server account.
 @main
 struct Checks {
-    static func main() throws {
+    @MainActor static func main() throws {
         try PlatformChecks.run()
+        try YouTubeChecks.run()
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let lrc = LyricTimeline(lrc: """
             [offset:500]
