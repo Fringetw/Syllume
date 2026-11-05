@@ -92,6 +92,7 @@ struct LyricStage: View {
                             .buttonStyle(.plain)
                             .accessibilityHint("跳到這句歌詞")
                             .accessibilityAddTraits(active ? .isSelected : [])
+                            .accessibilityIdentifier("lyricLine-\(row)")
                             .id(row)
                         }
                     }

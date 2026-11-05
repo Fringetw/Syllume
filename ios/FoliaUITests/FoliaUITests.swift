@@ -13,7 +13,7 @@ final class FoliaUITests: XCTestCase {
         XCTAssertTrue(transport.waitForExistence(timeout: 10))
         if transport.label == "暫停" { transport.tap() }
         app.segmentedControls.buttons["歌詞"].tap()
-        XCTAssertTrue(app.staticTexts["頭髮發現"].waitForExistence(timeout: 15))
+        assertLyric("頭髮發現", in: app)
         capture(app, name: "Built-in-subtitles-converted")
         app.buttons["繁體字幕設定"].tap()
         let conversion = app.switches["subtitleConversion"]
@@ -21,7 +21,7 @@ final class FoliaUITests: XCTestCase {
         conversion.tap()
         capture(app, name: "Built-in-subtitle-settings")
         app.buttons["關閉"].tap()
-        XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
+        assertLyric("头发发现", in: app)
 
         app.terminate()
         app.launchArguments = ["--subtitle-fixture"]
@@ -30,16 +30,16 @@ final class FoliaUITests: XCTestCase {
         XCTAssertTrue(transport.waitForExistence(timeout: 10))
         if transport.label == "暫停" { transport.tap() }
         app.segmentedControls.buttons["歌詞"].tap()
-        XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
+        assertLyric("头发发现", in: app)
         app.buttons["繁體字幕設定"].tap()
         app.switches["subtitleConversion"].tap()
         app.switches["subtitleActive"].tap()
         app.buttons["關閉"].tap()
-        XCTAssertTrue(app.staticTexts["头发发现"].waitForExistence(timeout: 10))
+        assertLyric("头发发现", in: app)
         app.buttons["繁體字幕設定"].tap()
         app.switches["subtitleActive"].tap()
         app.buttons["關閉"].tap()
-        XCTAssertTrue(app.staticTexts["頭髮發現"].waitForExistence(timeout: 10))
+        assertLyric("頭髮發現", in: app)
         app.buttons["關閉播放畫面"].tap()
         app.buttons["Folia 設定"].tap()
         XCTAssertTrue(app.buttons["builtInTraditionalLyrics"].waitForExistence(timeout: 10))
@@ -116,6 +116,17 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(app.links["開啟 Google Cloud 憑證設定"].exists)
         capture(app, name: "YouTube-account-info")
         app.buttons["關閉"].tap()
+    }
+
+    private func assertLyric(_ text: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+        let row = app.buttons["lyricLine-0"]
+        let matches = expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: row)
+        let result = XCTWaiter.wait(for: [matches], timeout: 15)
+        if result != .completed {
+            print("Subtitle display failure: \(app.debugDescription)")
+            capture(app, name: "Subtitle-display-failure")
+        }
+        XCTAssertEqual(result, .completed, file: file, line: line)
     }
 
     private func wait(_ seconds: TimeInterval) {
