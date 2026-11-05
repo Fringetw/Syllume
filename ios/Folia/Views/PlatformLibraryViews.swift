@@ -169,7 +169,7 @@ private struct PlatformAccountSettings: View {
                     PlatformBrand(platform: connection.platform)
                     Text("連接後可在 Folia 瀏覽歌單與收藏，播放會交由原平台。")
                 }
-                Section("開發者應用程式") {
+                Section {
                     TextField("Client ID", text: $clientID)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .disabled(connection.connecting || connection.connected)
@@ -183,6 +183,8 @@ private struct PlatformAccountSettings: View {
                             .font(.footnote.monospaced()).textSelection(.enabled)
                         Link("開啟 Google Cloud 憑證設定", destination: URL(string: "https://console.cloud.google.com/apis/credentials")!)
                     }
+                } header: {
+                    Text("開發者應用程式")
                 } footer: {
                     Text("Client ID 是應用程式識別碼。登入在平台官方的系統驗證視窗中完成；授權憑證存放於 iPhone 鑰匙圈。")
                 }

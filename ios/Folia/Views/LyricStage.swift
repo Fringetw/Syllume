@@ -134,7 +134,7 @@ private struct LyricRow: View {
                                     paused: !active || !playing || reduceMotion || scenePhase != .active)) { timeline in
                 let phase = timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3.2) / 3.2
                 Text(lyricText)
-                    .foregroundStyle(active ? FoliaPalette.accent : .white)
+                    .foregroundStyle(active && line.words.isEmpty ? FoliaPalette.accent : .white)
                     .overlay {
                         if active && !reduceMotion {
                             LinearGradient(colors: [.clear, .white.opacity(0.55), .clear],
