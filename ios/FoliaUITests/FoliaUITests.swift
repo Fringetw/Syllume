@@ -2,7 +2,7 @@ import XCTest
 
 @MainActor
 final class FoliaUITests: XCTestCase {
-    func testDemoPlaybackAndPlatformSetup() {
+    func testAnimatedPlayback() {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
@@ -11,16 +11,25 @@ final class FoliaUITests: XCTestCase {
         demo.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        // The 30-second sample can finish while a cold simulator obtains UI snapshots.
+        app.buttons["循環佇列"].tap()
+        if toggle.label == "播放" { toggle.tap() }
         XCTAssertEqual(toggle.label, "暫停")
         wait(2)
         capture(app, name: "Lyrics-playing-02")
         wait(3)
         capture(app, name: "Lyrics-playing-05")
         toggle.tap()
-        XCTAssertEqual(toggle.label, "播放")
+        let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
+        wait(for: [paused], timeout: 10)
         capture(app, name: "Lyrics-paused")
         app.buttons["關閉播放畫面"].tap()
+    }
 
+    func testPlatformSetup() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launch()
         for platform in ["Spotify", "YouTube"] {
             app.segmentedControls.buttons[platform].tap()
             XCTAssertTrue(app.buttons["設定並登入"].waitForExistence(timeout: 5))
