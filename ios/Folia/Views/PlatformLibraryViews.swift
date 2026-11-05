@@ -4,13 +4,15 @@ struct PlatformLibraryScreen: View {
     let connection: PlatformConnection
     let pauseLocalPlayback: () -> Void
     @State private var showingSettings = false
+    @State private var loginTask: Task<Void, Never>?
+    @State private var loginError: String?
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 PlatformBrand(platform: connection.platform)
                 Spacer()
-                Button(connection.connected ? "帳號設定" : "連接帳號") { showingSettings = true }
+                Button(connection.connected ? "帳號設定" : connection.platform == .youtube ? "連線說明" : "連接帳號") { showingSettings = true }
                     .buttonStyle(.bordered)
             }
             .padding(.horizontal, 22).padding(.vertical, 12)
@@ -23,13 +25,39 @@ struct PlatformLibraryScreen: View {
                 } description: {
                     Text(connection.platform == .spotify
                          ? "登入後瀏覽歌單與喜歡的歌曲，點歌曲可在 Spotify 開啟。首次連接需要開發者 Client ID。"
-                         : "透過 YouTube 官方授權讀取帳號歌單與喜歡的影片。可在 YouTube Music 開啟歌曲；可取得內容依平台 API 為準。首次連接需要 Google iOS Client ID。")
+                         : "登入 Google 帳號即可讀取你的 YouTube 歌單與喜歡的影片，點選項目可在 YouTube Music 開啟。可取得內容依平台提供的範圍為準。")
                 } actions: {
-                    Button("設定並登入") { showingSettings = true }.buttonStyle(.borderedProminent)
+                    if connection.platform == .youtube {
+                        Button(connection.connecting ? "正在登入…" : "連接 Google 帳號", action: connectGoogle)
+                            .buttonStyle(.borderedProminent)
+                            .disabled(!connection.googleConfiguration.isReady || connection.connecting)
+                            .accessibilityIdentifier("googleConnect")
+                        if let message = connection.googleConfiguration.userMessage {
+                            Text(message).font(.footnote).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("googleAvailability")
+                        }
+                        if let loginError { Text(loginError).font(.footnote).foregroundStyle(.orange) }
+                    } else {
+                        Button("設定並登入") { showingSettings = true }.buttonStyle(.borderedProminent)
+                    }
                 }
             }
         }
         .sheet(isPresented: $showingSettings) { PlatformAccountSettings(connection: connection) }
+        .onDisappear { loginTask?.cancel(); connection.cancelLogin() }
+    }
+
+    private func connectGoogle() {
+        guard loginTask == nil else { return }
+        loginError = nil
+        loginTask = Task {
+            defer { loginTask = nil }
+            do { try await connection.connectGoogle() }
+            catch is CancellationError { }
+            catch {
+                if !Task.isCancelled { loginError = error.localizedDescription }
+            }
+        }
     }
 }
 
@@ -180,41 +208,50 @@ private struct PlatformAccountSettings: View {
                     PlatformBrand(platform: connection.platform)
                     Text("連接後可在 Folia 瀏覽歌單與收藏，播放會交由原平台。")
                 }
-                Section {
-                    TextField("Client ID", text: $clientID)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .disabled(connection.connecting || connection.connected)
-                    if connection.platform == .spotify {
+                if connection.platform == .spotify {
+                    Section {
+                        TextField("Client ID", text: $clientID)
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                            .disabled(connection.connecting || connection.connected)
                         Text("在 Spotify Dashboard 建立應用程式，選擇 iOS，並登記以下 Redirect URI。開發模式的應用程式擁有者需有 Premium，測試帳號須加入使用者名單。")
                         Text("folia-spotify://callback").font(.footnote.monospaced()).textSelection(.enabled)
                         Link("開啟 Spotify Dashboard", destination: URL(string: "https://developer.spotify.com/dashboard")!)
-                    } else {
-                        Text("在 Google Cloud 啟用 YouTube Data API v3、設定 OAuth 同意畫面與測試使用者，再建立 iOS 類型的 Client ID。Bundle ID 請填下方這部裝置實際使用的值。")
-                        Text(Bundle.main.bundleIdentifier ?? "org.folia.community.ios")
-                            .font(.footnote.monospaced()).textSelection(.enabled)
-                        Link("開啟 Google Cloud 憑證設定", destination: URL(string: "https://console.cloud.google.com/apis/credentials")!)
+                    } header: {
+                        Text("開發者應用程式")
+                    } footer: {
+                        Text("Client ID 是應用程式識別碼。登入在平台官方的系統驗證視窗中完成；授權憑證存放於 iPhone 鑰匙圈。")
                     }
-                } header: {
-                    Text("開發者應用程式")
-                } footer: {
-                    Text("Client ID 是應用程式識別碼。登入在平台官方的系統驗證視窗中完成；授權憑證存放於 iPhone 鑰匙圈。")
+                } else {
+                    Section("Google 帳號") {
+                        Text("使用你自己的 Google 帳號登入並授權讀取 YouTube 歌單與喜歡的影片。登入設定由 App 提供者統一完成。")
+                        if let message = connection.googleConfiguration.userMessage {
+                            Text(message).foregroundStyle(.orange)
+                            DisclosureGroup("提供給 App 提供者的版本資訊") {
+                                Text(Bundle.main.bundleIdentifier ?? "無法取得安裝識別碼")
+                                    .font(.footnote.monospaced()).textSelection(.enabled)
+                                    .accessibilityIdentifier("installedBundleID")
+                            }
+                        }
+                    }
                 }
                 Section {
                     if connection.connected {
                         Label("已連接", systemImage: "checkmark.circle.fill").foregroundStyle(FoliaPalette.accent)
                         Button("中斷連線", role: .destructive) { confirmDisconnect = true }
                     } else {
-                        Button(connection.connecting ? "正在登入…" : "登入並讀取曲庫") {
+                        Button(connection.connecting ? "正在登入…" : connection.platform == .youtube ? "連接 Google 帳號" : "登入並讀取曲庫") {
                             error = nil
                             loginTask = Task {
                                 do {
-                                    try await connection.connect(clientID: clientID)
+                                    if connection.platform == .youtube { try await connection.connectGoogle() }
+                                    else { try await connection.connect(clientID: clientID) }
                                     if !Task.isCancelled { dismiss() }
                                 } catch is CancellationError {
                                 } catch { self.error = (error as? PlatformError)?.errorDescription ?? "登入未完成，請檢查網路與開發者設定。" }
                             }
                         }
-                        .disabled(clientID.isEmpty || connection.connecting)
+                        .disabled(connection.connecting || (connection.platform == .youtube
+                            ? !connection.googleConfiguration.isReady : clientID.isEmpty))
                     }
                     if let notice = error ?? connection.storageError { Text(notice).foregroundStyle(.orange) }
                 }

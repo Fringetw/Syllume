@@ -37,6 +37,39 @@ enum PlatformError: LocalizedError {
     var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
 }
 
+// Public application identifiers are supplied by the maintainer at build time.
+// A re-signed app must still match the Google iOS client's registered bundle ID.
+struct GoogleClientConfiguration {
+    enum Issue: Equatable { case missing, invalidClient, bundleMismatch, missingCallback }
+    let clientID: String
+    let issue: Issue?
+    var isReady: Bool { issue == nil }
+    var userMessage: String? {
+        switch issue {
+        case .none: return nil
+        case .bundleMismatch:
+            return "這個安裝版本的 Google 登入設定不相符，請向 App 提供者索取相容版本。"
+        default:
+            return "這個版本尚未啟用 Google 登入，請向 App 提供者索取已設定的版本。"
+        }
+    }
+
+    init(clientID: String?, registeredBundleID: String?, bundleID: String?, schemes: [String]) {
+        let normalized = (clientID ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        self.clientID = normalized
+        guard !normalized.isEmpty else { issue = .missing; return }
+        guard let redirect = try? LibraryPlatform.youtube.redirect(clientID: normalized),
+              let scheme = redirect.scheme else { issue = .invalidClient; return }
+        guard let registeredBundleID, !registeredBundleID.isEmpty, registeredBundleID == bundleID else {
+            issue = .bundleMismatch; return
+        }
+        guard schemes.contains(scheme) else { issue = .missingCallback; return }
+        issue = nil
+    }
+
+    func acceptsCredential(clientID: String) -> Bool { isReady && self.clientID == clientID }
+}
+
 enum LibraryCollection: Equatable {
     case playlists, liked, playlist(String)
 }

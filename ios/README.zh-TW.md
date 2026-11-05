@@ -1,4 +1,4 @@
-# Folia iOS 0.2.0
+# Folia iOS 0.2.1
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 專案沒有外部套件依賴。這版介面提供臺灣繁體中文。
 
@@ -11,6 +11,13 @@
 - 內建 30 秒「潮汐之間」示範音軌與歌詞，可離線試用。
 
 此版保留 Folia 以全螢幕歌詞為主的體驗，採用一套新的原生歌詞畫面。桌面版的動畫樣式、第三方線上音源及 Folium 插件留待後續移植。
+
+## 0.2.1 更新
+
+- Google／YouTube 改由維護者在 GitHub Repository Variables 設定一次，使用者按「連接 Google 帳號」直接登入，無需填入 Client ID。
+- 建置時自動帶入公開 Client ID、註冊回呼 scheme 與 Bundle ID。App 會檢查簽署安裝後的識別碼，並避免沿用其他 Google 用戶端的舊授權。
+- 設定尚未帶入的版本會停用 Google 登入並顯示說明；正式登入測試建置可要求設定必須存在。
+- 維護者請依照 [Google／YouTube 完整設定教學](docs/Google-YouTube-maintainer.zh-TW.md) 完成 Cloud、測試使用者、用戶端與建置設定。Spotify 仍沿用原本的個別設定流程。
 
 ## 0.2.0 更新
 
@@ -25,15 +32,15 @@
 3. 在 Folia 的 Spotify 頁按「設定並登入」，填入 **Client ID**，按「登入並讀取曲庫」，在 Spotify 官方驗證視窗授權。
 4. 可瀏覽帳號歌單、喜歡的歌曲，或開啟原平台。依 2026 年開發模式規則，只有自己擁有或協作歌單能讀取內容，其他歌單可能回覆 403。
 
-### YouTube Music 首次設定
+### Google／YouTube 維護者統一設定
 
-1. 在 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 建立專案，啟用 **YouTube Data API v3**。
-2. 設定 OAuth 同意畫面，加入自己的 Google 帳號作為測試使用者，建立 **iOS 類型的 OAuth Client ID**。Bundle ID 請使用 Folia 帳號設定頁顯示的實際值，側載工具可能變更它。
-3. 在 Folia 的 YouTube 頁填入此 Client ID，按「登入並讀取曲庫」，授權 `youtube.readonly`。
-4. 系統驗證工作階段使用 Client ID 的反向網域作為回呼 scheme，搭配 PKCE 與隨機 state 驗證。應用程式內不需要 Client Secret。
-5. 這裡讀取的是 YouTube Data API 提供的帳號歌單與喜歡的影片（含音樂）。YouTube Music 專屬的收藏、專輯、動態混音等，可能不在這個 API 範圍內。點選項目會開啟對應的 YouTube Music 網址。
+請閱讀 [Google／YouTube：維護者設定與發布教學](docs/Google-YouTube-maintainer.zh-TW.md)。維護者建立 iOS OAuth 用戶端後，在 GitHub 的 **Settings → Secrets and variables → Actions → Variables** 設定 `GOOGLE_IOS_CLIENT_ID` 與 `GOOGLE_IOS_BUNDLE_ID`，重新建置後發給使用者。兩者為公開應用程式識別資料，App 不內建 Client Secret 或任何使用者帳號憑證。
 
-平台帳號讀取與本機音樂播放各自運作。Spotify / YouTube Music 的音訊由原平台播放；Folia 內的歌詞動畫目前用於本機與 Navidrome 播放。首次連接需自行建立平台 Client ID，GitHub 建置不會帶入帳號或登入憑證。
+使用者在 Folia 的 YouTube 頁直接按「連接 Google 帳號」並授權即可。測試階段的登入帳號仍需由維護者加入 Google Cloud 測試使用者名單。
+
+Google iOS 用戶端登記的 Bundle ID 必須與實際安裝版本一致。側載工具若改寫它，Google 登入會顯示版本不相符；由每位安裝者各自重簽的 IPA 不保證能共用相同用戶端。正式分發需規劃維護者統一簽署與固定識別碼。
+
+平台帳號讀取與本機音樂播放各自運作。Spotify／YouTube Music 的音訊由原平台播放；Folia 內的歌詞動畫目前用於本機與 Navidrome 播放。Google 入口讀取官方 YouTube API 提供的帳號歌單與喜歡影片，可取得範圍與 YouTube Music 完整曲庫可能不同。
 
 Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/documentation/design)，僅用於平台內容歸屬標示。
 
@@ -54,7 +61,7 @@ Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/docume
 
 從專案根目錄執行 `bash ios/Checks/run.sh`，需 Swift 6。這會驗證歌詞時間軸、曲庫回應與分頁、重複歌曲、OAuth 回呼驗證、範例歌詞、Xcode 專案引用和背景音訊宣告。GitHub Actions 在 macOS 上執行這些檢查、Apple SDK 編譯和模擬器介面測試，畫面截圖會存入 `Folia-iOS-UI-checks` 建置產物。
 
-0.1.0 曾經過兩輪獨立程式碼審查，修正歌詞記憶體使用、佇列更新、匯入與重試問題。0.2.0 的帳號連接仍需用實際平台 Client ID 與授權帳號驗證；自動化檢查涵蓋回應格式和介面，不代表已完成真實帳號登入。實機動畫、電量消耗和平台資料範圍仍需在 iPhone 驗證。
+0.1.0 曾經過兩輪獨立程式碼審查，修正歌詞記憶體使用、佇列更新、匯入與重試問題。Google 統一設定的帳號連接仍需用維護者的真實 iOS Client ID 與授權帳號驗證；自動化檢查涵蓋回應格式和介面，不代表已完成真實帳號登入。實機動畫、電量消耗和平台資料範圍仍需在 iPhone 驗證。
 
 在實機上可依序確認以下操作。
 

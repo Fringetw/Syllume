@@ -2,6 +2,11 @@ name: Folia native iOS
 
 on:
   workflow_dispatch:
+    inputs:
+      require_google_login:
+        description: Require the maintainer Google login configuration
+        type: boolean
+        default: false
   push:
     paths:
       - 'ios/**'
@@ -20,6 +25,17 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
+      - name: Configure maintainer Google login
+        env:
+          GOOGLE_IOS_CLIENT_ID: ${{ vars.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_IOS_BUNDLE_ID: ${{ vars.GOOGLE_IOS_BUNDLE_ID }}
+          REQUIRE_GOOGLE_LOGIN: ${{ inputs.require_google_login || false }}
+        run: |
+          if [ "$REQUIRE_GOOGLE_LOGIN" = "true" ]; then
+            python3 ios/Tools/configure_google_oauth.py --require-configured
+          else
+            python3 ios/Tools/configure_google_oauth.py
+          fi
       - name: Check the lyric timeline and Xcode project references
         run: bash ios/Checks/run.sh
       - name: Compile for iOS Simulator
@@ -59,8 +75,11 @@ jobs:
           cp -R "$RUNNER_TEMP/FoliaDevice/Build/Products/Release-iphoneos/Folia.app" "$RUNNER_TEMP/FoliaPackage/Payload/"
           cd "$RUNNER_TEMP/FoliaPackage"
           /usr/bin/zip -qry Folia-iOS-unsigned.ipa Payload
+          python3 -c 'import json,os; print(json.dumps({"google_configured":os.environ.get("FOLIA_GOOGLE_READY")=="true","version":"0.2.1"}))' > google-login-build-info.json
       - uses: actions/upload-artifact@v4
         with:
           name: Folia-iOS-unsigned
-          path: ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
+          path: |
+            ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
+            ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
           if-no-files-found: error

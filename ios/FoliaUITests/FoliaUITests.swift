@@ -30,15 +30,24 @@ final class FoliaUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launch()
-        for platform in ["Spotify", "YouTube"] {
-            app.segmentedControls.buttons[platform].tap()
+        app.segmentedControls.buttons["Spotify"].tap()
             XCTAssertTrue(app.buttons["設定並登入"].waitForExistence(timeout: 5))
             app.buttons["設定並登入"].tap()
             XCTAssertTrue(app.textFields["Client ID"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["登入並讀取曲庫"].isEnabled)
-            capture(app, name: platform + "-setup")
+            capture(app, name: "Spotify-setup")
             app.buttons["關閉"].tap()
-        }
+        app.segmentedControls.buttons["YouTube"].tap()
+        let googleConnect = app.buttons["googleConnect"]
+        XCTAssertTrue(googleConnect.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["Client ID"].exists)
+        XCTAssertEqual(googleConnect.isEnabled, !app.staticTexts["googleAvailability"].exists)
+        capture(app, name: "YouTube-maintainer-login")
+        app.buttons["連線說明"].tap()
+        XCTAssertFalse(app.textFields["Client ID"].exists)
+        XCTAssertFalse(app.links["開啟 Google Cloud 憑證設定"].exists)
+        capture(app, name: "YouTube-account-info")
+        app.buttons["關閉"].tap()
     }
 
     private func wait(_ seconds: TimeInterval) {

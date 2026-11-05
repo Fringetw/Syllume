@@ -8,6 +8,7 @@ import UIKit
 @MainActor @Observable
 final class PlatformConnection {
     let platform: LibraryPlatform
+    let googleConfiguration: GoogleClientConfiguration
     private(set) var clientID: String
     private(set) var sessionID = UUID()
     private(set) var connecting = false
@@ -34,14 +35,26 @@ final class PlatformConnection {
 
     init(_ platform: LibraryPlatform) {
         self.platform = platform
-        clientID = UserDefaults.standard.string(forKey: "Folia.ClientID." + platform.rawValue) ?? ""
+        let info = Bundle.main.infoDictionary ?? [:]
+        let urlTypes = info["CFBundleURLTypes"] as? [[String: Any]] ?? []
+        let embeddedGoogle = GoogleClientConfiguration(
+            clientID: info["FoliaGoogleClientID"] as? String,
+            registeredBundleID: info["FoliaGoogleBundleID"] as? String,
+            bundleID: Bundle.main.bundleIdentifier,
+            schemes: urlTypes.flatMap { $0["CFBundleURLSchemes"] as? [String] ?? [] })
+        googleConfiguration = embeddedGoogle
+        clientID = platform == .youtube ? embeddedGoogle.clientID
+            : UserDefaults.standard.string(forKey: "Folia.ClientID." + platform.rawValue) ?? ""
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 25
         session = URLSession(configuration: configuration)
         do {
             if let data = try readCredential() {
-                credential = try JSONDecoder().decode(Credential.self, from: data)
-                clientID = credential?.clientID ?? clientID
+                let saved = try JSONDecoder().decode(Credential.self, from: data)
+                if platform == .spotify || googleConfiguration.acceptsCredential(clientID: saved.clientID) {
+                    credential = saved
+                    if platform == .spotify { clientID = saved.clientID }
+                }
             }
         } catch { storageError = "無法讀取曲庫登入資料，請重新連接。" }
     }
@@ -49,6 +62,11 @@ final class PlatformConnection {
     func connect(clientID input: String) async throws {
         guard !connecting else { return }
         let candidate = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if platform == .youtube {
+            guard googleConfiguration.isReady, candidate == googleConfiguration.clientID else {
+                throw PlatformError.message(googleConfiguration.userMessage ?? "Google 登入設定無法使用。")
+            }
+        }
         let redirect = try platform.redirect(clientID: candidate)
         connecting = true
         defer { connecting = false }
@@ -66,7 +84,9 @@ final class PlatformConnection {
         if platform == .youtube {
             url.queryItems?.append(contentsOf: [.init(name: "access_type", value: "offline"), .init(name: "prompt", value: "consent")])
         }
-        UserDefaults.standard.set(candidate, forKey: "Folia.ClientID." + platform.rawValue)
+        if platform == .spotify {
+            UserDefaults.standard.set(candidate, forKey: "Folia.ClientID." + platform.rawValue)
+        }
         clientID = candidate
         let callback = try await authorizer.authenticate(url: url.url!, scheme: redirect.scheme!)
         let code = try OAuthCallback.code(from: callback, expected: redirect, state: state)
@@ -85,6 +105,11 @@ final class PlatformConnection {
     }
 
     func cancelLogin() { authorizer.cancel() }
+
+    func connectGoogle() async throws {
+        guard platform == .youtube else { throw PlatformError.message("這個來源不支援 Google 登入。") }
+        try await connect(clientID: googleConfiguration.clientID)
+    }
 
     func disconnect() throws {
         let status = SecItemDelete(key as CFDictionary)
@@ -116,7 +141,7 @@ final class PlatformConnection {
         case 403:
             let message = platform == .spotify
                 ? "Spotify 拒絕存取。請確認開發者帳號的 Premium、測試使用者名單與讀取權限；開發模式只能讀取自己擁有或協作歌單的內容。"
-                : "Google 拒絕存取。請確認已啟用 YouTube Data API、加入 OAuth 測試使用者並授權唯讀曲庫。"
+                : "Google 暫時拒絕曲庫存取。請稍後重試，或聯絡 App 提供者確認這個帳號能使用此版本。"
             throw PlatformError.message(message)
         case 404: throw PlatformError.message("這份歌單已無法取得，可改在原平台查看。")
         case 429: throw PlatformError.message("平台請求次數已達上限，請稍後再載入。")
@@ -162,7 +187,9 @@ final class PlatformConnection {
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), data.count <= 1_000_000,
               let token = try? JSONDecoder().decode(TokenResponse.self, from: data), !token.access_token.isEmpty,
               token.expires_in.isFinite, token.expires_in > 0 else {
-            throw PlatformError.message("無法取得登入授權。請檢查 Client ID、回呼網址和開發者測試帳號設定，再重新連接。")
+            throw PlatformError.message(platform == .youtube
+                ? "Google 登入未完成。請稍後重試，若持續發生請聯絡 App 提供者。"
+                : "無法取得登入授權。請檢查 Client ID、回呼網址和開發者測試帳號設定，再重新連接。")
         }
         if let scope = token.scope {
             let granted = Set(scope.split(separator: " ").map(String.init))

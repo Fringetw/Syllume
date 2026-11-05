@@ -9,6 +9,19 @@ enum PlatformChecks {
         let google = try LibraryPlatform.youtube.redirect(clientID: "123-test.apps.googleusercontent.com")
         precondition(google.absoluteString == "com.googleusercontent.apps.123-test:/oauth2redirect")
         precondition((try? LibraryPlatform.youtube.redirect(clientID: "https://evil.example")) == nil)
+        let config = GoogleClientConfiguration(clientID: "123-test.apps.googleusercontent.com",
+            registeredBundleID: "org.folia.community.ios", bundleID: "org.folia.community.ios",
+            schemes: ["folia-spotify", "com.googleusercontent.apps.123-test"])
+        precondition(config.isReady && config.acceptsCredential(clientID: "123-test.apps.googleusercontent.com"))
+        precondition(!config.acceptsCredential(clientID: "456-old.apps.googleusercontent.com"))
+        precondition(GoogleClientConfiguration(clientID: nil, registeredBundleID: nil,
+            bundleID: "org.folia.community.ios", schemes: []).issue == .missing)
+        precondition(GoogleClientConfiguration(clientID: "bad", registeredBundleID: "org.folia.community.ios",
+            bundleID: "org.folia.community.ios", schemes: []).issue == .invalidClient)
+        precondition(GoogleClientConfiguration(clientID: config.clientID, registeredBundleID: "org.folia.community.ios",
+            bundleID: "org.folia.community.ios.resigned", schemes: ["com.googleusercontent.apps.123-test"]).issue == .bundleMismatch)
+        precondition(GoogleClientConfiguration(clientID: config.clientID, registeredBundleID: "org.folia.community.ios",
+            bundleID: "org.folia.community.ios", schemes: []).issue == .missingCallback)
         let callback = URL(string: "folia-spotify://callback?code=auth-code&state=nonce")!
         let code = try OAuthCallback.code(from: callback, expected: redirect, state: "nonce")
         precondition(code == "auth-code")
