@@ -78,8 +78,7 @@ struct NowPlayingScreen: View {
                 TransportControls(player: player).id(track.id)
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
-                    Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
-                        .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+                    NativeMediaProbe(player: player)
                 }
                 #endif
               }
@@ -141,6 +140,17 @@ struct NowPlayingScreen: View {
         }
     }
 }
+
+#if DEBUG
+// The probe observes its own clock, without refreshing the whole player in lyric/cover mode.
+private struct NativeMediaProbe: View {
+    let player: PlaybackModel
+    var body: some View {
+        Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
+            .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+    }
+}
+#endif
 
 private struct TransportControls: View {
     let player: PlaybackModel

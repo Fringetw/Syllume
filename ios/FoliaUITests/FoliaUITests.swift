@@ -178,6 +178,7 @@ final class FoliaUITests: XCTestCase {
         app.buttons["syncedTrack-fixture-row-duplicate"].tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        app.segmentedControls.buttons["歌詞"].tap()
         app.buttons["循環佇列"].tap()
         if toggle.label == "播放" { toggle.tap() }
         XCTAssertEqual(app.staticTexts["nowPlayingTrackTitle"].value as? String, "播放佇列第 2 首，共 2 首")
@@ -193,7 +194,14 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
         capture(app, name: "Downloaded-audio-paused-without-video")
         toggle.tap()
-        let resumes = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > stoppedTime + 0.25 }, evaluatedWith: probe)
+        let resumes = expectation(for: NSPredicate { _, _ in
+            let sample = (probe.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), time.isFinite, time >= 0,
+                  let rate = Double(sample[1]), rate > 0, stoppedTime >= 0 else { return false }
+            // Both queue positions use the validated 30-second fixture; a real wrap still advances.
+            let advancement = time >= stoppedTime ? time - stoppedTime : 30 - stoppedTime + time
+            return advancement > 0.25
+        }, evaluatedWith: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [resumes], timeout: 15), .completed)
         toggle.tap()
         app.buttons["關閉播放畫面"].tap()

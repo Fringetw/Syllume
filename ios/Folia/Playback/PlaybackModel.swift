@@ -23,7 +23,11 @@ final class PlaybackModel {
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
     var canAdvance: Bool { index.map { $0 + 1 < queue.count || repeatQueue } ?? false }
     #if DEBUG
-    var mediaProbe: String { String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate) }
+    var mediaProbe: String {
+        // Keep the real AVPlayer sample observable in every display style.
+        _ = position; _ = isPlaying
+        return String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
+    }
     #endif
 
     @ObservationIgnored private let player = AVPlayer()
