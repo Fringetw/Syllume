@@ -115,7 +115,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         webView?.removeFromSuperview(); hostLease = nil
     }
     func synchronize() {
-        guard engineError == nil, !probing, let view = webView, view.url?.isFileURL == true else { return }
+        guard engineError == nil, !probing, let view = webView, !view.isLoading, view.url?.isFileURL == true else { return }
         probing = true
         let generation = engineGeneration
         view.evaluateJavaScript("typeof window.FoliaSubtitles?.configure === 'function'") { [weak self] result, _ in
@@ -174,8 +174,9 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
     private func call(_ script: String, _ args: [String: Any]) {
         let revision = configurationRevision
+        let generation = engineGeneration
         webView?.callAsyncJavaScript(script, arguments: args, in: nil, in: .page) { [weak self] result in
-            guard let self, revision == configurationRevision else { return }
+            guard let self, revision == configurationRevision, generation == engineGeneration else { return }
             if case .failure = result { restartEngine() }
         }
     }
