@@ -22,6 +22,9 @@ final class PlaybackModel {
 
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
     var canAdvance: Bool { index.map { $0 + 1 < queue.count || repeatQueue } ?? false }
+    #if DEBUG
+    var mediaProbe: String { String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate) }
+    #endif
 
     @ObservationIgnored private let player = AVPlayer()
     @ObservationIgnored private let library: LocalLibrary
@@ -82,6 +85,12 @@ final class PlaybackModel {
         player.pause()
         isPlaying = false
         refreshTransport()
+    }
+
+    func useLyrics(_ record: LyricSearchRecord) {
+        guard current != nil, let text = record.syncedLyrics else { return }
+        lyricsTask?.cancel(); lyricsLoading = false
+        timeline = LyricTimeline(lrc: text)
     }
 
     func pauseForExternalPlayback() {
@@ -168,7 +177,7 @@ final class PlaybackModel {
     func tick() {
         guard let item = player.currentItem else { return }
         let seconds = player.currentTime().seconds
-        if !seeking, seconds.isFinite { position = max(0, seconds) }
+        if !seeking, seconds.isFinite, abs(position - seconds) > 0.01 { position = max(0, seconds) }
         let itemDuration = item.duration.seconds
         if itemDuration.isFinite, itemDuration > 0, duration != itemDuration {
             duration = itemDuration

@@ -8,6 +8,12 @@ struct FoliaApp: App {
     @State private var navidrome = NavidromeConnection()
 
     init() {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--presentation-reset") {
+            UserDefaults.standard.removeObject(forKey: "Folia.LyricDisplayMode")
+            UserDefaults.standard.removeObject(forKey: "Folia.EnergySavingAnimation")
+        }
+        #endif
         let library = LocalLibrary()
         _library = State(initialValue: library)
         _player = State(initialValue: PlaybackModel(library: library))
@@ -18,6 +24,7 @@ struct FoliaApp: App {
             LibraryScreen(library: library, player: player, navidrome: navidrome)
                 .preferredColorScheme(.dark)
                 .tint(FoliaPalette.accent)
+                .buttonStyle(FoliaPressStyle())
         }
     }
 }

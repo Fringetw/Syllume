@@ -7,12 +7,11 @@ struct NowPlayingScreen: View {
     let subtitles: SubtitleController
 
     @Environment(\.dismiss) private var dismiss
-    @State private var mode: Mode = .sonnet
+    @AppStorage("Folia.LyricDisplayMode") private var mode: LyricDisplayMode = .sonnet
     @State private var controlsVisible = true
     @State private var showingQueue = false
-    @State private var showingSubtitles = false
 
-    private enum Mode: Hashable { case sonnet, cover, lyrics }
+    @State private var showingSearch = false
 
     var body: some View {
         if let track = player.current {
@@ -26,32 +25,30 @@ struct NowPlayingScreen: View {
                         .foregroundStyle(FoliaPalette.accent)
                         .accessibilityLabel("現正播放")
                     Spacer()
-                    Button { showingSubtitles = true } label: { Image(systemName: "character.book.closed").frame(width: 44, height: 44) }
-                        .accessibilityLabel("繁體字幕設定")
+                    Button { showingSearch = true } label: { Image(systemName: "text.magnifyingglass").frame(width: 44, height: 44) }
+                        .accessibilityLabel("尋找歌詞")
                     Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
                         .accessibilityLabel("進入沉浸模式")
                     Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
                         .accessibilityLabel("播放佇列")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(FoliaPressStyle())
 
                 Picker("播放畫面", selection: $mode) {
-                    Text("商籟").tag(Mode.sonnet)
-                    Text("歌詞").tag(Mode.lyrics)
-                    Text("封面").tag(Mode.cover)
+                    ForEach(LyricDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 240)
+                .frame(maxWidth: 340)
               }
 
                 Group {
                     switch mode {
-                    case .sonnet:
+                    case .sonnet, .lumiere:
                         if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline) }
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                                         timeline: subtitles.timeline, revision: subtitles.revision,
-                                        position: player.position, playing: player.isPlaying && !player.isBuffering)
+                                        position: player.position, playing: player.isPlaying && !player.isBuffering, style: mode.rawValue)
                         }
                     case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
                     case .cover: artwork
@@ -76,6 +73,12 @@ struct NowPlayingScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 TransportControls(player: player).id(track.id)
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
+                    Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+                }
+                #endif
               }
             }
             .padding(.horizontal, 22)
@@ -94,7 +97,14 @@ struct NowPlayingScreen: View {
                 }
             }
             .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
-            .sheet(isPresented: $showingSubtitles) { SubtitleSettingsScreen(subtitles: subtitles) }
+            .sheet(isPresented: $showingSearch) {
+                LyricSearchScreen(subtitles: subtitles, title: track.title, artist: track.artist ?? "") { record in
+                    guard player.current?.id == track.id, player.current?.source == track.source else { return }
+                    player.useLyrics(record)
+                }
+                    .id(track.id)
+            }
+            .onChange(of: track.id) { _, _ in showingSearch = false }
             .onChange(of: SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue,
                 title: track.title, artist: track.artist ?? "", durationMs: player.duration * 1000),
                 revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in
@@ -187,7 +197,7 @@ private struct TransportControls: View {
                 Spacer()
                 Color.clear.frame(width: 44, height: 1).accessibilityHidden(true)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(FoliaPressStyle())
         }
     }
 
@@ -234,7 +244,7 @@ struct MiniPlayer: View {
             }
             .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(.regularMaterial, in: .rect(cornerRadius: 16))

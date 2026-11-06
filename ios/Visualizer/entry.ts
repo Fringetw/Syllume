@@ -1,50 +1,48 @@
 import { SonnetPixiRuntime } from './desktop/src/components/visualizer/sonnet/createSonnetPixiRuntime';
 import { compileSonnetProgram } from './desktop/src/components/visualizer/sonnet/sonnetProgram';
-import { DEFAULT_SONNET_TUNING } from './desktop/src/types';
+import { LumierePixiRuntime } from './desktop/src/components/visualizer/lumiere/createLumierePixiRuntime';
+import { compileLumiereProgram } from './desktop/src/components/visualizer/lumiere/lumiereProgram';
+import { DEFAULT_SONNET_TUNING, DEFAULT_LUMIERE_TUNING } from './desktop/src/types';
+import { createStageController } from './stageController.mjs';
 
-// The desktop Sonnet director consumes the native player's absolute clock, never its audio.
+// Offline desktop directors share one native clock; no audio is copied into the renderer.
 const host = document.getElementById('stage')! as HTMLDivElement;
 const notify = (type: string, detail = '') => (window as any).webkit?.messageHandlers?.stage?.postMessage({ type, detail });
-let runtime: SonnetPixiRuntime | null = null;
-let generation = 0;
-let baseTime = 0, clockStamp = performance.now(), playing = false;
-let controller: AbortController | null = null;
-const clock = { get: () => baseTime + (playing ? Math.min(0.4, (performance.now() - clockStamp) / 1000) : 0) };
-const theme = { name: 'Folia Sonnet', backgroundColor: '#100e16', primaryColor: '#fff0df',
-    accentColor: '#ecc8c2', secondaryColor: '#9b869f', fontStyle: 'serif' as const,
+const theme = { name: 'Folia', backgroundColor: '#100e16', primaryColor: '#fff0df',
+    accentColor: '#a1dbd1', secondaryColor: '#9b869f', fontStyle: 'serif' as const,
     animationIntensity: 'normal' as const, fontWeight: 600 };
-
-(window as any).FoliaStage = {
-    async setSong(song: any) {
-        const request = ++generation;
-        controller?.abort(); controller = new AbortController();
-        const signal = controller.signal;
-        runtime?.destroy(); runtime = null;
-        host.replaceChildren();
-        const lines = song.lines.map((line: any, index: number) => ({ ...line, id: String(index), isChorus: false }));
-        try {
-            const created = await SonnetPixiRuntime.create({ host, signal, program: compileSonnetProgram(lines, song.id),
-                songSeed: song.id, theme, tuning: { ...DEFAULT_SONNET_TUNING, textureResolution: 1,
-                    cameraIntensity: 0.7, typographyMotion: 1, postProcessEnabled: false },
-                renderScale: 1, antialias: true, smartBeatEnabled: false,
-                currentTime: clock as any, lyricsFontScale: 1, staticMode: song.reduceMotion,
-                transparentBackground: true, paused: !playing || song.reduceMotion,
-                songTitle: song.title, songArtist: song.artist });
-            if (request !== generation) { created.destroy(); return; }
-            runtime = created;
-            runtime.setPaused(!playing || song.reduceMotion);
-            notify('ready');
-        } catch (error) { if (request === generation) notify('error', String(error)); }
-    },
-    setClock(snapshot: { time: number; playing: boolean; reduceMotion: boolean }) {
-        if (!Number.isFinite(snapshot.time)) return;
-        baseTime = Math.max(0, snapshot.time); clockStamp = performance.now();
-        playing = snapshot.playing && !document.hidden;
-        runtime?.setPaused(!playing || snapshot.reduceMotion);
-        if (!playing || snapshot.reduceMotion) runtime?.renderOnce();
-    },
-    stop() { controller?.abort(); generation++; playing = false; runtime?.destroy(); runtime = null; host.replaceChildren(); },
-    diagnostics() { return { ready: !!runtime, time: clock.get(), playing, canvas: !!host.querySelector('canvas') }; },
-};
-document.addEventListener('visibilitychange', () => { if (document.hidden) { playing = false; runtime?.setPaused(true); } });
+const zero = { get: () => 0 };
+const linesFor = (song: any) => song.lines.map((line: any, index: number) => ({ ...line, id: String(index), isChorus: false }));
+const stage = createStageController({ host, notify, async createRuntime(song: any, clock: any, signal: AbortSignal, paused: boolean) {
+    const renderScale = song.energySaving ? 0.75 : 1;
+    const maxFPS = song.energySaving ? 30 : 60;
+    if (song.style === 'lumiere') {
+        const runtime = await LumierePixiRuntime.create({ host, signal, maxFPS,
+            song: { seed: song.id, program: compileLumiereProgram(linesFor(song), song.id), theme },
+            tuning: { ...DEFAULT_LUMIERE_TUNING, renderQuality: song.energySaving ? 'low' : 'balanced' },
+            currentTime: clock, audioPower: zero as any, audioBands: { bass: zero, mid: zero, treble: zero } as any,
+            staticMode: song.reduceMotion, showText: true, paused,
+            metadata: { title: song.title, artist: song.artist }, renderScale, antialias: false });
+        return { setPaused: (value: boolean) => runtime.setPaused(value), renderOnce: () => runtime.renderOnce(), destroy: () => runtime.destroy(),
+            async updateSong(next: any, abort: AbortSignal) {
+                runtime.setStaticMode(next.reduceMotion);
+                runtime.setSongMetadata({ title: next.title, artist: next.artist });
+                await runtime.swapSong({ seed: next.id, program: compileLumiereProgram(linesFor(next), next.id), theme }, abort);
+            } };
+    }
+    const runtime = await SonnetPixiRuntime.create({ host, signal, maxFPS,
+        program: compileSonnetProgram(linesFor(song), song.id), songSeed: song.id, theme,
+        tuning: { ...DEFAULT_SONNET_TUNING, textureResolution: 1, cameraIntensity: 0.7, typographyMotion: 1, postProcessEnabled: false },
+        renderScale, antialias: false, smartBeatEnabled: false, currentTime: clock,
+        lyricsFontScale: 1, staticMode: song.reduceMotion, transparentBackground: true, paused,
+        songTitle: song.title, songArtist: song.artist });
+    return { setPaused: (value: boolean) => runtime.setPaused(value), renderOnce: () => runtime.renderOnce(), destroy: () => runtime.destroy(),
+        async updateSong(next: any, abort: AbortSignal) {
+            runtime.setStaticMode(next.reduceMotion);
+            runtime.setSongMetadata({ title: next.title, artist: next.artist });
+            await runtime.swapSong({ seed: next.id, program: compileSonnetProgram(linesFor(next), next.id), theme }, abort);
+        } };
+} });
+(window as any).FoliaStage = stage;
+document.addEventListener('visibilitychange', () => { if (document.hidden) stage.suspend(); });
 notify('loaded');

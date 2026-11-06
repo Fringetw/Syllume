@@ -1,9 +1,10 @@
 {
-  "name": "folia-ios-sonnet",
+  "name": "folia-ios-visualizers",
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "node build.mjs"
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "lucide-react": "1.48.0",

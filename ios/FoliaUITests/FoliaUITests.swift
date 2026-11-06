@@ -15,12 +15,13 @@ final class FoliaUITests: XCTestCase {
         app.segmentedControls.buttons["歌詞"].tap()
         assertLyric("頭髮發現", in: app)
         capture(app, name: "Built-in-subtitles-converted")
-        app.buttons["繁體字幕設定"].tap()
+        openSubtitlePreferences(in: app)
         let conversion = app.switches["subtitleConversion"]
         XCTAssertTrue(conversion.waitForExistence(timeout: 10))
         setSwitch("subtitleConversion", to: false, in: app)
         capture(app, name: "Built-in-subtitle-settings")
-        app.buttons["關閉"].tap()
+        app.buttons["closeSubtitleSettings"].tap()
+        app.buttons["closeLyricSearch"].tap()
         assertLyric("头发发现", in: app)
 
         app.terminate()
@@ -31,14 +32,16 @@ final class FoliaUITests: XCTestCase {
         if transport.label == "暫停" { transport.tap() }
         app.segmentedControls.buttons["歌詞"].tap()
         assertLyric("头发发现", in: app)
-        app.buttons["繁體字幕設定"].tap()
+        openSubtitlePreferences(in: app)
         setSwitch("subtitleConversion", to: true, in: app)
         setSwitch("subtitleActive", to: false, in: app)
-        app.buttons["關閉"].tap()
+        app.buttons["closeSubtitleSettings"].tap()
+        app.buttons["closeLyricSearch"].tap()
         assertLyric("头发发现", in: app)
-        app.buttons["繁體字幕設定"].tap()
+        openSubtitlePreferences(in: app)
         setSwitch("subtitleActive", to: true, in: app)
-        app.buttons["關閉"].tap()
+        app.buttons["closeSubtitleSettings"].tap()
+        app.buttons["closeLyricSearch"].tap()
         assertLyric("頭髮發現", in: app)
         app.buttons["關閉播放畫面"].tap()
         app.buttons["Folia 設定"].tap()
@@ -75,6 +78,7 @@ final class FoliaUITests: XCTestCase {
     func testAnimatedPlayback() {
         continueAfterFailure = false
         let app = XCUIApplication()
+        app.launchArguments = ["--presentation-reset", "--playback-probe"]
         app.launch()
         let demo = app.buttons["demoTrack"]
         XCTAssertTrue(demo.waitForExistence(timeout: 15))
@@ -98,8 +102,25 @@ final class FoliaUITests: XCTestCase {
         let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
         wait(for: [paused], timeout: 10)
         capture(app, name: "Lyrics-paused")
+        let mediaProbe = app.staticTexts["localTransportProbe"]
+        XCTAssertTrue(mediaProbe.waitForExistence(timeout: 5))
+        XCTAssertTrue((mediaProbe.value as? String ?? "").hasSuffix("|0.0"))
+        let pausedTime = probeTime(mediaProbe)
+        wait(2)
+        XCTAssertEqual(probeTime(mediaProbe), pausedTime, accuracy: 0.15, "AVPlayer time must stop, not only the icon")
+        app.segmentedControls.buttons["繪光"].tap()
+        let lumiere = app.descendants(matching: .any)["foliaLumiereStage"].firstMatch
+        XCTAssertTrue(lumiere.waitForExistence(timeout: 20))
+        let lumiereReady = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: lumiere)
+        XCTAssertEqual(XCTWaiter.wait(for: [lumiereReady], timeout: 120), .completed, "Lumiere: \(String(describing: lumiere.value))")
+        capture(app, name: "Lumiere-paused")
+        toggle.tap(); wait(2); capture(app, name: "Lumiere-playing"); toggle.tap()
+        app.buttons["尋找歌詞"].tap()
+        XCTAssertTrue(app.buttons["findChineseLyrics"].waitForExistence(timeout: 10))
+        capture(app, name: "Unified-lyric-search")
+        app.buttons["closeLyricSearch"].tap()
         app.buttons["進入沉浸模式"].tap()
-        capture(app, name: "Sonnet-immersive")
+        capture(app, name: "Lumiere-immersive")
         app.buttons["顯示播放控制"].tap()
         app.buttons["關閉播放畫面"].tap()
     }
@@ -116,6 +137,33 @@ final class FoliaUITests: XCTestCase {
         XCTAssertTrue(app.webViews["youtubeEmbeddedPlayer"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
         capture(app, name: "YouTube-inside-Folia")
+        app.buttons["關閉 YouTube 播放畫面"].tap()
+    }
+
+    func testYouTubePauseStopsMedia() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-playback-fixture", "--presentation-reset"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let link = app.textFields["貼上 YouTube／YouTube Music 連結"]
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        link.tap(); link.typeText("https://www.youtube.com/watch?v=M7lc1UVf-VE")
+        app.buttons["播放"].firstMatch.tap()
+        let probe = app.staticTexts["youtubeTransportProbe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 20))
+        let advances = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > 0.2 }, evaluatedWith: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [advances], timeout: 45), .completed, "The local fixture must really play")
+        app.buttons["暫停 YouTube"].tap()
+        let paused = expectation(for: NSPredicate { _, _ in (probe.value as? String ?? "").hasSuffix("|paused") }, evaluatedWith: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
+        let stoppedTime = probeTime(probe); wait(2)
+        XCTAssertEqual(probeTime(probe), stoppedTime, accuracy: 0.15)
+        capture(app, name: "YouTube-real-media-paused")
+        app.buttons["播放 YouTube"].tap()
+        let resumes = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > stoppedTime + 0.25 }, evaluatedWith: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumes], timeout: 15), .completed)
+        app.buttons["暫停 YouTube"].tap()
         app.buttons["關閉 YouTube 播放畫面"].tap()
     }
 
@@ -141,6 +189,16 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(app.links["開啟 Google Cloud 憑證設定"].exists)
         capture(app, name: "YouTube-account-info")
         app.buttons["關閉"].tap()
+    }
+
+    private func openSubtitlePreferences(in app: XCUIApplication) {
+        app.buttons["尋找歌詞"].tap()
+        XCTAssertTrue(app.buttons["findChineseLyrics"].waitForExistence(timeout: 10))
+        app.buttons["繁體字幕設定"].tap()
+    }
+
+    private func probeTime(_ element: XCUIElement) -> Double {
+        Double((element.value as? String ?? "").split(separator: "|").first ?? "") ?? -1
     }
 
     private func setSwitch(_ identifier: String, to enabled: Bool, in app: XCUIApplication) {

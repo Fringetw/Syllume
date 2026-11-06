@@ -69,6 +69,8 @@ const SONNET_SWAP_STAGE_PROGRESS = 0.35;
 
 export interface SonnetRuntimeOptions {
     host: HTMLDivElement;
+    /** iOS host cap: smooth 60 Hz, 30 Hz in energy-saving mode. */
+    maxFPS?: number;
     /** Track identity of `program`; see SonnetSongContext.seed. */
     songSeed?: string | number;
     program: SonnetProgram;
@@ -191,6 +193,7 @@ export class SonnetPixiRuntime {
             sharedTicker: false,
             preference: 'webgl',
         });
+        app.ticker.maxFPS = options.maxFPS ?? 60;
         const runtime = new SonnetPixiRuntime(pixi, options, app);
         runtime.sceneContainer = new pixi.Container();
         runtime.creditsContainer = new pixi.Container();
@@ -525,6 +528,7 @@ export class SonnetPixiRuntime {
         // had no paragraphs at all. Covering an empty frame would only add a flash. And a swap
         // that is not a track change gets no dissolve at all - see SonnetSongContext.seed.
         const isCoverWorthwhile = next.seed !== this.options.songSeed
+            && !this.options.paused
             && !this.songSwap
             && this.lastWidth > 0
             && this.options.program.paragraphs.length > 0

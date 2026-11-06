@@ -4,8 +4,21 @@ import WebKit
 // A visible official IFrame player stays inside Folia; no audio extraction or account tokens enter the page.
 struct YouTubePlayerView: UIViewRepresentable {
     let player: YouTubePlayback
+    // Explicit values make SwiftUI deliver every command even though the model identity is unchanged.
+    let requestSession: UUID
+    let requestPlayback: Bool
+    let requestRevision: Int
+    let requestSeek: UUID
+    let requestTime: Double
 
-    func makeCoordinator() -> Coordinator { Coordinator(player: player) }
+    init(player: YouTubePlayback) {
+        self.player = player; requestSession = player.session
+        requestPlayback = player.wantsPlayback && player.visible
+        requestRevision = player.playbackRevision
+        requestSeek = player.seekRevision; requestTime = player.seekTime
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(input: self) }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
@@ -19,41 +32,65 @@ struct YouTubePlayerView: UIViewRepresentable {
         context.coordinator.update()
         return view
     }
-    func updateUIView(_ view: WKWebView, context: Context) { context.coordinator.update() }
+    func updateUIView(_ view: WKWebView, context: Context) { context.coordinator.input = self; context.coordinator.update() }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        view.pauseAllMediaPlayback(completionHandler: nil)
         view.evaluateJavaScript("window.FoliaYouTube?.stop()", completionHandler: nil)
         view.stopLoading(); view.configuration.userContentController.removeScriptMessageHandler(forName: "youtube")
         view.navigationDelegate = nil; view.uiDelegate = nil
     }
 
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
-        let player: YouTubePlayback
+        var input: YouTubePlayerView
+        var player: YouTubePlayback { input.player }
         weak var view: WKWebView?
         var session: UUID?
         var loaded = false
-        var sentPlayback: Bool?
+        var sentRevision: Int?
         var sentSeek: UUID?
-        init(player: YouTubePlayback) { self.player = player }
+        init(input: YouTubePlayerView) { self.input = input }
 
         func update() {
             guard let view, let video = player.current else { return }
-            if session != player.session {
-                session = player.session; loaded = false; sentPlayback = nil; sentSeek = player.seekRevision
+            if session != input.requestSession {
+                session = input.requestSession; loaded = false; sentRevision = nil; sentSeek = input.requestSeek
                 let bundle = (Bundle.main.bundleIdentifier ?? "org.folia.community.ios").lowercased()
                 let origin = "https://" + bundle
-                view.loadHTMLString(Self.html(video: video.id, session: player.session.uuidString, origin: origin), baseURL: URL(string: origin))
+                view.loadHTMLString(Self.html(video: video.id, session: input.requestSession.uuidString, origin: origin), baseURL: URL(string: origin))
                 return
             }
+            guard input.requestSession == player.session, input.requestRevision == player.playbackRevision else { return }
+            // WebKit pauses the actual media immediately, even before the IFrame API is ready.
+            if sentRevision != input.requestRevision, !input.requestPlayback {
+                let revision = input.requestRevision
+                view.pauseAllMediaPlayback { [weak self] in
+                    guard let self else { return }
+                    // A slow WebKit pause must not land after a newer resume and leave it silent.
+                    if revision != player.playbackRevision, input.requestPlayback { sentRevision = nil; update() }
+                    reportMediaState()
+                }
+            }
             guard loaded else { return }
-            let wants = player.wantsPlayback && player.visible
-            if sentPlayback != wants {
-                sentPlayback = wants
-                view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants)", arguments: ["wants": wants], in: nil, in: .page, completionHandler: nil)
+            if sentRevision != input.requestRevision {
+                sentRevision = input.requestRevision
+                view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants, revision)",
+                    arguments: ["wants": input.requestPlayback, "revision": input.requestRevision], in: nil, in: .page, completionHandler: nil)
             }
-            if sentSeek != player.seekRevision {
-                sentSeek = player.seekRevision
-                view.callAsyncJavaScript("window.FoliaYouTube.seek(time)", arguments: ["time": player.seekTime], in: nil, in: .page, completionHandler: nil)
+            if sentSeek != input.requestSeek {
+                sentSeek = input.requestSeek
+                view.callAsyncJavaScript("window.FoliaYouTube.seek(time)", arguments: ["time": input.requestTime], in: nil, in: .page, completionHandler: nil)
             }
+        }
+
+        private func reportMediaState() {
+            #if DEBUG
+            let session = input.requestSession, revision = input.requestRevision
+            view?.requestMediaPlaybackState { [weak self] state in
+                let label: String
+                switch state { case .paused: label = "paused"; case .playing: label = "playing"; case .suspended: label = "suspended"; case .none: label = "none"; @unknown default: label = "unknown" }
+                self?.player.recordMediaState(label, session: session, revision: revision)
+            }
+            #endif
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -73,27 +110,44 @@ struct YouTubePlayerView: UIViewRepresentable {
             return nil
         }
 
+        private static let transportScript: String = {
+            guard let url = Bundle.main.url(forResource: "player", withExtension: "js", subdirectory: "FoliaYouTube"),
+                  let script = try? String(contentsOf: url, encoding: .utf8) else { return "throw new Error('Player resource missing');" }
+            return script
+        }()
+
+        private static var apiLoader: String {
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture"),
+               let url = Bundle.main.url(forResource: "tide", withExtension: "m4a"), let data = try? Data(contentsOf: url) {
+                return """
+                <script>
+                window.YT={Player:class {
+                  constructor(id,options){this.o=options;this.a=new Audio('data:audio/mp4;base64,\(data.base64EncodedString())');this.a.loop=true;
+                    document.getElementById(id).textContent='本機播放測試';setTimeout(()=>this.o.events.onReady(),0);}
+                  playVideo(){this.a.play().then(()=>this.o.events.onStateChange()).catch(()=>this.o.events.onAutoplayBlocked());}
+                  pauseVideo(){this.a.pause();this.o.events.onStateChange();}
+                  getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Folia'};}
+                  getPlayerState(){return this.a.paused?2:1;} getCurrentTime(){return this.a.currentTime;}
+                  getDuration(){return Number.isFinite(this.a.duration)?this.a.duration:30;}
+                  seekTo(time){this.a.currentTime=time;} destroy(){this.a.pause();this.a.src='';}
+                }};window.onYouTubeIframeAPIReady();
+                </script>
+                """
+            }
+            #endif
+            return "<script src=\"https://www.youtube.com/iframe_api\" onerror=\"emit('error',{code:-1})\"></script>"
+        }
+
         static func html(video: String, session: String, origin: String) -> String {
             // These three inputs are validated identifiers, never free-form titles or lyrics.
             """
             <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
             <style>html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}</style></head><body>
             <div id="player"></div><script>
-            const session='\(session)',videoID='\(video)';let player,ready=false,wants=false,pendingSeek=null;
-            const emit=(type,extra={})=>window.webkit.messageHandlers.youtube.postMessage({type,session,...extra});
-            const snapshot=()=>{if(!ready)return;const data=player.getVideoData()||{};
-              emit('snapshot',{videoID:data.video_id||videoID,state:player.getPlayerState(),time:player.getCurrentTime()||0,
-                duration:player.getDuration()||0,title:data.title||'',author:data.author||''});};
-            window.FoliaYouTube={setPlayback(value){wants=value;if(ready){value?player.playVideo():player.pauseVideo();}},
-              seek(time){if(ready)player.seekTo(time,true);else pendingSeek=time;},stop(){wants=false;if(ready)player.destroy();ready=false;clearInterval(timer);}};
-            const timeout=setTimeout(()=>emit('error',{code:-1}),25000);
-            window.onYouTubeIframeAPIReady=()=>{player=new YT.Player('player',{width:'100%',height:'100%',videoId:videoID,
-              playerVars:{playsinline:1,controls:1,autoplay:0,origin:'\(origin)',widget_referrer:'\(origin)'},
-              events:{onReady(){ready=true;clearTimeout(timeout);if(pendingSeek!==null)player.seekTo(pendingSeek,true);
-                if(wants)player.playVideo();snapshot();},onStateChange:snapshot,onAutoplayBlocked(){emit('blocked');},onError(e){emit('error',{code:e.data});}}});};
-            const timer=setInterval(snapshot,250);emit('loaded');
-            document.addEventListener('visibilitychange',()=>{if(document.hidden){wants=false;if(ready)player.pauseVideo();}});
-            </script><script src="https://www.youtube.com/iframe_api" onerror="emit('error',{code:-1})"></script></body></html>
+            const session='\(session)',videoID='\(video)',origin='\(origin)';
+            \(transportScript)
+            </script>\(apiLoader)</body></html>
             """
         }
     }

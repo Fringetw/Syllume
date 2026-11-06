@@ -20,6 +20,15 @@ final class YouTubePlayback {
     private(set) var seekTime = 0.0
     private(set) var seekRevision = UUID()
     private(set) var visible = false
+    private(set) var playbackRevision = 0
+    #if DEBUG
+    private(set) var mediaSampleTime = 0.0
+    private(set) var mediaPlaybackState = "unknown"
+    func recordMediaState(_ state: String, session: UUID, revision: Int) {
+        guard session == self.session, revision == playbackRevision else { return }
+        mediaPlaybackState = state
+    }
+    #endif
     @ObservationIgnored private var lyricTask: Task<Void, Never>?
     @ObservationIgnored private var attemptedMatch: String?
     @ObservationIgnored private var matchAttempts = 0
@@ -48,13 +57,21 @@ final class YouTubePlayback {
         timeline = LyricTimeline(lines: []); timelineRevision = UUID()
     }
 
-    func setVisible(_ value: Bool) { visible = value; if !value { pause() } }
-    func prepareToPlay() { guard current != nil else { return }; wantsPlayback = true; pendingPlayback = true }
+    func setVisible(_ value: Bool) {
+        guard visible != value else { return }
+        visible = value
+        if !value { pause() }
+        else if wantsPlayback { playbackRevision += 1; pendingPlayback = true }
+    }
+    func prepareToPlay() { guard current != nil else { return }; playbackRevision += 1; wantsPlayback = true; pendingPlayback = true }
     func retry() { guard current != nil else { return }; load() }
     func toggle() { wantsPlayback ? pause() : resume() }
-    func resume() { guard current != nil, visible else { return }; error = nil; wantsPlayback = true; pendingPlayback = true }
-    func pause() { wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = false }
-    func autoplayBlocked() { pause(); pendingPlayback = nil; error = "請點上方 YouTube 播放器的播放鍵，開始播放。" }
+    func resume() { guard current != nil, visible else { return }; error = nil; prepareToPlay() }
+    func pause() { playbackRevision += 1; wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = false }
+    func autoplayBlocked() {
+        wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = nil
+        error = "請點上方 YouTube 播放器的播放鍵，開始播放。"
+    }
     func next() { guard canAdvance else { return }; index += 1; load() }
     func previous() { if position > 3 || index == 0 { seek(to: 0) } else { index -= 1; load() } }
     func seek(to time: Double) {
@@ -65,21 +82,35 @@ final class YouTubePlayback {
 
     func receive(_ snapshot: YouTubeSnapshot) {
         guard let track = current, snapshot.belongs(to: session, videoID: track.id) else { return }
-        guard visible else { pause(); return }
-        if let seek = pendingSeek, abs(snapshot.time - seek.time) > 1.5, Date().timeIntervalSince(seek.date) < 2 {
-            // A sample queued before the seek must not pull the lyric clock backwards.
-        } else { position = snapshot.time; pendingSeek = nil }
-        duration = snapshot.duration
+        guard visible else { if wantsPlayback || isPlaying { pause() }; return }
+        guard snapshot.commandRevision == playbackRevision else { return }
+        #if DEBUG
+        mediaSampleTime = snapshot.time
+        #endif
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
+        if let seek = pendingSeek, abs(snapshot.time - seek.time) > 1.5, Date().timeIntervalSince(seek.date) < 2 {
+            // A sample queued before the seek must not pull the lyric clock backwards.
+        } else if !stalePlay && !stalePause {
+            if abs(position - snapshot.time) > 0.001 { position = snapshot.time }
+            pendingSeek = nil
+        }
+        if duration != snapshot.duration { duration = snapshot.duration }
         if !stalePlay && !stalePause {
-            isPlaying = snapshot.state == 1; isBuffering = wantsPlayback && snapshot.state == 3
-            if snapshot.state == 1 { wantsPlayback = true; pendingPlayback = nil }
-            if snapshot.state == 2 { wantsPlayback = false; pendingPlayback = nil }
+            let playing = snapshot.state == 1, buffering = wantsPlayback && snapshot.state == 3
+            if isPlaying != playing { isPlaying = playing }
+            if isBuffering != buffering { isBuffering = buffering }
+            if snapshot.state == 1 { if !wantsPlayback { wantsPlayback = true }; pendingPlayback = nil }
+            if snapshot.state == 2 { if wantsPlayback { wantsPlayback = false }; pendingPlayback = nil }
+            if pendingPlayback == false, [-1, 0, 5].contains(snapshot.state) { pendingPlayback = nil }
         }
         if let title = snapshot.title, !title.isEmpty, title != queue[index].title { queue[index].title = title }
         if let author = snapshot.author, !author.isEmpty, author != queue[index].artist { queue[index].artist = author }
-        if snapshot.state == 0, pendingSeek == nil { if wantsPlayback && canAdvance { next() } else { pause() }; return }
+        if snapshot.state == 0, pendingSeek == nil {
+            if wantsPlayback && canAdvance { next() }
+            else if wantsPlayback || isPlaying { pause() }
+            return
+        }
         if attemptedMatch != "manual", matchAttempts < 4, duration > 0, let track = current {
             let signature = [track.title, track.artist, String(Int(duration.rounded()))].joined(separator: "|")
             if signature != attemptedMatch {
@@ -129,7 +160,7 @@ final class YouTubePlayback {
         lyricTask?.cancel(); session = UUID(); error = nil; position = 0; duration = 0
         isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
         matchAttempts = 0
-        pendingPlayback = true; pendingSeek = nil
+        playbackRevision += 1; pendingPlayback = true; pendingSeek = nil
         timeline = LyricTimeline(lines: []); timelineRevision = UUID(); lyricsSource = nil; lyricsLoading = false
         guard let track = current, let directory = try? lyricDirectory() else { return }
         for ext in ["fia", "lrc"] {

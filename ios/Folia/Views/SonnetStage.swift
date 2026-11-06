@@ -10,16 +10,19 @@ struct SonnetStage: View {
     let revision: UUID
     let position: Double
     let playing: Bool
+    var style: String = "sonnet"
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var ready = false
     @State private var failed = false
+    @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
 
     var body: some View {
         ZStack(alignment: .bottom) {
             SonnetWebView(songID: songID, title: title, artist: artist, timeline: timeline, revision: revision,
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
-                          ready: $ready, failed: $failed)
+                          style: style, energySaving: energySaving || lowPower, ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
@@ -27,6 +30,9 @@ struct SonnetStage: View {
                     .multilineTextAlignment(.center).padding(.horizontal, 24).padding(.bottom, 18)
                     .allowsHitTesting(false)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
     }
 }
@@ -41,6 +47,8 @@ private struct SonnetWebView: UIViewRepresentable {
     let time: Double
     let playing: Bool
     let reduceMotion: Bool
+    let style: String
+    let energySaving: Bool
     @Binding var ready: Bool
     @Binding var failed: Bool
 
@@ -53,8 +61,8 @@ private struct SonnetWebView: UIViewRepresentable {
         view.isOpaque = false; view.backgroundColor = .clear; view.scrollView.isScrollEnabled = false
         view.isUserInteractionEnabled = false
         view.isAccessibilityElement = true
-        view.accessibilityLabel = "商籟歌詞舞台"
-        view.accessibilityIdentifier = "foliaSonnetStage"
+        view.accessibilityLabel = style == "lumiere" ? "繪光歌詞舞台" : "商籟歌詞舞台"
+        view.accessibilityIdentifier = style == "lumiere" ? "foliaLumiereStage" : "foliaSonnetStage"
         view.accessibilityValue = "載入中"
         context.coordinator.view = view
         if let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaStage") {
@@ -65,8 +73,9 @@ private struct SonnetWebView: UIViewRepresentable {
     func updateUIView(_ view: WKWebView, context: Context) {
         context.coordinator.parent = self; context.coordinator.update()
         view.accessibilityValue = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
+        view.accessibilityIdentifier = style == "lumiere" ? "foliaLumiereStage" : "foliaSonnetStage"
         if let index = timeline.activeIndex(at: time) {
-            view.accessibilityLabel = "商籟歌詞舞台，" + lines[index].fullText
+            view.accessibilityLabel = (style == "lumiere" ? "繪光歌詞舞台，" : "商籟歌詞舞台，") + lines[index].fullText
         }
     }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
@@ -86,20 +95,21 @@ private struct SonnetWebView: UIViewRepresentable {
         init(_ parent: SonnetWebView) { self.parent = parent }
         func update() {
             guard loaded, let view else { return }
-            let key = [parent.songID, parent.revision.uuidString, String(parent.reduceMotion), parent.title, parent.artist].joined(separator: "|")
+            let key = [parent.songID, parent.revision.uuidString, parent.style, String(parent.energySaving), String(parent.reduceMotion), parent.title, parent.artist].joined(separator: "|")
             if sentSong != key {
                 sentSong = key; failureDetail = ""
                 DispatchQueue.main.async { self.parent.ready = false; self.parent.failed = false }
                 let data = try? JSONEncoder().encode(parent.lines)
                 let lines = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
                 let song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
-                    "reduceMotion": parent.reduceMotion, "lines": lines]
+                    "reduceMotion": parent.reduceMotion, "style": parent.style, "energySaving": parent.energySaving, "lines": lines]
                 view.callAsyncJavaScript("window.FoliaStage.setSong(song)", arguments: ["song": song], in: nil, in: .page, completionHandler: nil)
                 lastStamp = .distantPast
             }
             let elapsed = Date().timeIntervalSince(lastStamp)
             let expected = lastTime + (lastPlaying ? elapsed : 0)
-            if elapsed >= 0.25 || lastPlaying != parent.playing || abs(expected - parent.time) > 0.35 {
+            let needsTime = parent.playing ? elapsed >= 0.2 || abs(expected - parent.time) > 0.25 : abs(lastTime - parent.time) > 0.001
+            if needsTime || lastPlaying != parent.playing {
                 lastTime = parent.time; lastPlaying = parent.playing; lastStamp = Date()
                 view.callAsyncJavaScript("window.FoliaStage.setClock(snapshot)", arguments: ["snapshot":
                     ["time": parent.time, "playing": parent.playing, "reduceMotion": parent.reduceMotion]],

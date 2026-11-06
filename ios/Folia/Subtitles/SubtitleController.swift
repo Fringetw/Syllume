@@ -89,6 +89,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
 
     func command(_ name: String) {
         guard ["retry", "restore", "status"].contains(name) else { return }
+        guard ready else { notice = "字幕引擎正在準備，請稍後再試。"; return }
         call("window.FoliaSubtitles.command(name)", ["name": name])
     }
 

@@ -23,14 +23,19 @@ enum YouTubeChecks {
         precondition(model.index == 1 && !model.canAdvance)
         model.play([a, b], selected: a); model.setVisible(true)
         let session = model.session
-        func sample(_ state: Int, _ time: Double, _ otherSession: UUID? = nil, _ otherID: String? = nil) -> YouTubeSnapshot {
-            YouTubeSnapshot(session: (otherSession ?? session).uuidString, videoID: otherID ?? id, state: state, time: time, duration: 60, title: nil, author: nil)
+        func sample(_ state: Int, _ time: Double, _ otherSession: UUID? = nil, _ otherID: String? = nil, command: Int? = nil) -> YouTubeSnapshot {
+            YouTubeSnapshot(session: (otherSession ?? session).uuidString, videoID: otherID ?? id, state: state, time: time, duration: 60, title: nil, author: nil, commandRevision: command ?? model.playbackRevision)
         }
         model.receive(sample(1, 3)); precondition(model.isPlaying && model.position == 3)
-        model.pause(); model.receive(sample(1, 3.1))
-        precondition(!model.wantsPlayback && !model.isPlaying)
+        let oldCommand = model.playbackRevision
+        model.pause(); model.receive(sample(1, 3.1, command: oldCommand))
+        precondition(!model.wantsPlayback && !model.isPlaying && model.position == 3)
+        model.receive(sample(1, 3.2))
+        precondition(model.position == 3, "An unacknowledged pause cannot advance the lyric clock")
         model.receive(sample(2, 3.1)); model.receive(sample(1, 3.2))
         precondition(model.wantsPlayback && model.isPlaying)
+        model.receive(sample(2, 3.3, command: oldCommand))
+        precondition(model.isPlaying, "An old pause cannot undo a newer resume")
         model.seek(to: 40); model.receive(sample(1, 3.3)); precondition(model.position == 40)
         model.receive(sample(1, 40.1)); precondition(model.position == 40.1)
         model.setVisible(false); model.receive(sample(1, 41)); precondition(!model.isPlaying && !model.wantsPlayback)

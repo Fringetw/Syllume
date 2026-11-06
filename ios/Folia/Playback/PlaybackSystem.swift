@@ -12,7 +12,7 @@ final class PlaybackSystem {
 
     init(model: PlaybackModel, player: AVPlayer) {
         self.player = player
-        tickToken = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { [weak model] _ in
+        tickToken = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak model] _ in
             MainActor.assumeIsolated { model?.tick() }
         }
         transportToken = player.observe(\.timeControlStatus, options: [.new]) { [weak model] _, _ in

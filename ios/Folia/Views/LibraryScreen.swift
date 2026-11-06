@@ -82,7 +82,7 @@ struct LibraryScreen: View {
                         } label: { Image(systemName: youtubePlayer.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }
                         .accessibilityLabel("打開 YouTube 播放畫面")
                     }
-                    .buttonStyle(.plain).padding(.horizontal, 14).background(.regularMaterial, in: .rect(cornerRadius: 16))
+                    .buttonStyle(FoliaPressStyle()).padding(.horizontal, 14).background(.regularMaterial, in: .rect(cornerRadius: 16))
                     .padding(.horizontal, 14).padding(.bottom, 6)
                 } else if let track = player.current {
                     MiniPlayer(track: track, player: player, open: { showingPlayer = true })
@@ -144,7 +144,7 @@ struct LibraryScreen: View {
             .accessibilityLabel("匯入音樂")
             .disabled(library.importInProgress)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
         .padding(.horizontal, 22)
         .padding(.vertical, 12)
     }
@@ -232,7 +232,7 @@ struct LibraryScreen: View {
             }
             .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.10)) }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
         .accessibilityLabel("試聽潮汐之間，30 秒同步歌詞示範")
         .accessibilityIdentifier("demoTrack")
     }
@@ -304,6 +304,6 @@ struct TrackRow: View {
             .frame(minHeight: 46)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
     }
 }

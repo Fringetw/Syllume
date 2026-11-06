@@ -7,24 +7,31 @@ struct FoliaSettingsScreen: View {
     let navidrome: NavidromeConnection
     @Environment(\.dismiss) private var dismiss
     @State private var showingServer = false
+    @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
     var body: some View {
         NavigationStack {
             Form {
-                Section("內建模組") {
+                Section("字幕與動畫") {
                     NavigationLink { SubtitleSettingsContent(subtitles: subtitles) } label: {
                         VStack(alignment: .leading, spacing: 5) {
-                            Label("OpenCC 繁體字幕", systemImage: "character.book.closed")
+                            Label("繁體字幕", systemImage: "character.book.closed")
                             Text("v1.1.6 · 隨 App 內建，可停用與調整")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .accessibilityIdentifier("builtInTraditionalLyrics")
                 }
+                Section("動畫效能") {
+                    Toggle("省電動畫（30 fps）", isOn: $energySaving)
+                    Text("一般模式上限 60 fps；省電模式降低渲染解析度與繪光效果成本。系統低耗電模式也會自動採用省電動畫。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
                 }
-                Section { Text("Folia iOS 0.3.3").foregroundStyle(.secondary) }
+                Section { Text("Folia iOS 0.3.4").foregroundStyle(.secondary) }
             }
+            .buttonStyle(FoliaPressStyle())
             .navigationTitle("設定")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
             .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
@@ -38,7 +45,7 @@ struct SubtitleSettingsScreen: View {
     var body: some View {
         NavigationStack {
             SubtitleSettingsContent(subtitles: subtitles)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() }.accessibilityIdentifier("closeSubtitleSettings") } }
         }
     }
 }
@@ -115,13 +122,6 @@ private struct SubtitleSettingsContent: View {
                     Text("留空即使用內建直連。只有已有相容服務的維護者才需要更改。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-            }
-            .disabled(!subtitles.preferences.active)
-            Section("目前歌曲") {
-                Button("切換繁體字幕") { subtitles.preferences.enabled.toggle() }
-                Button("重新尋找中文字幕") { subtitles.command("retry") }
-                Button("還原這首歌的原字幕") { subtitles.command("restore") }
-                Button("查看字幕來源與中文覆蓋率") { subtitles.command("status") }
             }
             .disabled(!subtitles.preferences.active)
             Section("完整診斷報告") {

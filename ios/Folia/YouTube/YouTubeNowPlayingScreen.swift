@@ -10,7 +10,7 @@ struct YouTubeNowPlayingScreen: View {
     @State private var showingSearch = false
     @State private var showingSubtitles = false
     @State private var showingImporter = false
-    @State private var showList = false
+    @AppStorage("Folia.LyricDisplayMode") private var mode: LyricDisplayMode = .sonnet
     @State private var importError: String?
     @State private var importSession: UUID?
     @State private var scrubTime = 0.0
@@ -27,7 +27,6 @@ struct YouTubeNowPlayingScreen: View {
                     Spacer()
                     Menu {
                         Button("繁體字幕設定") { player.pause(); showingSubtitles = true }
-                        Button(showList ? "使用商籟動畫" : "使用歌詞清單") { showList.toggle() }
                         Button("尋找歌詞") { player.pause(); showingSearch = true }
                         Button("附加 LRC／FIA 歌詞", action: importLyrics)
                     } label: { Image(systemName: "ellipsis").frame(width: 44, height: 40) }
@@ -36,14 +35,26 @@ struct YouTubeNowPlayingScreen: View {
                 YouTubePlayerView(player: player)
                     .frame(height: 200).frame(minWidth: 200)
                     .padding(.horizontal, 12)
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+                    Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("youtubeTransportProbe")
+                        .accessibilityValue(String(format: "%.3f|%@", player.mediaSampleTime, player.mediaPlaybackState))
+                }
+                #endif
+
+                Picker("播放畫面", selection: $mode) {
+                    ForEach(LyricDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
+                }.pickerStyle(.segmented).padding(.horizontal, 22)
 
                 Group {
                     if !subtitles.timeline.lines.isEmpty {
-                        if showList { YouTubeLyricList(player: player, timeline: subtitles.timeline) }
+                        if mode == .lyrics { YouTubeLyricList(player: player, timeline: subtitles.timeline) }
+                        else if mode == .cover { Image(systemName: "music.note").font(.system(size: 80)).foregroundStyle(FoliaPalette.accent) }
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist,
                                         timeline: subtitles.timeline, revision: subtitles.revision,
-                                        position: player.position, playing: player.isPlaying && !player.isBuffering)
+                                        position: player.position, playing: player.isPlaying && !player.isBuffering, style: mode.rawValue)
                         }
                     } else if player.lyricsLoading { ProgressView("正在匹配同步歌詞") }
                     else {
@@ -89,7 +100,7 @@ struct YouTubeNowPlayingScreen: View {
                 .padding(.horizontal, 22).padding(.bottom, 6)
             }
             .background(PlaybackAtmosphere(playing: player.isPlaying && !player.isBuffering).ignoresSafeArea())
-            .buttonStyle(.plain)
+            .buttonStyle(FoliaPressStyle())
             .onAppear { player.setVisible(true) }
             .onDisappear { player.setVisible(false) }
             .onChange(of: scenePhase) { _, phase in if phase != .active { player.pause() } }
@@ -98,9 +109,12 @@ struct YouTubeNowPlayingScreen: View {
                 revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in
                 subtitles.load(next, timeline: player.timeline)
             }
+            .onChange(of: player.session) { _, _ in showingSearch = false; showingSubtitles = false }
             .sheet(isPresented: $showingSubtitles) { SubtitleSettingsScreen(subtitles: subtitles) }
             .sheet(isPresented: $showingSearch) {
-                OnlineLyricSearchScreen(title: track.title, artist: track.artist.replacingOccurrences(of: " - Topic", with: "")) { record in
+                let selectedSession = player.session
+                LyricSearchScreen(subtitles: subtitles, title: track.title, artist: track.artist.replacingOccurrences(of: " - Topic", with: "")) { record in
+                    guard player.session == selectedSession else { return }
                     player.useLyrics(record)
                 }
                 .id(player.session)
@@ -140,63 +154,6 @@ private struct YouTubeLyricList: View {
             .onChange(of: index, initial: true) { _, next in
                 guard let next else { return }
                 withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.4)) { reader.scrollTo(next, anchor: .center) }
-            }
-        }
-    }
-}
-
-private struct OnlineLyricSearchScreen: View {
-    @State var title: String
-    @State var artist: String
-    let choose: (LyricSearchRecord) -> Void
-    @Environment(\.dismiss) private var dismiss
-    @State private var records: [LyricSearchRecord] = []
-    @State private var loading = false
-    @State private var error: String?
-    @State private var task: Task<Void, Never>?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("以歌曲資料尋找同步歌詞") {
-                    TextField("歌名", text: $title)
-                    TextField("歌手", text: $artist)
-                    Button(loading ? "正在尋找…" : "搜尋 LRCLIB") { search() }.disabled(loading || title.isEmpty)
-                    if let error { Text(error).foregroundStyle(.orange) }
-                }
-                Section("選擇與目前音訊相同的版本") {
-                    ForEach(records) { record in
-                        Button {
-                            choose(record); dismiss()
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(record.trackName).foregroundStyle(.primary)
-                                Text("\(record.artistName) · \(record.albumName) · \(playbackTime(record.duration))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(record.syncedLyrics?.split(separator: "\n").prefix(2).joined(separator: "\n") ?? "")
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("尋找歌詞").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
-        }
-        .onDisappear { task?.cancel() }
-    }
-    private func search() {
-        task?.cancel(); loading = true; error = nil
-        let title = title, artist = artist
-        task = Task {
-            do {
-                let found = try await OnlineLyrics.shared.search(title: title, artist: artist)
-                guard !Task.isCancelled else { return }
-                records = found; loading = false
-                if found.isEmpty { error = "找不到同步歌詞，可調整歌名或歌手，或附加自己的 LRC／FIA。" }
-            } catch {
-                guard !Task.isCancelled else { return }
-                loading = false; self.error = "歌詞服務未回應，請稍後再試。"
             }
         }
     }
