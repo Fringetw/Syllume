@@ -198,7 +198,7 @@ private struct PlatformEntries: View {
     }
 }
 
-private struct PlatformAccountSettings: View {
+struct PlatformAccountSettings: View {
     let connection: PlatformConnection
     @Environment(\.dismiss) private var dismiss
     @State private var clientID = ""
@@ -211,7 +211,7 @@ private struct PlatformAccountSettings: View {
             Form {
                 Section {
                     PlatformBrand(platform: connection.platform)
-                    Text("連接後可在 Folia 瀏覽歌單與收藏。YouTube 影片可在 App 內播放，並搭配 Folia 歌詞動畫；Spotify 會交由原平台播放。")
+                    Text("YouTube 用於同步播放清單與喜歡的影片；歌曲取得完整音檔後，由 Folia 播放並顯示歌詞動畫。Spotify 會交由原平台播放。")
                 }
                 if connection.platform == .spotify {
                     Section {
@@ -270,7 +270,9 @@ private struct PlatformAccountSettings: View {
             }
             .navigationTitle(connection.platform.title)
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .cancellationAction) {
+                Button("關閉") { dismiss() }.accessibilityIdentifier("closePlatformAccount")
+            } }
             .confirmationDialog("移除此裝置儲存的曲庫授權？", isPresented: $confirmDisconnect) {
                 Button("中斷連線", role: .destructive) {
                     do { try connection.disconnect(); dismiss() }

@@ -5,12 +5,14 @@ import Observation
 // Copies Files imports into the app sandbox and keeps a separate local catalog.
 @MainActor @Observable
 final class LocalLibrary {
-    private(set) var tracks: [Track] = []
+    private(set) var tracks: [Track] = [] { didSet { rebuildIndex() } }
     private(set) var importInProgress = false
     private(set) var storageError: String?
     private let storage: URL
     private let lyricReader = LyricReader()
     @ObservationIgnored private var pendingAttachments: [String: UUID] = [:]
+    @ObservationIgnored private var tracksByID: [String: Track] = [:]
+    @ObservationIgnored private var downloadsByOrigin: [String: Track] = [:]
 
     init() {
         storage = URL.applicationSupportDirectory.appending(path: "FoliaMusic", directoryHint: .isDirectory)
@@ -23,9 +25,66 @@ final class LocalLibrary {
         } catch {
             storageError = "無法讀取本機曲庫。"
         }
+        rebuildIndex()
     }
 
-    func assetURL(for track: Track) -> URL? { track.audioFile.map { folder(for: track.id).appending(path: $0) } }
+    private func rebuildIndex() {
+        tracksByID = Dictionary(tracks.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        downloadsByOrigin = Dictionary(tracks.compactMap { track in track.downloadOrigin.map { ($0, track) } },
+                                       uniquingKeysWith: { first, _ in first })
+    }
+
+    func track(_ id: String) -> Track? { _ = tracks.count; return tracksByID[id] }
+    func downloadedTrack(origin: String) -> Track? { _ = tracks.count; return downloadsByOrigin[origin] }
+
+    static var downloadDirectory: URL { URL.documentsDirectory.appending(path: "Music", directoryHint: .isDirectory) }
+
+    func assetURL(for track: Track) -> URL? {
+        if let name = track.downloadedFile {
+            guard PlaylistAudioRules.validBasename(name) else { return nil }
+            let root = Self.downloadDirectory.resolvingSymlinksInPath()
+            let url = root.appending(path: name).resolvingSymlinksInPath()
+            guard url.deletingLastPathComponent() == root, FileManager.default.fileExists(atPath: url.path) else { return nil }
+            return url
+        }
+        return track.audioFile.map { folder(for: track.id).appending(path: $0) }
+    }
+
+    func registerDownload(_ file: URL, song: SubtitleSong, ext: String, duration: Double, lyrics: [LyricLine],
+                          origin: String, provider: String, quality: String) throws -> Track {
+        guard ["flac", "mp3", "m4a"].contains(ext), duration.isFinite, duration > 0, YouTubeVideo.validID(origin) else {
+            throw PlaylistAudioError.invalidFile
+        }
+        let id = UUID().uuidString
+        let root = Self.downloadDirectory
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true
+        var directory = root; try? directory.setResourceValues(excluded)
+        let filename = PlaylistAudioRules.safeFilename(title: song.title, artist: song.artist, id: id, ext: ext)
+        guard PlaylistAudioRules.validBasename(filename) else { throw PlaylistAudioError.invalidFile }
+        let target = root.appending(path: filename)
+        let metadataFolder = folder(for: id)
+        try FileManager.default.createDirectory(at: metadataFolder, withIntermediateDirectories: true)
+        var moved = false
+        do {
+            // The transfer is already validated. A unique name never overwrites a user's file.
+            try FileManager.default.moveItem(at: file, to: target)
+            moved = true
+            var track = Track(id: id, source: .local, title: song.title, artist: song.artist, album: nil,
+                              duration: duration, downloadedFile: filename, downloadOrigin: origin,
+                              downloadProvider: provider, downloadQuality: quality)
+            if !lyrics.isEmpty, let data = try? PlaylistAudioRules.fia(lyrics), data.count <= 8_000_000 {
+                try data.write(to: metadataFolder.appending(path: "downloaded.fia"), options: .atomic)
+                track.lyricFile = "downloaded.fia"
+            }
+            try save(tracks + [track])
+            return track
+        } catch {
+            if moved { try? FileManager.default.removeItem(at: target) }
+            try? FileManager.default.removeItem(at: metadataFolder)
+            throw error
+        }
+    }
 
     func artwork(for track: Track) -> Data? {
         guard let name = track.artworkFile else { return nil }
@@ -148,10 +207,12 @@ final class LocalLibrary {
     }
 
     func remove(_ id: String) throws {
-        guard tracks.contains(where: { $0.id == id }) else { return }
+        guard let removed = tracks.first(where: { $0.id == id }) else { return }
+        let downloaded = removed.downloadedFile == nil ? nil : assetURL(for: removed)
         try save(tracks.filter { $0.id != id })
         pendingAttachments[id] = nil
         try? FileManager.default.removeItem(at: folder(for: id))
+        if let downloaded { try? FileManager.default.removeItem(at: downloaded) }
     }
 
     // A process can stop after copying files and before atomically updating the catalog.

@@ -51,6 +51,12 @@ jobs:
           name: Folia-subtitle-source-checks
           path: ${{ runner.temp }}/Folia-subtitle-source-checks.txt
           if-no-files-found: ignore
+      - name: Start the iPhone Simulator while compiling
+        run: |
+          simulator_info=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"]+" "+x["state"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          read -r simulator_id simulator_state <<< "$simulator_info"
+          echo "FOLIA_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          if [ "$simulator_state" != "Booted" ]; then xcrun simctl boot "$simulator_id"; fi
       - name: Compile for iOS Simulator
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
@@ -69,16 +75,19 @@ jobs:
           cd "$RUNNER_TEMP/FoliaPackage"
           /usr/bin/zip -qry Folia-iOS-unsigned.ipa Payload
           python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Folia.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
+          python3 "$GITHUB_WORKSPACE/ios/Tools/verify_ipa.py" Folia-iOS-unsigned.ipa > release-verification.json
       - uses: actions/upload-artifact@v4
         with:
           name: Folia-iOS-unsigned
           path: |
             ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
             ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
+            ${{ runner.temp }}/FoliaPackage/release-verification.json
           if-no-files-found: error
       - name: Exercise playback and platform setup on iPhone Simulator
         run: |
-          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          xcrun simctl bootstatus "$FOLIA_SIMULATOR_ID" -b
+          simulator_id="$FOLIA_SIMULATOR_ID"
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
             -destination "platform=iOS Simulator,id=$simulator_id" \
             -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \

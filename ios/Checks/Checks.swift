@@ -7,8 +7,10 @@ struct Checks {
         try PlatformChecks.run()
         try YouTubeChecks.run()
         try SubtitleSourceChecks.run()
+        try PlaylistAudioChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        try await PlaylistTransferChecks.run(audio: ios.appending(path: "Folia/Resources/tide.m4a"))
         let lrc = LyricTimeline(lrc: """
             [offset:500]
             [00:04.0][00:18.00]Then

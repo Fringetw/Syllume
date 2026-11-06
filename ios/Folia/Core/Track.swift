@@ -14,6 +14,10 @@ struct Track: Codable, Identifiable, Equatable, Sendable {
     var lyricFile: String? = nil
     var artworkFile: String? = nil
     var coverID: String? = nil
+    var downloadedFile: String? = nil
+    var downloadOrigin: String? = nil
+    var downloadProvider: String? = nil
+    var downloadQuality: String? = nil
 
     var subtitle: String {
         [artist, album].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")

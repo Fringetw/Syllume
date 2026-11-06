@@ -23,7 +23,11 @@ final class PlaybackModel {
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
     var canAdvance: Bool { index.map { $0 + 1 < queue.count || repeatQueue } ?? false }
     #if DEBUG
-    var mediaProbe: String { String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate) }
+    var mediaProbe: String {
+        // Keep the real AVPlayer sample observable in every display style.
+        _ = position; _ = isPlaying
+        return String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
+    }
     #endif
 
     @ObservationIgnored private let player = AVPlayer()
@@ -44,8 +48,9 @@ final class PlaybackModel {
         system = PlaybackSystem(model: self, player: player)
     }
 
-    func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil) {
-        guard let index = tracks.firstIndex(of: selected) else { return }
+    func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil, startingAt position: Int? = nil) {
+        let selectedIndex = position ?? tracks.firstIndex(of: selected)
+        guard let index = selectedIndex, tracks.indices.contains(index), tracks[index] == selected else { return }
         externalPlayback = false
         self.client = client
         queue = tracks
@@ -143,13 +148,14 @@ final class PlaybackModel {
     }
 
     func removeFromQueue(_ id: String) {
-        guard let position = queue.firstIndex(where: { $0.source == .local && $0.id == id }), let index else { return }
-        if position == index {
+        guard let index else { return }
+        if current?.source == .local, current?.id == id {
             clear()
             return
         }
-        queue.remove(at: position)
-        if position < index { self.index = index - 1 }
+        let before = queue.prefix(index).filter { $0.source == .local && $0.id == id }.count
+        queue.removeAll { $0.source == .local && $0.id == id }
+        self.index = index - before
         system?.updateCommands(model: self)
     }
 
@@ -158,9 +164,9 @@ final class PlaybackModel {
     }
 
     func reloadLocalLyrics(_ track: Track) {
-        guard let position = queue.firstIndex(where: { $0.source == .local && $0.id == track.id }) else { return }
-        queue[position] = track
-        guard position == index else { return }
+        let selected = current?.source == .local && current?.id == track.id
+        for position in queue.indices where queue[position].source == .local && queue[position].id == track.id { queue[position] = track }
+        guard selected else { return }
         lyricsTask?.cancel()
         timeline = LyricTimeline(lines: [])
         lyricsLoading = track.lyricFile != nil
@@ -217,7 +223,7 @@ final class PlaybackModel {
         resetItem()
         self.index = index
         let queued = queue[index]
-        let track = queued.source == .local ? (library.tracks.first { $0.id == queued.id } ?? queued) : queued
+        let track = queued.source == .local ? (library.track(queued.id) ?? queued) : queued
         duration = track.duration ?? 0
         error = nil
         let url: URL?

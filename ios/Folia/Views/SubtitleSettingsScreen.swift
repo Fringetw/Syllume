@@ -29,7 +29,7 @@ struct FoliaSettingsScreen: View {
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
                 }
-                Section { Text("Folia iOS 0.3.4 · build 10").foregroundStyle(.secondary) }
+                Section { Text("Folia iOS 0.4.0 · build 11").foregroundStyle(.secondary) }
             }
             .buttonStyle(FoliaPressStyle())
             .navigationTitle("設定")

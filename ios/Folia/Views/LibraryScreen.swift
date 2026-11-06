@@ -10,11 +10,9 @@ struct LibraryScreen: View {
 
     @State private var spotify = PlatformConnection(.spotify)
     @State private var youtube = PlatformConnection(.youtube)
-    @State private var youtubePlayer = YouTubePlayback()
+    @State private var playlistSync: YouTubePlaylistSync
     @State private var subtitles = SubtitleController()
     @State private var showingSettings = false
-    @State private var showingYouTubePlayer = false
-    @State private var youtubeLink = LibraryScreen.initialYouTubeLink
 
     @State private var showingPlayer = false
     @State private var showingServer = false
@@ -30,14 +28,9 @@ struct LibraryScreen: View {
         UTType(importedAs: "org.folia.lyrics.lrc"), UTType(importedAs: "org.folia.lyrics.fia")
     ]
 
-    // The pause fixture starts with a validated link; keyboard entry is tested separately.
-    private static var initialYouTubeLink: String {
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
-            return "https://youtu.be/M7lc1UVf-VE"
-        }
-        #endif
-        return ""
+    init(library: LocalLibrary, player: PlaybackModel, navidrome: NavidromeConnection) {
+        self.library = library; self.player = player; self.navidrome = navidrome
+        _playlistSync = State(initialValue: YouTubePlaylistSync(library: library))
     }
 
     var body: some View {
@@ -54,49 +47,27 @@ struct LibraryScreen: View {
                 .padding(.horizontal, 22)
                 .padding(.bottom, 8)
 
-                if source == .youtube {
-                    HStack {
-                        TextField("貼上 YouTube／YouTube Music 連結", text: $youtubeLink)
-                            .font(.footnote).textFieldStyle(.roundedBorder).keyboardType(.URL)
-                            .textInputAutocapitalization(.never).autocorrectionDisabled()
-                            .submitLabel(.go).onSubmit(playYouTubeLink)
-                        Button("播放", action: playYouTubeLink).disabled(youtubeLink.isEmpty)
-                            .accessibilityIdentifier("playYouTubeLink")
-                    }
-                    .padding(.horizontal, 22).padding(.bottom, 6)
-                }
-
                 switch source {
                 case .local: localLibrary
                 case .navidrome:
                     NavidromeSearch(account: navidrome.account, configure: { showingServer = true }) { track, tracks, client in
-                        youtubePlayer.stop()
                         player.play(tracks, from: track, client: client)
                         showingPlayer = true
                     }
                 case .spotify:
-                    PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: pauseForPlatform, playYouTube: playYouTubeEntry)
+                    PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: pauseForPlatform, playYouTube: { _, _ in })
                 case .youtube:
-                    PlatformLibraryScreen(connection: youtube, pauseLocalPlayback: pauseForPlatform, playYouTube: playYouTubeEntry)
+                    YouTubePlaylistScreen(connection: youtube, sync: playlistSync) { tracks, index in
+                        guard tracks.indices.contains(index) else { return }
+                        player.play(tracks, from: tracks[index], startingAt: index)
+                        showingPlayer = true
+                    }
                 }
             }
             .background(FoliaPalette.surface.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let video = youtubePlayer.current {
-                    HStack {
-                        Button { showingYouTubePlayer = true } label: {
-                            Label(video.title, systemImage: "play.rectangle").lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        Button {
-                            if youtubePlayer.isPlaying { youtubePlayer.pause() }
-                            else { youtubePlayer.prepareToPlay(); showingYouTubePlayer = true }
-                        } label: { Image(systemName: youtubePlayer.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44) }
-                        .accessibilityLabel("打開 YouTube 播放畫面")
-                    }
-                    .buttonStyle(FoliaPressStyle()).padding(.horizontal, 14).background(.regularMaterial, in: .rect(cornerRadius: 16))
-                    .padding(.horizontal, 14).padding(.bottom, 6)
-                } else if let track = player.current {
+                if let track = player.current {
                     MiniPlayer(track: track, player: player, open: { showingPlayer = true })
                 }
             }
@@ -106,16 +77,33 @@ struct LibraryScreen: View {
                 .allowsHitTesting(false).accessibilityHidden(true)
         }
         .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player, subtitles: subtitles) }
-        .fullScreenCover(isPresented: $showingYouTubePlayer) { YouTubeNowPlayingScreen(player: youtubePlayer, subtitles: subtitles) }
         .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
-        .onAppear { subtitles.sources(library: library, account: navidrome.account) }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { subtitles.synchronize() } }
+        .onAppear {
+            subtitles.sources(library: library, account: navidrome.account)
+            playlistSync.activate(youtube.libraryIdentity)
+            playlistSync.setActive(scenePhase == .active)
+        }
+        .task(id: youtube.libraryIdentity) {
+            playlistSync.activate(youtube.libraryIdentity)
+            await playlistSync.synchronize(youtube)
+            while !Task.isCancelled {
+                do { try await Task.sleep(nanoseconds: 300_000_000_000) } catch { return }
+                if playlistSync.active { await playlistSync.synchronize(youtube) }
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            playlistSync.setActive(phase == .active)
+            if phase == .active {
+                subtitles.synchronize()
+                Task { await playlistSync.synchronize(youtube) }
+            }
+        }
         .onChange(of: navidrome.account) { _, _ in
             player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
         }
         .onChange(of: subtitleInput, initial: true) { _, next in
-            subtitles.load(next, timeline: player.externalPlayback ? youtubePlayer.timeline : player.timeline)
+            subtitles.load(next, timeline: player.timeline)
         }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: lyricTarget == nil ? [.audio] + Self.lyricTypes : Self.lyricTypes,
@@ -174,12 +162,7 @@ struct LibraryScreen: View {
     }
 
     private var subtitleInput: SubtitleInput? {
-        if player.externalPlayback {
-            guard let track = youtubePlayer.current else { return nil }
-            return SubtitleInput(song: SubtitleSong(id: track.id, source: "ytm", title: track.title,
-                artist: track.artist, durationMs: youtubePlayer.duration * 1000),
-                revision: youtubePlayer.timelineRevision, loading: youtubePlayer.lyricsLoading)
-        }
+        guard !player.externalPlayback else { return nil }
         guard let track = player.current else { return nil }
         return SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue, title: track.title,
             artist: track.artist ?? "", durationMs: player.duration * 1000),
@@ -206,7 +189,6 @@ struct LibraryScreen: View {
                     if visibleTracks.isEmpty { Text("沒有符合的歌曲。").foregroundStyle(.secondary) }
                     ForEach(visibleTracks) { track in
                         TrackRow(track: track, active: player.current?.source == .local && player.current?.id == track.id) {
-                            youtubePlayer.stop()
                             player.play(visibleTracks, from: track)
                             showingPlayer = true
                         }
@@ -227,7 +209,6 @@ struct LibraryScreen: View {
 
     private var demoCard: some View {
         Button {
-            youtubePlayer.stop()
             player.play([.demo], from: .demo)
             showingPlayer = true
         } label: {
@@ -274,25 +255,7 @@ struct LibraryScreen: View {
         }
     }
 
-    private func pauseForPlatform() { youtubePlayer.pause(); player.pauseForExternalPlayback() }
-    private func playYouTubeEntry(_ entry: LibraryEntry, _ entries: [LibraryEntry]) {
-        let videos = entries.compactMap { entry -> YouTubeVideo? in
-            guard let id = YouTubeVideo.identifier(from: entry.url.absoluteString) else { return nil }
-            return YouTubeVideo(id: id, title: entry.title, artist: entry.subtitle, queueID: entry.id)
-        }
-        guard let selected = videos.first(where: { $0.queueID == entry.id }) else {
-            message = "這個項目沒有可播放的 YouTube 影片。"; return
-        }
-        player.pauseForExternalPlayback(); youtubePlayer.play(videos, selected: selected); showingYouTubePlayer = true
-    }
-    private func playYouTubeLink() {
-        guard let id = YouTubeVideo.identifier(from: youtubeLink) else {
-            message = "請貼上 YouTube 或 YouTube Music 的單支影片連結。"; return
-        }
-        let video = YouTubeVideo(id: id, title: "YouTube 影片", artist: "")
-        player.pauseForExternalPlayback(); youtubePlayer.play([video], selected: video)
-        youtubeLink = ""; showingYouTubePlayer = true
-    }
+    private func pauseForPlatform() { player.pauseForExternalPlayback() }
 }
 
 struct TrackRow: View {
