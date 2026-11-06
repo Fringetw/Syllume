@@ -7,8 +7,11 @@ export const defaults = Object.freeze({ active: true, enabled: true, target: 'tw
     searchDepth: 'standard', reportVisible: true });
 
 // Only the platform boundary changes. The pinned plugin owns conversion, matching, budgets and reports.
-export function createSubtitleEngine({ request, publish, report, toast = () => {} }) {
+export function createSubtitleEngine({ request, publish: sendDisplay, report: sendReport, toast = () => {} }) {
     let settings = { ...defaults }, providers = [], input = null, selector = null, account = '';
+    let configurationRevision = 0;
+    const publish = value => sendDisplay({ ...value, configurationRevision });
+    const report = value => sendReport({ ...value, configurationRevision });
     let reportTimer = null;
     const searchReady = () => input && (input.song.source !== 'ytm'
         || (input.duration > 0 && input.song.artist?.trim() && input.song.title !== 'YouTube 影片'));
@@ -56,6 +59,9 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
     }
     return {
         configure(next, listed, accountKey = '') {
+            const revision = Number.isSafeInteger(next.nativeRevision) ? next.nativeRevision : 0;
+            if (revision < configurationRevision) return;
+            configurationRevision = revision;
             const changedAccount = accountKey !== account;
             settings = { ...defaults, ...next }; providers = listed; account = accountKey;
             folium.host.folia = typeof next.hostVersion === 'string' ? next.hostVersion.slice(0, 80) : 'Folia-iOS';

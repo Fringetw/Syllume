@@ -195,6 +195,10 @@ final class FoliaUITests: XCTestCase {
         app.buttons["尋找歌詞"].tap()
         XCTAssertTrue(app.buttons["findChineseLyrics"].waitForExistence(timeout: 10))
         app.buttons["繁體字幕設定"].tap()
+        let state = app.descendants(matching: .any)["subtitleEngineState"].firstMatch
+        XCTAssertTrue(state.waitForExistence(timeout: 10))
+        let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: state)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 30), .completed, "Subtitle engine must be running before testing settings")
     }
 
     private func probeTime(_ element: XCUIElement) -> Double {

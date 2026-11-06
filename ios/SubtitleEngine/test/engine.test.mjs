@@ -175,3 +175,19 @@ test('diagnostics receive the native app version instead of a stale bundled vers
     assert.equal(h.reports.at(-1).value.host.folia, 'Folia-iOS/0.3.3');
     h.engine.dispose();
 });
+
+test('configuration revisions reject an older disable arriving after reenable', () => {
+    const h = harness();
+    const raw = [{ fullText: '头发发现', startTime: 0, endTime: 4, words: [] }];
+    h.engine.configure({ ...defaults, enabled: false, nativeRevision: 1 }, []);
+    h.engine.load({ token: 'config', song, duration: 60, lines: raw });
+    h.engine.configure({ ...defaults, active: false, nativeRevision: 2 }, []);
+    assert.equal(h.last().lines[0].fullText, '头发发现');
+    h.engine.configure({ ...defaults, nativeRevision: 4 }, []);
+    assert.equal(h.last().lines[0].fullText, '頭髮發現');
+    assert.equal(h.last().configurationRevision, 4);
+    h.engine.configure({ ...defaults, active: false, nativeRevision: 3 }, []);
+    assert.equal(h.last().lines[0].fullText, '頭髮發現');
+    assert.equal(h.last().configurationRevision, 4);
+    h.engine.dispose();
+});

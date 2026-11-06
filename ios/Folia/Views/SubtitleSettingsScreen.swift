@@ -29,7 +29,7 @@ struct FoliaSettingsScreen: View {
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
                 }
-                Section { Text("Folia iOS 0.3.4").foregroundStyle(.secondary) }
+                Section { Text("Folia iOS 0.3.4 · build 10").foregroundStyle(.secondary) }
             }
             .buttonStyle(FoliaPressStyle())
             .navigationTitle("設定")
@@ -61,8 +61,16 @@ private struct SubtitleSettingsContent: View {
             Section {
                 Label("內建 · OpenCC 繁體字幕 v1.1.6", systemImage: "lock.fill")
                     .font(.subheadline)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("內建繁體字幕")
+                    .accessibilityIdentifier("subtitleEngineState")
+                    .accessibilityValue(subtitles.ready && subtitles.engineError == nil ? "已就緒" : "準備中")
                 Toggle("啟用內建模組", isOn: $subtitles.preferences.active)
                     .accessibilityIdentifier("subtitleActive")
+                if !subtitles.ready && subtitles.engineError == nil { ProgressView("正在準備繁體字幕") }
+                if subtitles.engineError != nil {
+                    Button("重新準備字幕") { subtitles.restartEngine(manual: true) }
+                }
             } footer: {
                 Text("模組隨 App 內建。停用會還原原字幕，不會改寫歌詞檔。")
             }

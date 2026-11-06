@@ -6,6 +6,7 @@ struct LibraryScreen: View {
     let library: LocalLibrary
     let player: PlaybackModel
     let navidrome: NavidromeConnection
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var spotify = PlatformConnection(.spotify)
     @State private var youtube = PlatformConnection(.youtube)
@@ -89,11 +90,16 @@ struct LibraryScreen: View {
                 }
             }
         }
+        .overlay(alignment: .topLeading) {
+            SubtitleEngineAnchor(controller: subtitles).frame(width: 1, height: 1)
+                .allowsHitTesting(false).accessibilityHidden(true)
+        }
         .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player, subtitles: subtitles) }
         .fullScreenCover(isPresented: $showingYouTubePlayer) { YouTubeNowPlayingScreen(player: youtubePlayer, subtitles: subtitles) }
         .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
         .onAppear { subtitles.sources(library: library, account: navidrome.account) }
+        .onChange(of: scenePhase) { _, phase in if phase == .active { subtitles.synchronize() } }
         .onChange(of: navidrome.account) { _, _ in
             player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
         }

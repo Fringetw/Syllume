@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import WebKit
+import SwiftUI
 
 @MainActor @Observable
 final class SubtitleController: NSObject, WKNavigationDelegate {
@@ -18,7 +19,13 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private(set) var engineError: String?
     var notice: String?
     @ObservationIgnored private var webView: WKWebView?
-    @ObservationIgnored private var ready = false
+    private(set) var ready = false
+    @ObservationIgnored private var configurationRevision = 0
+    @ObservationIgnored private var hostLease: UUID?
+    @ObservationIgnored private var recoveries = 0
+    @ObservationIgnored private var recoveryWindow = Date.distantPast
+    @ObservationIgnored private var probing = false
+    @ObservationIgnored private var engineGeneration = UUID()
     @ObservationIgnored private var input: SubtitleInput?
     @ObservationIgnored private var raw = LyricTimeline(lines: [])
     @ObservationIgnored private var token = UUID().uuidString
@@ -48,6 +55,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         config.websiteDataStore = .nonPersistent()
         config.userContentController.add(SubtitleMessageHandler(self), name: "subtitles")
         let view = WKWebView(frame: .zero, configuration: config)
+        view.isOpaque = false; view.backgroundColor = .clear; view.scrollView.backgroundColor = .clear
+        view.isUserInteractionEnabled = false; view.accessibilityElementsHidden = true
         view.navigationDelegate = self
         view.isInspectable = false
         webView = view
@@ -93,11 +102,50 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         call("window.FoliaSubtitles.command(name)", ["name": name])
     }
 
+    // Keep this offline worker attached to the scene even when a full-screen player covers the library.
+    fileprivate func mount(in window: UIWindow, lease: UUID) {
+        guard let view = webView else { return }
+        hostLease = lease
+        if view.superview !== window { window.addSubview(view) }
+        view.frame = CGRect(x: 1, y: window.safeAreaInsets.top + 1, width: 1, height: 1)
+        if !ready { synchronize() }
+    }
+    fileprivate func unmount(lease: UUID) {
+        guard hostLease == lease else { return }
+        webView?.removeFromSuperview(); hostLease = nil
+    }
+    func synchronize() {
+        guard engineError == nil, !probing, let view = webView, view.url?.isFileURL == true else { return }
+        probing = true
+        let generation = engineGeneration
+        view.evaluateJavaScript("typeof window.FoliaSubtitles?.configure === 'function'") { [weak self] result, _ in
+            guard let self, generation == engineGeneration else { return }
+            probing = false
+            guard result as? Bool == true else { return }
+            markReady(replay: true)
+        }
+    }
+    func restartEngine(manual: Bool = false) {
+        if manual || Date().timeIntervalSince(recoveryWindow) > 60 { recoveries = 0; recoveryWindow = Date() }
+        ready = false; probing = false; engineGeneration = UUID()
+        cancelRequests(); apply(raw); token = UUID().uuidString
+        guard recoveries < 2, let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaSubtitles") else {
+            engineError = "繁體字幕尚未恢復，請按「重新準備字幕」再試。"; return
+        }
+        recoveries += 1; engineError = nil
+        webView?.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
+    }
+    private func markReady(replay: Bool = false) {
+        guard replay || !ready else { return }
+        ready = true; engineError = nil; configureEngine(); sendInput()
+    }
+
     private func save() {
         if let data = try? JSONEncoder().encode(preferences) { UserDefaults.standard.set(data, forKey: "Folia.BuiltInTraditionalLyrics.v1") }
     }
     private func configureEngine() {
         guard ready else { return }
+        configurationRevision += 1
         if !preferences.active {
             cancelRequests(); apply(raw); reportJSON = Data("{}".utf8)
             sourceStatus.removeAll(); sourceDiagnostics.removeAll(); engineReport = [:]
@@ -112,6 +160,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         ]
         if fixture { providers = [] }
         var settings = object(preferences) as? [String: Any] ?? [:]
+        settings["nativeRevision"] = configurationRevision
         settings["hostVersion"] = "Folia-iOS/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")
         call("window.FoliaSubtitles.configure(settings, providers, account)",
              ["settings": settings, "providers": providers, "account": accountKey])
@@ -124,8 +173,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
             "duration": input.song.durationMs / 1000, "lines": object(raw.lines) ?? []]])
     }
     private func call(_ script: String, _ args: [String: Any]) {
+        let revision = configurationRevision
         webView?.callAsyncJavaScript(script, arguments: args, in: nil, in: .page) { [weak self] result in
-            if case .failure = result { self?.engineError = "內建字幕引擎未回應，暫時顯示原字幕。" }
+            guard let self, revision == configurationRevision else { return }
+            if case .failure = result { restartEngine() }
         }
     }
     private func object<T: Encodable>(_ value: T) -> Any? {
@@ -137,11 +188,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         guard message.frameInfo.isMainFrame, message.webView === webView,
               message.frameInfo.request.url?.isFileURL == true,
               let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
-        if type == "ready" { ready = true; engineError = nil; configureEngine(); sendInput(); return }
+        if type == "ready" { synchronize(); return }
         if type == "cancel", let id = body["id"] as? String { tasks.removeValue(forKey: id)?.cancel(); return }
         if type == "request" { request(body); return }
         if type == "toast", let text = body["text"] as? String { notice = text; return }
         guard body["token"] as? String == token else { return }
+        guard body["configurationRevision"] as? Int == configurationRevision else { return }
         if !preferences.active {
             apply(raw); reportText = "內建模組已停用；顯示原字幕。"; reportJSON = Data("{}".utf8)
             return
@@ -268,8 +320,30 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         decisionHandler(navigationAction.request.url?.isFileURL == true ? .allow : .cancel)
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        ready = false; cancelRequests(); apply(raw)
-        engineError = "字幕引擎已停止，暫時顯示原字幕；重新開啟 App 可恢復。"
+        restartEngine()
+    }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // The one-shot ready message can precede the committed frame URL; verify the actual API too.
+        synchronize()
+    }
+}
+
+struct SubtitleEngineAnchor: UIViewRepresentable {
+    let controller: SubtitleController
+    func makeUIView(context: Context) -> AnchorView { AnchorView(controller) }
+    func updateUIView(_ view: AnchorView, context: Context) {
+        if let window = view.window { controller.mount(in: window, lease: view.lease) }
+    }
+    static func dismantleUIView(_ view: AnchorView, coordinator: Void) { view.owner?.unmount(lease: view.lease) }
+    final class AnchorView: UIView {
+        weak var owner: SubtitleController?
+        let lease = UUID()
+        init(_ owner: SubtitleController) { self.owner = owner; super.init(frame: .zero); isUserInteractionEnabled = false }
+        required init?(coder: NSCoder) { return nil }
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if let window { owner?.mount(in: window, lease: lease) }
+        }
     }
 }
 
