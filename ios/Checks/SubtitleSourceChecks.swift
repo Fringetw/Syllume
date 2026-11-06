@@ -28,6 +28,8 @@ enum SubtitleSourceChecks {
         let search = #"var ytInitialData = {"estimatedResults":"1","contents":[{"videoRenderer":{"videoId":"abcdefghijk","title":{"runs":[{"text":"【中日字幕】Artist - Song (Live)"}]},"ownerText":{"runs":[{"text":"Translator"}]},"lengthText":{"simpleText":"3:45"}}}]};"#
         let video = try YouTubeCaptionDecoders.search(search)[0].song
         precondition(video.id == "abcdefghijk" && video.title == "Song (Live)" && video.artist == "Artist" && video.durationMs == 225000)
+        let official = YouTubeCaptionDecoders.metadata(id: "abcdefghijk", title: "米津玄師 Kenshi Yonezu - Lemon", artist: "米津玄師", duration: 256)
+        precondition(official.artist == "米津玄師" && official.title == "Lemon")
         let escaped = #"window["ytInitialData"]={"text":"quoted \" } text","estimatedResults":"0"};"#
         let empty = try YouTubeCaptionDecoders.search(escaped)
         precondition(empty.isEmpty)
@@ -45,6 +47,10 @@ enum SubtitleSourceChecks {
         let combined = YouTubeCaptionDecoders.bilingual(chinese: chinese, original: original)
         precondition(combined.map(\.translation) == ["藍色天空", "還在這裡"] && combined[1].startTime == 6)
         precondition(YouTubeCaptionDecoders.bilingual(chinese: chinese, original: nil) == chinese)
+        let sameVideo = YouTubeCaptionDecoders.bilingual(chinese: chinese, original: nil, sameVideoBaseline: original)
+        precondition(sameVideo[0].fullText == "Blue sky" && sameVideo[0].translation == "藍色天空")
+        let offsetChinese = chinese.map { LyricLine(startTime: $0.startTime + 3, endTime: $0.endTime + 3, fullText: $0.fullText) }
+        precondition(YouTubeCaptionDecoders.bilingual(chinese: offsetChinese, original: nil, sameVideoBaseline: original) == offsetChinese)
         do { _ = try YouTubeCaptionDecoders.tracks(watch, videoID: "otherID1234"); preconditionFailure("Wrong video response accepted") }
         catch is SubtitleReadError {}
         do { _ = try YouTubeCaptionDecoders.embeddedObject("unusual traffic /sorry/", name: "ytInitialData"); preconditionFailure("Challenge became no results") }

@@ -223,7 +223,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                         lines = try await NavidromeClient(account: account).subtitleLyrics(for: track)?.lines ?? []
                     case .record(let record):
                         guard record.song.source == provider else { throw SubtitleReadError("invalid-response") }
-                        lines = try await SubtitleNetwork.shared.lyrics(record, netease: requestPreferences.neteaseAPI, original: originalLines)
+                        lines = try await SubtitleNetwork.shared.lyrics(record, netease: requestPreferences.neteaseAPI, original: originalLines, current: currentSong)
                     }
                     value = ["lines": object(lines) ?? []]
                     if input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {

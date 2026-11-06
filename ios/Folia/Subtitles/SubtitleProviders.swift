@@ -65,7 +65,7 @@ actor SubtitleNetwork {
         }
     }
 
-    func lyrics(_ record: SubtitleRecord, netease: String, original: [LyricLine]) async throws -> [LyricLine] {
+    func lyrics(_ record: SubtitleRecord, netease: String, original: [LyricLine], current: SubtitleSong? = nil) async throws -> [LyricLine] {
         let song = record.song
         let lines: [LyricLine]
         switch song.source {
@@ -88,7 +88,7 @@ actor SubtitleNetwork {
             let data = try await read(url: URL(string: "https://u.y.qq.com/cgi-bin/musicu.fcg")!, provider: "qq",
                 body: JSONSerialization.data(withJSONObject: payload))
             lines = try SubtitleSourceDecoders.qqLyrics(data)
-        case "ytm": lines = try await youtubeLyrics(id: song.id, baseline: original)
+        case "ytm": lines = try await youtubeLyrics(id: song.id, baseline: original, sameVideo: current?.source == "ytm" && current?.id == song.id)
         case "lrclib": lines = record.lines ?? []
         default: throw SubtitleReadError("unsupported")
         }
@@ -96,7 +96,7 @@ actor SubtitleNetwork {
         return lines
     }
 
-    private func youtubeLyrics(id: String, baseline: [LyricLine]) async throws -> [LyricLine] {
+    private func youtubeLyrics(id: String, baseline: [LyricLine], sameVideo: Bool) async throws -> [LyricLine] {
         guard YouTubeVideo.validID(id) else { throw SubtitleReadError("invalid-response") }
         let data = try await read(url: url(base: URL(string: "https://www.youtube.com")!, path: "watch",
             query: [.init(name: "v", value: id), .init(name: "hl", value: "zh-TW")]), provider: "ytm")
@@ -117,7 +117,7 @@ actor SubtitleNetwork {
         async let originalCues: [LyricLine]? = optionalCaption(original)
         let (translatedLines, originalLines) = try await (translated, originalCues)
         try Task.checkCancellation()
-        return YouTubeCaptionDecoders.bilingual(chinese: translatedLines, original: originalLines)
+        return YouTubeCaptionDecoders.bilingual(chinese: translatedLines, original: originalLines, sameVideoBaseline: sameVideo ? baseline : [])
     }
     private func caption(_ track: YouTubeCaptionTrack) async throws -> [LyricLine] {
         let data = try await read(url: track.url, provider: "ytm")

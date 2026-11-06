@@ -74,7 +74,13 @@ enum YouTubeCaptionDecoders {
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let titleParts = clean.components(separatedBy: " - ")
         // An explicit Artist - Song credit is more useful than a translation channel's name.
-        let creditedArtist = titleParts.count == 2 && !titleParts[0].isEmpty ? titleParts[0] : artist
+        let prefixArtist = titleParts.count == 2 && !titleParts[0].isEmpty ? titleParts[0] : artist
+        let uploader = artist.replacingOccurrences(of: #"\s*-\s*Topic\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])
+        let key = { (text: String) in text.folding(options: [.caseInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
+            .filter { $0.isLetter || $0.isNumber } }
+        // Official titles often add a Latin alias, e.g. 米津玄師 Kenshi Yonezu - Lemon.
+        // Keep the attested channel name when it is part of that artist credit.
+        let creditedArtist = key(uploader).count >= 3 && key(prefixArtist).contains(key(uploader)) ? uploader : prefixArtist
         let creditedTitle = titleParts.count == 2 && !titleParts[1].isEmpty ? titleParts[1] : clean
         return SubtitleSong(id: id, source: "ytm", title: creditedTitle, artist: creditedArtist, durationMs: duration * 1000)
     }
@@ -127,8 +133,11 @@ enum YouTubeCaptionDecoders {
         }
         return LyricTimeline(lines: lines).lines
     }
-    static func bilingual(chinese: [LyricLine], original: [LyricLine]?) -> [LyricLine] {
-        guard let original, !original.isEmpty else { return chinese }
+    static func bilingual(chinese: [LyricLine], original: [LyricLine]?, sameVideoBaseline: [LyricLine] = []) -> [LyricLine] {
+        // Only the very same video may use its existing lyric clock without a second original track.
+        // Other videos must supply their own original text for the plugin to prove a cross-video match.
+        let original = original?.isEmpty == false ? original! : sameVideoBaseline
+        guard !original.isEmpty else { return chinese }
         let paired = SubtitleSourceDecoders.attach(original, translations: chinese)
         return paired.contains(where: { $0.translation != nil }) ? paired : chinese
     }
