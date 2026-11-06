@@ -48,6 +48,30 @@ final class FoliaUITests: XCTestCase {
         capture(app, name: "Built-in-module-entry")
     }
 
+    func testSubtitleSourceSettingsPersist() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--subtitle-reset", "--subtitle-fixture"]
+        app.launch()
+        app.buttons["Folia 設定"].tap()
+        app.buttons["builtInTraditionalLyrics"].tap()
+        let qq = app.switches["subtitleQQSource"]
+        for _ in 0..<5 { if qq.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(qq.isHittable)
+        XCTAssertEqual(app.switches["subtitleNeteaseSource"].value as? String, "1")
+        XCTAssertEqual(app.switches["subtitleYouTubeSource"].value as? String, "1")
+        setSwitch("subtitleQQSource", to: false, in: app)
+        capture(app, name: "Cross-platform-subtitle-sources")
+        app.terminate()
+        app.launchArguments = ["--subtitle-fixture"]
+        app.launch()
+        app.buttons["Folia 設定"].tap()
+        app.buttons["builtInTraditionalLyrics"].tap()
+        for _ in 0..<5 { if qq.isHittable { break }; app.swipeUp() }
+        XCTAssertEqual(qq.value as? String, "0")
+        setSwitch("subtitleQQSource", to: true, in: app)
+    }
+
     func testAnimatedPlayback() {
         continueAfterFailure = false
         let app = XCUIApplication()

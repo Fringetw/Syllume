@@ -5,13 +5,16 @@ import WebKit
 @MainActor @Observable
 final class SubtitleController: NSObject, WKNavigationDelegate {
     var preferences: SubtitlePreferences { didSet {
-        if oldValue.neteaseAPI != preferences.neteaseAPI { cancelRequests(); accountKey = UUID().uuidString }
+        if oldValue.sourceKey != preferences.sourceKey {
+            cancelRequests(); accountKey = UUID().uuidString; sourceStatus.removeAll()
+        }
         save(); configureEngine()
     } }
     private(set) var timeline = LyricTimeline(lines: [])
     private(set) var revision = UUID()
     private(set) var reportText = "目前沒有歌曲。"
     private(set) var reportJSON = Data("{}".utf8)
+    private(set) var sourceStatus: [String: String] = [:]
     private(set) var engineError: String?
     var notice: String?
     @ObservationIgnored private var webView: WKWebView?
@@ -26,6 +29,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     @ObservationIgnored private var candidates: [String: Candidate] = [:]
     @ObservationIgnored private var candidateOrder: [String] = []
     @ObservationIgnored private var fixture = false
+    @ObservationIgnored private var engineReportText = "目前沒有歌曲。"
+    @ObservationIgnored private var engineReport: [String: Any] = [:]
     private enum Candidate { case local(Track), navidrome(Track), record(SubtitleRecord) }
 
     override init() {
@@ -66,6 +71,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
         let previousRaw = raw.lines
         if input?.song.id != next?.song.id || input?.song.source != next?.song.source { cancelRequests() }
+        if !sameSong { sourceStatus.removeAll() }
         input = next; raw = rawTimeline; token = UUID().uuidString
         #if DEBUG
         if fixture, next?.song.source == "demo" {
@@ -75,7 +81,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         #endif
         if !sameSong || previousRaw != raw.lines { apply(raw) }
         reportText = next == nil ? "目前沒有歌曲。" : next?.loading == true ? "正在載入原字幕。" : "正在準備字幕檢查。"
-        reportJSON = Data("{}".utf8)
+        reportJSON = Data("{}".utf8); engineReport = [:]; engineReportText = reportText
         sendInput()
     }
 
@@ -91,10 +97,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         guard ready else { return }
         if !preferences.active { cancelRequests(); apply(raw); reportJSON = Data("{}".utf8) }
         var providers: [[String: Any]] = [
+            ["providerId": "netease", "displayName": "網易雲", "configured": preferences.searchNetease, "supports": ["search": true, "lyrics": true]],
+            ["providerId": "qq", "displayName": "QQ 音樂", "configured": preferences.searchQQ, "supports": ["search": true, "lyrics": true]],
+            ["providerId": "ytm", "displayName": "YouTube 人工中文字幕", "configured": preferences.searchYouTube, "supports": ["search": true, "lyrics": true]],
             ["providerId": "local", "displayName": "本機歌詞", "configured": library != nil, "supports": ["search": true, "lyrics": true]],
-            ["providerId": "lrclib", "displayName": "LRCLIB", "configured": !fixture, "supports": ["search": true, "lyrics": true]],
             ["providerId": "navidrome", "displayName": "Navidrome", "configured": account != nil, "supports": ["search": true, "lyrics": true]],
-            ["providerId": "netease", "displayName": "網易雲", "configured": SubtitleNetwork.neteaseURL(preferences.neteaseAPI) != nil, "supports": ["search": true, "lyrics": true]],
+            ["providerId": "lrclib", "displayName": "LRCLIB", "configured": !fixture, "supports": ["search": true, "lyrics": true]],
         ]
         if fixture { providers = [] }
         call("window.FoliaSubtitles.configure(settings, providers, account)",
@@ -103,7 +111,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private func sendInput() {
         guard ready else { return }
         guard let input, !input.loading else { call("window.FoliaSubtitles.load(null)", [:]); return }
-        call("window.FoliaSubtitles.load(input)", ["input": ["token": token, "song": object(input.song) ?? [:],
+        let song = matchingSong(input.song)
+        call("window.FoliaSubtitles.load(input)", ["input": ["token": token, "song": object(song) ?? [:],
             "duration": input.song.durationMs / 1000, "lines": object(raw.lines) ?? []]])
     }
     private func call(_ script: String, _ args: [String: Any]) {
@@ -134,10 +143,22 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
            let decoded = try? JSONDecoder().decode([LyricLine].self, from: data), decoded.count <= 20_000 {
             apply(LyricTimeline(lines: decoded))
         } else if type == "report" {
-            reportText = body["text"] as? String ?? "目前沒有報告。"
-            if let report = body["value"], JSONSerialization.isValidJSONObject(report),
-               let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { reportJSON = data }
+            engineReportText = body["text"] as? String ?? "目前沒有報告。"
+            engineReport = body["value"] as? [String: Any] ?? [:]
+            updateReport()
         }
+    }
+
+    private func matchingSong(_ song: SubtitleSong) -> SubtitleSong {
+        song.source == "ytm" ? YouTubeCaptionDecoders.metadata(id: song.id, title: song.title,
+            artist: song.artist, duration: song.durationMs / 1000) : song
+    }
+    private func updateReport() {
+        let states = sourceStatus.keys.sorted().map { "\($0)：\(sourceStatus[$0] ?? "")" }
+        reportText = engineReportText + (states.isEmpty ? "" : "\n\n平台讀取狀態\n" + states.joined(separator: "\n"))
+        var report = engineReport
+        report["iosSources"] = sourceStatus
+        if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { reportJSON = data }
     }
 
     private func cancelRequests() {
@@ -160,6 +181,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
               tasks.count < 4, let method = body["method"] as? String,
               let params = body["params"] as? [String: Any], let provider = params["providerId"] as? String else { return }
         let requestAccount = accountKey
+        let requestSong = input?.song
+        let requestPreferences = preferences
+        let currentSong = input.map { matchingSong($0.song) }
+        let originalLines = raw.lines
         tasks[id] = Task { [weak self] in
             guard let self else { return }
             var value: [String: Any] = [:]
@@ -179,12 +204,16 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                         try Task.checkCancellation()
                         songs = tracks.prefix(8).map { register(SubtitleSong(id: $0.id, source: provider, title: $0.title,
                             artist: $0.artist ?? "", durationMs: ($0.duration ?? 0) * 1000), .navidrome($0)) }
-                    } else if provider == "lrclib" || provider == "netease" {
-                        let records = try await SubtitleNetwork.shared.search(query, provider: provider, netease: preferences.neteaseAPI)
+                    } else if ["lrclib", "netease", "qq", "ytm"].contains(provider) {
+                        let records = try await SubtitleNetwork.shared.search(query, provider: provider,
+                            netease: requestPreferences.neteaseAPI, current: currentSong)
                         try Task.checkCancellation()
                         songs = records.map { register($0.song, .record($0)) }
                     } else { throw SubtitleReadError("unsupported") }
                     value = ["items": songs]
+                    if input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
+                        sourceStatus[provider] = "找到 \(songs.count) 個候選；由插件核對歌曲版本。"
+                    }
                 } else if method == "lyrics", let ref = params["ref"] as? String, let candidate = candidates[ref] {
                     let lines: [LyricLine]
                     switch candidate {
@@ -193,11 +222,13 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                         guard let account else { throw SubtitleReadError("not-signed-in") }
                         lines = try await NavidromeClient(account: account).subtitleLyrics(for: track)?.lines ?? []
                     case .record(let record):
-                        if record.song.source == "netease" {
-                            lines = try await SubtitleNetwork.shared.neteaseLyrics(id: record.song.id, base: preferences.neteaseAPI)
-                        } else { lines = record.lines ?? [] }
+                        guard record.song.source == provider else { throw SubtitleReadError("invalid-response") }
+                        lines = try await SubtitleNetwork.shared.lyrics(record, netease: requestPreferences.neteaseAPI, original: originalLines)
                     }
                     value = ["lines": object(lines) ?? []]
+                    if input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
+                        sourceStatus[provider] = "已讀取 \(lines.count) 行同步字幕；是否套用以插件診斷為準。"
+                    }
                 } else { throw SubtitleReadError("invalid-response") }
             } catch {
                 var code = Task.isCancelled ? "aborted" : (error as? SubtitleReadError)?.code ?? "network"
@@ -208,9 +239,13 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                     }
                 }
                 failure = ["code": code, "message": code]
+                if !Task.isCancelled, input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
+                    sourceStatus[provider] = SubtitleReadError(code).explanation
+                }
             }
-            guard !Task.isCancelled, requestAccount == accountKey else { tasks.removeValue(forKey: id); return }
+            guard !Task.isCancelled, requestAccount == accountKey, input?.song.id == requestSong?.id && input?.song.source == requestSong?.source else { tasks.removeValue(forKey: id); return }
             tasks.removeValue(forKey: id)
+            updateReport()
             call("window.FoliaSubtitles.resolve(id, result, error)", ["id": id, "result": value, "error": failure.map { $0 as Any } ?? NSNull()])
         }
     }

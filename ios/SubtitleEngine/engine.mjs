@@ -13,7 +13,7 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
     const searchReady = () => input && (input.song.source !== 'ytm'
         || (input.duration > 0 && input.song.artist?.trim() && input.song.title !== 'YouTube 影片'));
     const folium = {
-        host: { folia: 'Folia-iOS/0.3.1' },
+        host: { folia: 'Folia-iOS/0.3.2' },
         playback: { getState: () => input && ({ song: searchReady() ? input.song : null, duration: input.duration }) },
         lyrics: { getLines: () => input?.lines ?? [] },
         omni: {

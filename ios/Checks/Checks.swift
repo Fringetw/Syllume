@@ -3,9 +3,11 @@ import Foundation
 // Cross-platform checks run without an iPhone or a server account.
 @main
 struct Checks {
-    @MainActor static func main() throws {
+    @MainActor static func main() async throws {
         try PlatformChecks.run()
         try YouTubeChecks.run()
+        try SubtitleSourceChecks.run()
+        if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let lrc = LyricTimeline(lrc: """
             [offset:500]

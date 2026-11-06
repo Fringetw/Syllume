@@ -23,7 +23,7 @@ struct FoliaSettingsScreen: View {
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
                 }
-                Section { Text("Folia iOS 0.3.1").foregroundStyle(.secondary) }
+                Section { Text("Folia iOS 0.3.2").foregroundStyle(.secondary) }
             }
             .navigationTitle("設定")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
@@ -83,22 +83,40 @@ private struct SubtitleSettingsContent: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             .disabled(!subtitles.preferences.active)
-            Section("字幕來源") {
-                Label("本機附加歌詞、LRCLIB、已連接的 Navidrome", systemImage: "text.magnifyingglass")
-                    .font(.subheadline)
-                TextField("網易雲 API HTTPS 位址（選填）", text: $neteaseDraft)
-                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                if !neteaseDraft.isEmpty, SubtitleNetwork.neteaseURL(neteaseDraft) == nil {
-                    Text("請使用不含帳密、查詢參數的 HTTPS API 位址。").font(.caption).foregroundStyle(.orange)
-                }
-                Button("儲存字幕來源") {
-                    subtitles.preferences.neteaseAPI = neteaseDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-                }
-                .disabled(neteaseDraft == subtitles.preferences.neteaseAPI
-                    || (!neteaseDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && SubtitleNetwork.neteaseURL(neteaseDraft) == nil))
-                Text("搜尋會將歌名與歌手送到上述可用來源。網易雲欄位可沿用桌面版管理者部署的相容 API；未設定便跳過，不影響離線簡轉繁。音樂仍由原來源播放。")
+            Section("跨平台字幕來源") {
+                Toggle("網易雲：原詞與中文翻譯", isOn: $subtitles.preferences.searchNetease)
+                    .accessibilityIdentifier("subtitleNeteaseSource")
+                Toggle("QQ 音樂：原詞與中文翻譯", isOn: $subtitles.preferences.searchQQ)
+                    .accessibilityIdentifier("subtitleQQSource")
+                Toggle("YouTube：已有人工中文字幕的影片", isOn: $subtitles.preferences.searchYouTube)
+                    .accessibilityIdentifier("subtitleYouTubeSource")
+                Text("預設啟用，無須填 Client ID 或 API 網址。搜尋順序為網易雲、QQ 音樂、YouTube，再檢查本機、Navidrome 與 LRCLIB。歌名與歌手會送至啟用的來源；音樂仍由目前來源播放。")
                     .font(.caption).foregroundStyle(.secondary)
+                Text("YouTube 只讀取影片原有的人工字幕軌，不做自動翻譯。壓在影片畫面內的字幕無法直接取用；不同版本必須通過原詞和時間軸核對。地區限制、登入或驗證要求可能使來源暫時不可用。")
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(["netease", "qq", "ytm"], id: \.self) { provider in
+                    if let status = subtitles.sourceStatus[provider] {
+                        LabeledContent(provider == "netease" ? "網易雲" : provider == "qq" ? "QQ 音樂" : "YouTube") {
+                            Text(status).font(.caption).multilineTextAlignment(.trailing)
+                        }
+                    }
+                }
+                DisclosureGroup("進階：自訂網易雲來源（選填）") {
+                    TextField("網易雲 API HTTPS 位址", text: $neteaseDraft)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if !neteaseDraft.isEmpty, SubtitleNetwork.neteaseURL(neteaseDraft) == nil {
+                        Text("請使用不含帳密、查詢參數的 HTTPS API 位址。").font(.caption).foregroundStyle(.orange)
+                    }
+                    Button("儲存字幕來源") {
+                        subtitles.preferences.neteaseAPI = neteaseDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                    .disabled(neteaseDraft == subtitles.preferences.neteaseAPI
+                        || (!neteaseDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && SubtitleNetwork.neteaseURL(neteaseDraft) == nil))
+                    Text("留空即使用內建直連。只有已有相容服務的維護者才需要更改。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
             }
+            .disabled(!subtitles.preferences.active)
             Section("目前歌曲") {
                 Button("切換繁體字幕") { subtitles.preferences.enabled.toggle() }
                 Button("重新尋找中文字幕") { subtitles.command("retry") }

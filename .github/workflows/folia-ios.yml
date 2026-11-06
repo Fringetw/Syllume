@@ -21,6 +21,8 @@ permissions:
 
 jobs:
   build:
+    # Same-repository branches are already checked on push; keep PR checks for forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15-intel
     timeout-minutes: 35
     steps:
@@ -38,6 +40,8 @@ jobs:
             python3 ios/Tools/configure_google_oauth.py
           fi
       - name: Check the lyric timeline and Xcode project references
+        env:
+          FOLIA_PROBE_SUBTITLE_SOURCES: "1"
         run: bash ios/Checks/run.sh
       - name: Compile for iOS Simulator
         run: >-

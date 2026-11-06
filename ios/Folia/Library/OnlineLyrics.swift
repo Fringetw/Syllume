@@ -29,7 +29,7 @@ actor OnlineLyrics {
         var parts = URLComponents(string: "https://lrclib.net/api/" + path)!
         parts.queryItems = items
         var request = URLRequest(url: parts.url!, timeoutInterval: 15)
-        request.setValue("Folia-iOS/0.3.1 (https://github.com/Fringetw/folia-ios)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Folia-iOS/0.3.2 (https://github.com/Fringetw/folia-ios)", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 404 { return nil }
