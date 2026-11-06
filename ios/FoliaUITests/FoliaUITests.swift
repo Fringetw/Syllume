@@ -131,8 +131,9 @@ final class FoliaUITests: XCTestCase {
         app.segmentedControls.buttons["YouTube"].tap()
         let link = app.textFields["貼上 YouTube／YouTube Music 連結"]
         XCTAssertTrue(link.waitForExistence(timeout: 10))
-        link.tap(); link.typeText("https://www.youtube.com/watch?v=M7lc1UVf-VE")
-        app.buttons["播放"].firstMatch.tap()
+        link.tap(); link.typeText("https://youtu.be/M7lc1UVf-VE")
+        XCTAssertEqual(link.value as? String, "https://youtu.be/M7lc1UVf-VE")
+        app.buttons["playYouTubeLink"].tap()
         XCTAssertTrue(app.staticTexts["YouTube · Folia"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.webViews["youtubeEmbeddedPlayer"].waitForExistence(timeout: 15))
         XCTAssertEqual(app.state, .runningForeground)
@@ -148,8 +149,10 @@ final class FoliaUITests: XCTestCase {
         app.segmentedControls.buttons["YouTube"].tap()
         let link = app.textFields["貼上 YouTube／YouTube Music 連結"]
         XCTAssertTrue(link.waitForExistence(timeout: 10))
-        link.tap(); link.typeText("https://www.youtube.com/watch?v=M7lc1UVf-VE")
-        app.buttons["播放"].firstMatch.tap()
+        // Keep transport verification independent of simulator keyboard delivery.
+        XCTAssertEqual(link.value as? String, "https://youtu.be/M7lc1UVf-VE")
+        app.buttons["playYouTubeLink"].tap()
+        XCTAssertTrue(app.staticTexts["YouTube · Folia"].waitForExistence(timeout: 15))
         let probe = app.staticTexts["youtubeTransportProbe"]
         XCTAssertTrue(probe.waitForExistence(timeout: 20))
         let advances = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > 0.2 }, evaluatedWith: probe)

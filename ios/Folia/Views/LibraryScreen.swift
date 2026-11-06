@@ -14,7 +14,7 @@ struct LibraryScreen: View {
     @State private var subtitles = SubtitleController()
     @State private var showingSettings = false
     @State private var showingYouTubePlayer = false
-    @State private var youtubeLink = ""
+    @State private var youtubeLink = LibraryScreen.initialYouTubeLink
 
     @State private var showingPlayer = false
     @State private var showingServer = false
@@ -29,6 +29,16 @@ struct LibraryScreen: View {
     private static let lyricTypes: [UTType] = [
         UTType(importedAs: "org.folia.lyrics.lrc"), UTType(importedAs: "org.folia.lyrics.fia")
     ]
+
+    // The pause fixture starts with a validated link; keyboard entry is tested separately.
+    private static var initialYouTubeLink: String {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+            return "https://youtu.be/M7lc1UVf-VE"
+        }
+        #endif
+        return ""
+    }
 
     var body: some View {
         NavigationStack {
@@ -51,6 +61,7 @@ struct LibraryScreen: View {
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                             .submitLabel(.go).onSubmit(playYouTubeLink)
                         Button("播放", action: playYouTubeLink).disabled(youtubeLink.isEmpty)
+                            .accessibilityIdentifier("playYouTubeLink")
                     }
                     .padding(.horizontal, 22).padding(.bottom, 6)
                 }
