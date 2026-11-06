@@ -1,0 +1,37 @@
+name: Inspect iOS UI failure
+on:
+  push:
+    paths:
+      - '.github/workflows/folia-inspect-ui.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: Folia-iOS-UI-checks
+          run-id: 42213263791
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/ui-checks
+      - name: Read failure attachments
+        env:
+          UI_CHECKS: ${{ runner.temp }}/ui-checks
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import os
+          root = Path(os.environ['UI_CHECKS'])
+          for p in sorted(root.rglob('*')):
+              if p.is_file():
+                  print('ATTACHMENT', p.relative_to(root), p.stat().st_size)
+          for p in sorted(root.rglob('*')):
+              if p.is_file() and p.suffix.lower() in ('.txt', '.json', '.log', '.xml'):
+                  print('TEXT_BEGIN', p.relative_to(root))
+                  print(p.read_text(errors='replace')[:180000])
+                  print('TEXT_END', p.relative_to(root))
+          PY
