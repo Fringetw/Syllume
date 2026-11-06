@@ -57,14 +57,15 @@ struct SubtitleInput: Equatable {
 
 struct SubtitleReadError: Error, Sendable {
     let code: String
-    init(_ code: String) { self.code = code }
+    let detail: String?
+    init(_ code: String, detail: String? = nil) { self.code = code; self.detail = detail }
     var explanation: String {
         switch code {
         case "rate-limited": "來源暫時限制請求，請稍後再試。"
         case "not-signed-in": "來源要求登入，目前不讀取需要帳號的字幕。"
         case "region-restricted": "來源拒絕存取或受地區限制。"
         case "captions-unavailable": "影片沒有可讀取的人工中文字幕軌；畫面內的字幕無法直接取用。"
-        case "verification-required": "YouTube 要求驗證或同意，暫時無法讀取公開字幕。"
+        case "verification-required": "平台要求驗證或同意，暫時無法讀取公開字幕。"
         case "caption-read-failed": "YouTube 列出字幕軌，但本次未提供內容，可能需驗證或受存取限制。"
         case "empty": "來源沒有提供可用的同步字幕。"
         case "invalid-response": "來源回覆格式已改變或資料不完整。"

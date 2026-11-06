@@ -21,15 +21,29 @@ actor SubtitleNetwork {
         return parts.url
     }
 
+    static func neteaseForm(_ query: String) -> Data {
+        var form = URLComponents()
+        form.queryItems = [.init(name: "s", value: query), .init(name: "type", value: "1"),
+            .init(name: "limit", value: "8"), .init(name: "offset", value: "0")]
+        // In an HTML form '+' means a space; preserve a literal plus in song names.
+        return Data((form.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
+    }
+
     func search(_ query: String, provider: String, netease: String, current: SubtitleSong?) async throws -> [SubtitleRecord] {
         switch provider {
         case "netease":
-            let custom = Self.neteaseURL(netease)
-            let data = try await read(url: url(base: custom ?? URL(string: "https://music.163.com")!,
-                path: custom == nil ? "api/search/get/web" : "search", query: [
-                    .init(name: custom == nil ? "s" : "keywords", value: query), .init(name: "type", value: "1"),
+            let data: Data
+            if let custom = Self.neteaseURL(netease) {
+                data = try await read(url: url(base: custom, path: "search", query: [
+                    .init(name: "keywords", value: query), .init(name: "type", value: "1"),
                     .init(name: "limit", value: "8"), .init(name: "offset", value: "0")]), provider: provider)
-            return try SubtitleSourceDecoders.neteaseSearch(data)
+            } else {
+                // The desktop service uses the cloud-search form endpoint. The older GET web route
+                // can return HTTP 200 without a result object in some native client environments.
+                data = try await read(url: URL(string: "https://music.163.com/api/cloudsearch/pc")!, provider: provider,
+                    body: Self.neteaseForm(query), contentType: "application/x-www-form-urlencoded")
+            }
+            return try decoding(data, stage: "search", SubtitleSourceDecoders.neteaseSearch)
         case "qq":
             let data = try await read(url: url(base: URL(string: "https://c.y.qq.com")!, path: "soso/fcgi-bin/client_search_cp",
                 query: [.init(name: "w", value: String(query.prefix(60))), .init(name: "format", value: "json"),
@@ -41,9 +55,7 @@ actor SubtitleNetwork {
                 song.source == "ytm" && YouTubeVideo.validID(song.id) ? [SubtitleRecord(song: song)] : nil
             } ?? []
             do {
-                let data = try await read(url: url(base: URL(string: "https://www.youtube.com")!, path: "results",
-                    query: [.init(name: "search_query", value: query + " 中文字幕"), .init(name: "hl", value: "zh-TW"),
-                            .init(name: "gl", value: "TW")]), provider: provider)
+                let data = try await read(url: YouTubeCaptionDecoders.searchURL(query), provider: provider)
                 guard let page = String(data: data, encoding: .utf8) else { throw SubtitleReadError("invalid-response") }
                 let found = try YouTubeCaptionDecoders.search(page)
                 return Array((playing + found.filter { $0.song.id != playing.first?.song.id }).prefix(8))
@@ -75,7 +87,7 @@ actor SubtitleNetwork {
             let data = try await read(url: url(base: custom ?? URL(string: "https://music.163.com")!,
                 path: custom == nil ? "api/song/lyric" : "lyric", query: [.init(name: "id", value: song.id),
                     .init(name: "lv", value: "-1"), .init(name: "tv", value: "-1"), .init(name: "rv", value: "-1")]), provider: song.source)
-            lines = try SubtitleSourceDecoders.neteaseLyrics(data)
+            lines = try decoding(data, stage: "lyrics", SubtitleSourceDecoders.neteaseLyrics)
         case "qq":
             guard let id = Int64(song.id), id > 0 else { throw SubtitleReadError("invalid-response") }
             let b64 = { (value: String) in Data(value.utf8).base64EncodedString() }
@@ -128,22 +140,30 @@ actor SubtitleNetwork {
         guard let track else { return nil }
         return try? await caption(track)
     }
+    private func decoding<T>(_ data: Data, stage: String, _ decode: (Data) throws -> T) throws -> T {
+        do { return try decode(data) }
+        catch {
+            let code = (error as? SubtitleReadError)?.code ?? "invalid-response"
+            throw SubtitleReadError(code, detail: "\(stage): \(SubtitleSourceDecoders.replySummary(data))")
+        }
+    }
     private func url(base: URL, path: String, query: [URLQueryItem]) -> URL {
         var parts = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         parts.queryItems = query
+        parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         return parts.url!
     }
-    private func read(url: URL, provider: String, body: Data? = nil) async throws -> Data {
+    private func read(url: URL, provider: String, body: Data? = nil, contentType: String = "application/json") async throws -> Data {
         try Task.checkCancellation()
         guard Date() >= (blockedUntil[provider] ?? .distantPast) else { throw SubtitleReadError("rate-limited") }
         var request = URLRequest(url: url, timeoutInterval: 7)
-        request.setValue(provider == "ytm" ? "Mozilla/5.0 Folia-iOS/0.3.2" : "Folia-iOS/0.3.2", forHTTPHeaderField: "User-Agent")
+        request.setValue(provider == "ytm" ? "Mozilla/5.0 Folia-iOS/0.3.3" : "Folia-iOS/0.3.3", forHTTPHeaderField: "User-Agent")
         if provider == "netease" { request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer") }
         if provider == "qq" {
             request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")
             request.setValue("okhttp/3.14.9", forHTTPHeaderField: "User-Agent")
         }
-        if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if let body { request.httpMethod = "POST"; request.httpBody = body; request.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         let policy = SubtitleRedirectGuard(host: url.host ?? "", port: url.port)
         let (bytes, response) = try await session.bytes(for: request, delegate: policy)
         defer { bytes.task.cancel() }

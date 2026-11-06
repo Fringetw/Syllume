@@ -13,7 +13,7 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
     const searchReady = () => input && (input.song.source !== 'ytm'
         || (input.duration > 0 && input.song.artist?.trim() && input.song.title !== 'YouTube 影片'));
     const folium = {
-        host: { folia: 'Folia-iOS/0.3.2' },
+        host: { folia: 'Folia-iOS' },
         playback: { getState: () => input && ({ song: searchReady() ? input.song : null, duration: input.duration }) },
         lyrics: { getLines: () => input?.lines ?? [] },
         omni: {
@@ -58,6 +58,7 @@ export function createSubtitleEngine({ request, publish, report, toast = () => {
         configure(next, listed, accountKey = '') {
             const changedAccount = accountKey !== account;
             settings = { ...defaults, ...next }; providers = listed; account = accountKey;
+            folium.host.folia = typeof next.hostVersion === 'string' ? next.hostVersion.slice(0, 80) : 'Folia-iOS';
             if (!settings.active) {
                 selector?.dispose(); selector = null; clearTimeout(reportTimer);
                 report({ token: input?.token, text: '內建模組已停用；顯示原字幕。', value: null });

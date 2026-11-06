@@ -6,7 +6,7 @@ import WebKit
 final class SubtitleController: NSObject, WKNavigationDelegate {
     var preferences: SubtitlePreferences { didSet {
         if oldValue.sourceKey != preferences.sourceKey {
-            cancelRequests(); accountKey = UUID().uuidString; sourceStatus.removeAll()
+            cancelRequests(); accountKey = UUID().uuidString; sourceStatus.removeAll(); sourceDiagnostics.removeAll()
         }
         save(); configureEngine()
     } }
@@ -29,6 +29,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     @ObservationIgnored private var candidates: [String: Candidate] = [:]
     @ObservationIgnored private var candidateOrder: [String] = []
     @ObservationIgnored private var fixture = false
+    @ObservationIgnored private var sourceDiagnostics: [String: String] = [:]
     @ObservationIgnored private var engineReportText = "目前沒有歌曲。"
     @ObservationIgnored private var engineReport: [String: Any] = [:]
     private enum Candidate { case local(Track), navidrome(Track), record(SubtitleRecord) }
@@ -62,6 +63,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         self.library = library
         if self.account != account {
             cancelRequests(); self.account = account; accountKey = UUID().uuidString
+            sourceStatus.removeAll(); sourceDiagnostics.removeAll(); engineReport = [:]
         }
         configureEngine()
     }
@@ -71,7 +73,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
         let previousRaw = raw.lines
         if input?.song.id != next?.song.id || input?.song.source != next?.song.source { cancelRequests() }
-        if !sameSong { sourceStatus.removeAll() }
+        if !sameSong { sourceStatus.removeAll(); sourceDiagnostics.removeAll() }
         input = next; raw = rawTimeline; token = UUID().uuidString
         #if DEBUG
         if fixture, next?.song.source == "demo" {
@@ -95,7 +97,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
     private func configureEngine() {
         guard ready else { return }
-        if !preferences.active { cancelRequests(); apply(raw); reportJSON = Data("{}".utf8) }
+        if !preferences.active {
+            cancelRequests(); apply(raw); reportJSON = Data("{}".utf8)
+            sourceStatus.removeAll(); sourceDiagnostics.removeAll(); engineReport = [:]
+        }
         var providers: [[String: Any]] = [
             ["providerId": "netease", "displayName": "網易雲", "configured": preferences.searchNetease, "supports": ["search": true, "lyrics": true]],
             ["providerId": "qq", "displayName": "QQ 音樂", "configured": preferences.searchQQ, "supports": ["search": true, "lyrics": true]],
@@ -105,8 +110,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
             ["providerId": "lrclib", "displayName": "LRCLIB", "configured": !fixture, "supports": ["search": true, "lyrics": true]],
         ]
         if fixture { providers = [] }
+        var settings = object(preferences) as? [String: Any] ?? [:]
+        settings["hostVersion"] = "Folia-iOS/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")
         call("window.FoliaSubtitles.configure(settings, providers, account)",
-             ["settings": object(preferences) ?? [:], "providers": providers, "account": accountKey])
+             ["settings": settings, "providers": providers, "account": accountKey])
     }
     private func sendInput() {
         guard ready else { return }
@@ -155,9 +162,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
     private func updateReport() {
         let states = sourceStatus.keys.sorted().map { "\($0)：\(sourceStatus[$0] ?? "")" }
+        let details = sourceDiagnostics.keys.sorted().map { "\($0)：\(sourceDiagnostics[$0] ?? "")" }
         reportText = engineReportText + (states.isEmpty ? "" : "\n\n平台讀取狀態\n" + states.joined(separator: "\n"))
+            + (details.isEmpty ? "" : "\n\n回覆結構診斷（不含原始內容）\n" + details.joined(separator: "\n"))
         var report = engineReport
         report["iosSources"] = sourceStatus
+        report["iosResponseDiagnostics"] = sourceDiagnostics
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { reportJSON = data }
     }
 
@@ -241,10 +251,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                 failure = ["code": code, "message": code]
                 if !Task.isCancelled, input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
                     sourceStatus[provider] = SubtitleReadError(code).explanation
+                    if let detail = (error as? SubtitleReadError)?.detail { sourceDiagnostics[provider] = detail }
                 }
             }
             guard !Task.isCancelled, requestAccount == accountKey, input?.song.id == requestSong?.id && input?.song.source == requestSong?.source else { tasks.removeValue(forKey: id); return }
             tasks.removeValue(forKey: id)
+            if failure == nil { sourceDiagnostics.removeValue(forKey: provider) }
             updateReport()
             call("window.FoliaSubtitles.resolve(id, result, error)", ["id": id, "result": value, "error": failure.map { $0 as Any } ?? NSNull()])
         }

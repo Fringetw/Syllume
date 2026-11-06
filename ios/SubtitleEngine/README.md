@@ -16,11 +16,11 @@
 
 ## iOS 歌詞來源
 
-原插件呼叫桌面 Folia 的 Omni 來源；iOS 以原生橋接提供相同介面，不會取得桌面帳號。0.3.2 預設來源順序為網易雲、QQ 音樂、YouTube、本機、Navidrome、LRCLIB，維持原插件最多 6 來源的預算。
+原插件呼叫桌面 Folia 的 Omni 來源；iOS 以原生橋接提供相同介面，不會取得桌面帳號。0.3.3 預設來源順序為網易雲、QQ 音樂、YouTube、本機、Navidrome、LRCLIB，維持原插件最多 6 來源的預算。
 
-- **網易雲**：匿名直讀 `music.163.com/api/search/get/web` 與 `/api/song/lyric` 的 `lrc`、`tlyric`、`romalrc`；可選用已有的維護者 HTTPS `/search`、`/lyric` 服務。
+- **網易雲**：以表單 POST 搜尋 `music.163.com/api/cloudsearch/pc`，並讀取 `/api/song/lyric` 的 `lrc`、`tlyric`、`romalrc`；可選用已有的維護者 HTTPS `/search`、`/lyric` 服務。
 - **QQ 音樂**：匿名搜尋 `client_search_cp`；以 `music.musichallSong.PlayLyricInfo/GetPlayLyricInfo` 的 `crypt=0,qrc=0,trans=1` 讀取平台 Base64 LRC 與譯文。捐出逐行字幕，不製造不存在的逐字時間；原曲已有的逐字仍由插件保留。
-- **YouTube**：搜尋公開影片頁並優先檢查播放中的影片；僅解析公開頁面 JSON 與人工中文 `captionTracks`／JSON3 時間軸。排除 ASR、`tlang` 機器翻譯及外站／非 HTTPS 字幕網址。同一人工中文軌內的中日／中英雙語行會保留原詞並分離中文譯文；無法辨識的全漢字多行不猜測。若有可判斷的原語字幕軌，僅按相同時間配對，再交原插件核對原詞；目前同一影片也可使用既有原詞，在相同時間點補中文。對不上的翻譯不硬塞。無軌、驗證、登入、空回覆、地區限制均保留原字幕。燒錄在畫面的文字沒有可讀取字幕軌，不做 OCR。Google 曲庫 OAuth 不提供任意影片的字幕下載權限，參閱 [YouTube 官方限制](https://developers.google.com/youtube/data/reference/rest/v3/captions/download)。
+- **YouTube**：搜尋公開影片頁，使用 YouTube 網站「字幕」篩選參數（從連接的 Chrome 篩選選單確認），並優先檢查播放中的影片；僅解析公開頁面 JSON 與人工中文 `captionTracks`／JSON3 時間軸。排除 ASR、`tlang` 機器翻譯及外站／非 HTTPS 字幕網址。同一人工中文軌內的中日／中英雙語行會保留原詞並分離中文譯文；無法辨識的全漢字多行不猜測。若有可判斷的原語字幕軌，僅按相同時間配對，再交原插件核對原詞；目前同一影片也可使用既有原詞，在相同時間點補中文。對不上的翻譯不硬塞。無軌、驗證、登入、空回覆、地區限制均保留原字幕。燒錄在畫面的文字沒有可讀取字幕軌，不做 OCR。Google 曲庫 OAuth 不提供任意影片的字幕下載權限，參閱 [YouTube 官方限制](https://developers.google.com/youtube/data/reference/rest/v3/captions/download)。
 - 本機、已連接 Navidrome 與 LRCLIB 保持可用；Navidrome 憑證只在原生鑰匙圈與原生客戶端使用。
 
 各平台開關、上次候選／讀取結果和失敗原因在字幕設定；相同安全摘要亦附加至完整 JSON 診斷。0.3.1 設定可直接遷移，新來源預設啟用。平台公開接口不是可用性保證，桌面登入帳號與其他桌面平台來源不會自動出現在 iOS。
@@ -45,3 +45,5 @@ npm test
 ## 授權
 
 插件為 MIT；OpenCC 與 opencc-js 各自授權隨 App 的 `FoliaSubtitles` 資源附帶。詳見 `upstream/LICENSE`、`upstream/CREDITS.md` 及 `upstream/mods/opencc-traditional-lyrics/vendor/`。本次移植保留原來源及作者資訊。
+
+0.3.3 的原生回覆結構摘要只含位元組數、JSON 是否為物件、數字狀態碼與 result／songs 的型別／陣列長度；不包含任意來源字串。完整診斷的宿主版本由 App 注入，不再固定為打包引擎時的版本。Actions 的 `Folia-subtitle-source-checks` 附件在 App 編譯前提供這次原生來源探測及離線檢查結果；來源不可用的安全錯誤碼不當作平台成功。

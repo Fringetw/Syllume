@@ -165,3 +165,13 @@ test('reenabling the built-in module restarts search for the current song', asyn
     await wait(30); assert.ok(reads > 0);
     h.engine.dispose();
 });
+
+
+test('diagnostics receive the native app version instead of a stale bundled version', async () => {
+    const h = harness();
+    h.engine.configure({ ...defaults, hostVersion: 'Folia-iOS/0.3.3' }, [provider]);
+    h.engine.load({ token: 'host', song, duration: 60, lines });
+    await wait(130);
+    assert.equal(h.reports.at(-1).value.host.folia, 'Folia-iOS/0.3.3');
+    h.engine.dispose();
+});

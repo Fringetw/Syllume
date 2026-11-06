@@ -23,7 +23,7 @@ struct FoliaSettingsScreen: View {
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
                 }
-                Section { Text("Folia iOS 0.3.2").foregroundStyle(.secondary) }
+                Section { Text("Folia iOS 0.3.3").foregroundStyle(.secondary) }
             }
             .navigationTitle("設定")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
@@ -92,7 +92,7 @@ private struct SubtitleSettingsContent: View {
                     .accessibilityIdentifier("subtitleYouTubeSource")
                 Text("預設啟用，無須填 Client ID 或 API 網址。搜尋順序為網易雲、QQ 音樂、YouTube，再檢查本機、Navidrome 與 LRCLIB。歌名與歌手會送至啟用的來源；音樂仍由目前來源播放。")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("YouTube 只讀取影片原有的人工字幕軌，不做自動翻譯。壓在影片畫面內的字幕無法直接取用；不同版本必須通過原詞和時間軸核對。地區限制、登入或驗證要求可能使來源暫時不可用。")
+                Text("YouTube 會先篩選有字幕的影片，再檢查人工中文字幕軌，不做自動翻譯。壓在影片畫面內的字幕無法直接取用；不同版本必須通過原詞和時間軸核對。地區限制、登入或驗證要求可能使來源暫時不可用。")
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(["netease", "qq", "ytm"], id: \.self) { provider in
                     if let status = subtitles.sourceStatus[provider] {

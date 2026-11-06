@@ -17,8 +17,26 @@ enum SubtitleSourceDecoders {
         guard let value else { return }
         guard let code = value as? Int ?? Int(value as? String ?? "") else { throw SubtitleReadError("invalid-response") }
         if code == 301 || code == 401 { throw SubtitleReadError("not-signed-in") }
-        if code == 429 || code == 2001 { throw SubtitleReadError("rate-limited") }
+        if code == 405 || code == 429 || code == 2001 { throw SubtitleReadError("rate-limited") }
+        if code == 403 || code == 451 { throw SubtitleReadError("region-restricted") }
+        if code == 460 || code == -460 { throw SubtitleReadError("verification-required") }
         if code != success { throw SubtitleReadError("unavailable") }
+    }
+    // Structural diagnostics only: no response text, song lyrics, signed URLs or credentials.
+    static func replySummary(_ data: Data) -> String {
+        guard let root = try? object(data) else { return "bytes=\(data.count); format=not-json-object" }
+        var fields = ["bytes=\(data.count)", "format=json-object"]
+        if let code = root["code"] as? Int { fields.append("code=\(code)") }
+        func kind(_ value: Any?) -> String {
+            guard let value else { return "missing" }
+            if value is NSNull { return "null" }
+            if let list = value as? [Any] { return "array(\(list.count))" }
+            if value is [String: Any] { return "object" }
+            return "scalar"
+        }
+        fields.append("result=\(kind(root["result"]))")
+        if let result = root["result"] as? [String: Any] { fields.append("songs=\(kind(result["songs"]))") }
+        return fields.joined(separator: "; ")
     }
     static func neteaseSearch(_ data: Data) throws -> [SubtitleRecord] {
         let root = try object(data)

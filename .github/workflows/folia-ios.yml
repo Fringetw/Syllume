@@ -42,7 +42,15 @@ jobs:
       - name: Check the lyric timeline and Xcode project references
         env:
           FOLIA_PROBE_SUBTITLE_SOURCES: "1"
-        run: bash ios/Checks/run.sh
+        run: |
+          set -o pipefail
+          bash ios/Checks/run.sh | tee "$RUNNER_TEMP/Folia-subtitle-source-checks.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Folia-subtitle-source-checks
+          path: ${{ runner.temp }}/Folia-subtitle-source-checks.txt
+          if-no-files-found: ignore
       - name: Compile for iOS Simulator
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia

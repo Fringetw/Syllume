@@ -42,6 +42,14 @@ enum YouTubeCaptionDecoders {
         return (value["simpleText"] as? String) ?? (value["runs"] as? [[String: Any]] ?? [])
             .compactMap { $0["text"] as? String }.joined()
     }
+    static func searchURL(_ query: String) -> URL {
+        var url = URLComponents(string: "https://www.youtube.com/results")!
+        // Observed from YouTube's visible Subtitles/CC filter. URLComponents encodes the percent signs once more.
+        url.queryItems = [.init(name: "search_query", value: query + " 中文字幕"),
+            .init(name: "sp", value: "EgIoAQ%3D%3D"), .init(name: "hl", value: "zh-TW"), .init(name: "gl", value: "TW")]
+        url.percentEncodedQuery = url.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        return url.url!
+    }
     static func search(_ page: String) throws -> [SubtitleRecord] {
         let root = try embeddedObject(page, name: "ytInitialData")
         var songs: [SubtitleRecord] = [], seen = Set<String>(), visits = 0
@@ -80,7 +88,19 @@ enum YouTubeCaptionDecoders {
             .filter { $0.isLetter || $0.isNumber } }
         // Official titles often add a Latin alias, e.g. 米津玄師 Kenshi Yonezu - Lemon.
         // Keep the attested channel name when it is part of that artist credit.
-        let creditedArtist = key(uploader).count >= 3 && key(prefixArtist).contains(key(uploader)) ? uploader : prefixArtist
+        func scriptAlias(_ text: String) -> String? {
+            let pattern = #"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}ー・]{2,40}"#
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+            let matches = regex.matches(in: text, range: NSRange(text.startIndex..., in: text))
+            guard matches.count == 1, let range = Range(matches[0].range, in: text) else { return nil }
+            return String(text[range])
+        }
+        let latin = { (text: String) in key(text.replacingOccurrences(of: #"[^\p{Latin}]"#, with: "", options: .regularExpression)) }
+        let sharedAlias = scriptAlias(prefixArtist)
+        let aliasesAgree = sharedAlias != nil && sharedAlias == scriptAlias(uploader)
+            && latin(prefixArtist).count >= 3 && latin(prefixArtist) == latin(uploader)
+        let creditedArtist = aliasesAgree ? sharedAlias!
+            : key(uploader).count >= 3 && key(prefixArtist).contains(key(uploader)) ? uploader : prefixArtist
         let creditedTitle = titleParts.count == 2 && !titleParts[1].isEmpty ? titleParts[1] : clean
         return SubtitleSong(id: id, source: "ytm", title: creditedTitle, artist: creditedArtist, durationMs: duration * 1000)
     }
@@ -106,6 +126,7 @@ enum YouTubeCaptionDecoders {
                   !(parts.queryItems ?? []).contains(where: { $0.name == "tlang" }) else { return nil }
             var query = (parts.queryItems ?? []).filter { $0.name != "fmt" }
             query.append(URLQueryItem(name: "fmt", value: "json3")); parts.queryItems = query
+            parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
             guard let url = parts.url else { return nil }
             return YouTubeCaptionTrack(url: url, language: language, automatic: track["kind"] as? String == "asr", original: index == defaultIndex)
         }
