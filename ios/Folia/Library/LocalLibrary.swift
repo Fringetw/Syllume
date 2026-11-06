@@ -60,14 +60,16 @@ final class LocalLibrary {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         var excluded = URLResourceValues(); excluded.isExcludedFromBackup = true
         var directory = root; try? directory.setResourceValues(excluded)
-        let filename = PlaylistAudioRules.safeFilename(title: song.title, artist: song.artist, id: String(id.prefix(8)), ext: ext)
+        let filename = PlaylistAudioRules.safeFilename(title: song.title, artist: song.artist, id: id, ext: ext)
         guard PlaylistAudioRules.validBasename(filename) else { throw PlaylistAudioError.invalidFile }
         let target = root.appending(path: filename)
         let metadataFolder = folder(for: id)
         try FileManager.default.createDirectory(at: metadataFolder, withIntermediateDirectories: true)
+        var moved = false
         do {
             // The transfer is already validated. A unique name never overwrites a user's file.
             try FileManager.default.moveItem(at: file, to: target)
+            moved = true
             var track = Track(id: id, source: .local, title: song.title, artist: song.artist, album: nil,
                               duration: duration, downloadedFile: filename, downloadOrigin: origin,
                               downloadProvider: provider, downloadQuality: quality)
@@ -78,7 +80,7 @@ final class LocalLibrary {
             try save(tracks + [track])
             return track
         } catch {
-            try? FileManager.default.removeItem(at: target)
+            if moved { try? FileManager.default.removeItem(at: target) }
             try? FileManager.default.removeItem(at: metadataFolder)
             throw error
         }
