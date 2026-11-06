@@ -53,6 +53,21 @@ jobs:
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
           -configuration Release -destination 'generic/platform=iOS'
           -derivedDataPath "$RUNNER_TEMP/FoliaDevice" CODE_SIGNING_ALLOWED=NO build
+      # Make the successfully compiled device build available while simulator checks run.
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/FoliaPackage/Payload"
+          cp -R "$RUNNER_TEMP/FoliaDevice/Build/Products/Release-iphoneos/Folia.app" "$RUNNER_TEMP/FoliaPackage/Payload/"
+          cd "$RUNNER_TEMP/FoliaPackage"
+          /usr/bin/zip -qry Folia-iOS-unsigned.ipa Payload
+          python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Folia.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Folia-iOS-unsigned
+          path: |
+            ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
+            ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
+          if-no-files-found: error
       - name: Exercise playback and platform setup on iPhone Simulator
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
@@ -74,17 +89,3 @@ jobs:
           name: Folia-iOS-UI-checks
           path: ${{ runner.temp }}/FoliaUIScreenshots
           if-no-files-found: ignore
-      - name: Package unsigned IPA
-        run: |
-          mkdir -p "$RUNNER_TEMP/FoliaPackage/Payload"
-          cp -R "$RUNNER_TEMP/FoliaDevice/Build/Products/Release-iphoneos/Folia.app" "$RUNNER_TEMP/FoliaPackage/Payload/"
-          cd "$RUNNER_TEMP/FoliaPackage"
-          /usr/bin/zip -qry Folia-iOS-unsigned.ipa Payload
-          python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Folia.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: Folia-iOS-unsigned
-          path: |
-            ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
-            ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
-          if-no-files-found: error
