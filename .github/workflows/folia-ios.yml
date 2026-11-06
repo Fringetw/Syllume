@@ -60,7 +60,7 @@ jobs:
       - name: Compile for iOS Simulator
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
-          -configuration Debug -destination 'generic/platform=iOS Simulator' -arch x86_64
+          -configuration Debug -destination 'generic/platform=iOS Simulator'
           -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" CODE_SIGNING_ALLOWED=NO build
       - name: Compile unsigned iPhone app
         run: >-
