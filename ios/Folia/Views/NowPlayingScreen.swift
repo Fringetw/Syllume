@@ -48,7 +48,8 @@ struct NowPlayingScreen: View {
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                                         timeline: subtitles.timeline, revision: subtitles.revision,
-                                        position: player.position, playing: player.isPlaying && !player.isBuffering, style: mode.rawValue)
+                                        position: player.position, playing: player.isPlaying && !player.isBuffering,
+                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue)
                         }
                     case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
                     case .cover: artwork
@@ -86,7 +87,7 @@ struct NowPlayingScreen: View {
             .padding(.bottom, 12)
             .frame(maxWidth: 630)
             .frame(maxWidth: .infinity)
-            .background(PlaybackAtmosphere(playing: player.isPlaying).ignoresSafeArea())
+            .background(PlaybackAtmosphere(playing: player.isPlaying && !showingSearch && !showingQueue).ignoresSafeArea())
             .overlay(alignment: .bottomTrailing) {
                 if !controlsVisible {
                     Button { controlsVisible = true } label: {

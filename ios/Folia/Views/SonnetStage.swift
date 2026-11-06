@@ -11,6 +11,7 @@ struct SonnetStage: View {
     let position: Double
     let playing: Bool
     var style: String = "sonnet"
+    var rendering: Bool = true
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var ready = false
@@ -22,7 +23,8 @@ struct SonnetStage: View {
         ZStack(alignment: .bottom) {
             SonnetWebView(songID: songID, title: title, artist: artist, timeline: timeline, revision: revision,
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
-                          style: style, energySaving: energySaving || lowPower, ready: $ready, failed: $failed)
+                          style: style, energySaving: energySaving || lowPower, rendering: rendering && scenePhase == .active,
+                          ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
@@ -49,6 +51,7 @@ private struct SonnetWebView: UIViewRepresentable {
     let reduceMotion: Bool
     let style: String
     let energySaving: Bool
+    let rendering: Bool
     @Binding var ready: Bool
     @Binding var failed: Bool
 
@@ -92,9 +95,22 @@ private struct SonnetWebView: UIViewRepresentable {
         var lastTime = 0.0
         var lastStamp = Date.distantPast
         var lastPlaying = false
+        var lastRendering = true
         init(_ parent: SonnetWebView) { self.parent = parent }
         func update() {
             guard loaded, let view else { return }
+            // Covered/background stages receive one stop, then no lyric builds or seek redraws.
+            guard parent.rendering else {
+                if lastRendering {
+                    lastRendering = false; lastPlaying = false; lastTime = parent.time; lastStamp = Date()
+                    view.callAsyncJavaScript("window.FoliaStage.setClock(snapshot)", arguments: ["snapshot":
+                        ["time": parent.time, "playing": false, "reduceMotion": parent.reduceMotion]],
+                        in: nil, in: .page, completionHandler: nil)
+                }
+                return
+            }
+            let wasSuspended = !lastRendering
+            lastRendering = true
             let key = [parent.songID, parent.revision.uuidString, parent.style, String(parent.energySaving), String(parent.reduceMotion), parent.title, parent.artist].joined(separator: "|")
             if sentSong != key {
                 sentSong = key; failureDetail = ""
@@ -109,7 +125,7 @@ private struct SonnetWebView: UIViewRepresentable {
             let elapsed = Date().timeIntervalSince(lastStamp)
             let expected = lastTime + (lastPlaying ? elapsed : 0)
             let needsTime = parent.playing ? elapsed >= 0.2 || abs(expected - parent.time) > 0.25 : abs(lastTime - parent.time) > 0.001
-            if needsTime || lastPlaying != parent.playing {
+            if wasSuspended || needsTime || lastPlaying != parent.playing {
                 lastTime = parent.time; lastPlaying = parent.playing; lastStamp = Date()
                 view.callAsyncJavaScript("window.FoliaStage.setClock(snapshot)", arguments: ["snapshot":
                     ["time": parent.time, "playing": parent.playing, "reduceMotion": parent.reduceMotion]],

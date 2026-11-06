@@ -54,7 +54,8 @@ struct YouTubeNowPlayingScreen: View {
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist,
                                         timeline: subtitles.timeline, revision: subtitles.revision,
-                                        position: player.position, playing: player.isPlaying && !player.isBuffering, style: mode.rawValue)
+                                        position: player.position, playing: player.isPlaying && !player.isBuffering,
+                                        style: mode.rawValue, rendering: !showingSearch && !showingSubtitles && !showingImporter)
                         }
                     } else if player.lyricsLoading { ProgressView("正在匹配同步歌詞") }
                     else {
