@@ -74,9 +74,9 @@ final class YouTubePlaylistSync {
             let available = path.status == .satisfied, expensive = path.isExpensive
             Task { @MainActor in
                 guard let self else { return }
-                networkAvailable = available; expensiveNetwork = expensive
-                if !available || (wifiOnly && expensive) { stopDownloads() }
-                else { pump() }
+                self.networkAvailable = available; self.expensiveNetwork = expensive
+                if !available || (self.wifiOnly && expensive) { self.stopDownloads() }
+                else { self.pump() }
             }
         }
         monitor.start(queue: DispatchQueue(label: "Folia.PlaylistNetwork"))
@@ -347,8 +347,8 @@ final class YouTubePlaylistSync {
             do {
                 let transfer = PlaylistAudioTransfer(source: source, wifiOnly: wifiOnly) { [weak self] percent in
                     Task { @MainActor in
-                        guard let self, downloadTicket == ticket else { return }
-                        statuses[id] = .downloading(percent)
+                        guard let self, self.downloadTicket == ticket else { return }
+                        self.statuses[id] = .downloading(percent)
                     }
                 }
                 let file = try await transfer.run(); temporary = file
