@@ -1,6 +1,7 @@
 """Loopback-only fixture server for the native downloader; serves Folia's own synthetic audio."""
 import argparse
 import http.server
+import socketserver
 from pathlib import Path
 import time
 
@@ -43,7 +44,14 @@ def main():
             except (BrokenPipeError, ConnectionResetError):
                 pass
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    class Server(http.server.ThreadingHTTPServer):
+        def server_bind(self):
+            # HTTPServer's reverse-DNS lookup can stall on a fresh macOS runner.
+            socketserver.TCPServer.server_bind(self)
+            self.server_name = "localhost"
+            self.server_port = self.socket.getsockname()[1]
+
+    server = Server(("127.0.0.1", 0), Handler)
     server.daemon_threads = True
     args.port_file.write_text(str(server.server_port))
     server.serve_forever()
