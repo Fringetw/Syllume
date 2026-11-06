@@ -8,6 +8,7 @@ enum SubtitleSourceProbe {
                 let playing = provider == "ytm" ? SubtitleSong(id: "SX_ViT4Ra7k", source: "ytm", title: "Lemon", artist: "米津玄師", durationMs: 256000) : nil
                 let found = try await SubtitleNetwork.shared.search("Lemon 米津玄師", provider: provider, netease: "", current: playing)
                 guard let candidate = found.first else { print("SOURCE PROBE \(provider): no candidates"); continue }
+                print("SOURCE PROBE \(provider): search completed, candidates=\(found.count)")
                 let lines = try await SubtitleNetwork.shared.lyrics(candidate, netease: "", original: [])
                 print("SOURCE PROBE \(provider): candidates=\(found.count), timedLines=\(lines.count), translatedLines=\(lines.filter { !($0.translation ?? "").isEmpty }.count)")
             } catch {

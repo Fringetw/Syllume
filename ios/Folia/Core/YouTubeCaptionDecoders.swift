@@ -116,7 +116,7 @@ enum YouTubeCaptionDecoders {
               ["www.youtube.com", "youtube.com"].contains(parts.host?.lowercased() ?? ""), parts.path == "/api/timedtext" else { return false }
         return true
     }
-    static func cues(_ data: Data) throws -> [LyricLine] {
+    static func cues(_ data: Data, chinese: Bool = false) throws -> [LyricLine] {
         let root = try SubtitleSourceDecoders.object(data)
         guard let events = root["events"] as? [[String: Any]], events.count <= 20_000 else { throw SubtitleReadError("invalid-response") }
         let lines = events.compactMap { event -> LyricLine? in
@@ -129,16 +129,37 @@ enum YouTubeCaptionDecoders {
             let text = segments.compactMap { $0["utf8"] as? String }.joined().trimmingCharacters(in: .whitespacesAndNewlines)
             guard start <= 3600, duration > 0, duration <= 120, !text.isEmpty, text.utf8.count <= 64_000,
                   !text.contains("\u{0000}") else { return nil }
+            if chinese, let pair = bilingualCue(text) {
+                return LyricLine(startTime: start, endTime: start + duration, fullText: pair.original, translation: pair.chinese)
+            }
             return LyricLine(startTime: start, endTime: start + duration, fullText: text)
         }
         return LyricTimeline(lines: lines).lines
+    }
+    private static func bilingualCue(_ text: String) -> (original: String, chinese: String)? {
+        let rows = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        guard (2...6).contains(rows.count) else { return nil }
+        var originals: [String] = [], translations: [String] = []
+        for row in rows {
+            let kanaOrHangul = row.range(of: #"[\p{Hiragana}\p{Katakana}\p{Hangul}]"#, options: .regularExpression) != nil
+            let han = row.unicodeScalars.filter { $0.properties.isIdeographic }.count
+            let letters = row.unicodeScalars.filter { $0.properties.isAlphabetic }.count
+            if !kanaOrHangul, han >= 2, han * 2 >= letters { translations.append(row) }
+            else if kanaOrHangul || (han == 0 && row.range(of: "[A-Za-z]", options: .regularExpression) != nil) { originals.append(row) }
+            else { return nil } // Two all-Han rows or ambiguous text cannot prove which one is the original.
+        }
+        guard !originals.isEmpty, !translations.isEmpty else { return nil }
+        return (originals.joined(separator: "\n"), translations.joined(separator: "\n"))
     }
     static func bilingual(chinese: [LyricLine], original: [LyricLine]?, sameVideoBaseline: [LyricLine] = []) -> [LyricLine] {
         // Only the very same video may use its existing lyric clock without a second original track.
         // Other videos must supply their own original text for the plugin to prove a cross-video match.
         let original = original?.isEmpty == false ? original! : sameVideoBaseline
         guard !original.isEmpty else { return chinese }
-        let paired = SubtitleSourceDecoders.attach(original, translations: chinese)
+        let translatedText = chinese.map { line in
+            LyricLine(startTime: line.startTime, endTime: line.endTime, fullText: line.translation ?? line.fullText)
+        }
+        let paired = SubtitleSourceDecoders.attach(original, translations: translatedText)
         return paired.contains(where: { $0.translation != nil }) ? paired : chinese
     }
 }

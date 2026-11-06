@@ -20,7 +20,7 @@
 
 - **網易雲**：匿名直讀 `music.163.com/api/search/get/web` 與 `/api/song/lyric` 的 `lrc`、`tlyric`、`romalrc`；可選用已有的維護者 HTTPS `/search`、`/lyric` 服務。
 - **QQ 音樂**：匿名搜尋 `client_search_cp`；以 `music.musichallSong.PlayLyricInfo/GetPlayLyricInfo` 的 `crypt=0,qrc=0,trans=1` 讀取平台 Base64 LRC 與譯文。捐出逐行字幕，不製造不存在的逐字時間；原曲已有的逐字仍由插件保留。
-- **YouTube**：搜尋公開影片頁並優先檢查播放中的影片；僅解析公開頁面 JSON 與人工中文 `captionTracks`／JSON3 時間軸。排除 ASR、`tlang` 機器翻譯及外站／非 HTTPS 字幕網址。若有可判斷的原語字幕軌，僅按相同時間配對，再交原插件核對原詞；對不上的翻譯不硬塞。無軌、驗證、登入、空回覆、地區限制均保留原字幕。燒錄在畫面的文字沒有可讀取字幕軌，不做 OCR。Google 曲庫 OAuth 不提供任意影片的字幕下載權限，參閱 [YouTube 官方限制](https://developers.google.com/youtube/data/reference/rest/v3/captions/download)。
+- **YouTube**：搜尋公開影片頁並優先檢查播放中的影片；僅解析公開頁面 JSON 與人工中文 `captionTracks`／JSON3 時間軸。排除 ASR、`tlang` 機器翻譯及外站／非 HTTPS 字幕網址。同一人工中文軌內的中日／中英雙語行會保留原詞並分離中文譯文；無法辨識的全漢字多行不猜測。若有可判斷的原語字幕軌，僅按相同時間配對，再交原插件核對原詞；目前同一影片也可使用既有原詞，在相同時間點補中文。對不上的翻譯不硬塞。無軌、驗證、登入、空回覆、地區限制均保留原字幕。燒錄在畫面的文字沒有可讀取字幕軌，不做 OCR。Google 曲庫 OAuth 不提供任意影片的字幕下載權限，參閱 [YouTube 官方限制](https://developers.google.com/youtube/data/reference/rest/v3/captions/download)。
 - 本機、已連接 Navidrome 與 LRCLIB 保持可用；Navidrome 憑證只在原生鑰匙圈與原生客戶端使用。
 
 各平台開關、上次候選／讀取結果和失敗原因在字幕設定；相同安全摘要亦附加至完整 JSON 診斷。0.3.1 設定可直接遷移，新來源預設啟用。平台公開接口不是可用性保證，桌面登入帳號與其他桌面平台來源不會自動出現在 iOS。

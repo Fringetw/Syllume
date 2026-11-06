@@ -122,7 +122,7 @@ actor SubtitleNetwork {
     private func caption(_ track: YouTubeCaptionTrack) async throws -> [LyricLine] {
         let data = try await read(url: track.url, provider: "ytm")
         guard !data.isEmpty else { throw SubtitleReadError("caption-read-failed") }
-        return try YouTubeCaptionDecoders.cues(data)
+        return try YouTubeCaptionDecoders.cues(data, chinese: track.chinese)
     }
     private func optionalCaption(_ track: YouTubeCaptionTrack?) async -> [LyricLine]? {
         guard let track else { return nil }
