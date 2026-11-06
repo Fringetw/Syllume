@@ -125,49 +125,78 @@ final class FoliaUITests: XCTestCase {
         app.buttons["關閉播放畫面"].tap()
     }
 
-    func testYouTubeStaysInsideFolia() {
-        continueAfterFailure = false
-        let app = XCUIApplication(); app.launch()
-        app.segmentedControls.buttons["YouTube"].tap()
-        let link = app.textFields["貼上 YouTube／YouTube Music 連結"]
-        XCTAssertTrue(link.waitForExistence(timeout: 10))
-        link.tap(); link.typeText("https://youtu.be/M7lc1UVf-VE")
-        XCTAssertEqual(link.value as? String, "https://youtu.be/M7lc1UVf-VE")
-        app.buttons["playYouTubeLink"].tap()
-        XCTAssertTrue(app.staticTexts["YouTube · Folia"].waitForExistence(timeout: 15))
-        XCTAssertTrue(app.webViews["youtubeEmbeddedPlayer"].waitForExistence(timeout: 15))
-        XCTAssertEqual(app.state, .runningForeground)
-        capture(app, name: "YouTube-inside-Folia")
-        app.buttons["關閉 YouTube 播放畫面"].tap()
-    }
-
-    func testYouTubePauseStopsMedia() {
+    func testYouTubePlaylistSelectionPersists() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--youtube-playback-fixture", "--presentation-reset"]
+        app.launchArguments = ["--playlist-sync-fixture", "--playlist-sync-reset"]
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
-        let link = app.textFields["貼上 YouTube／YouTube Music 連結"]
-        XCTAssertTrue(link.waitForExistence(timeout: 10))
-        // Keep transport verification independent of simulator keyboard delivery.
-        XCTAssertEqual(link.value as? String, "https://youtu.be/M7lc1UVf-VE")
-        app.buttons["playYouTubeLink"].tap()
-        XCTAssertTrue(app.staticTexts["YouTube · Folia"].waitForExistence(timeout: 15))
-        let probe = app.staticTexts["youtubeTransportProbe"]
-        XCTAssertTrue(probe.waitForExistence(timeout: 20))
+        let second = app.buttons["playlistChoice-fixture-second"]
+        XCTAssertTrue(second.waitForExistence(timeout: 20))
+        second.tap()
+        let title = app.staticTexts["selectedYouTubePlaylist"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertEqual(title.label, "夜間播放清單")
+        XCTAssertTrue(app.buttons["syncedTrack-fixture-row-second"].waitForExistence(timeout: 15))
+        capture(app, name: "YouTube-selected-playlist")
+        app.terminate()
+        app.launchArguments = ["--playlist-sync-fixture"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertEqual(title.label, "夜間播放清單")
+        XCTAssertFalse(app.buttons["playlistChoice-$liked"].exists)
+        app.buttons["changeYouTubePlaylist"].tap()
+        let liked = app.buttons["playlistChoice-$liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 15)); liked.tap()
+        XCTAssertEqual(title.label, "喜歡的影片")
+        app.terminate(); app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertEqual(title.label, "喜歡的影片")
+        XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
+        capture(app, name: "YouTube-last-playlist-restored")
+    }
+
+    func testPlaylistDownloadedAudioPauses() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--playlist-sync-fixture", "--playlist-sync-reset", "--playback-probe"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["playlistChoice-$liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 20)); liked.tap()
+        let summary = app.staticTexts["playlistDownloadSummary"]
+        let downloaded = expectation(for: NSPredicate(format: "value == %@", "2|1"), evaluatedWith: summary)
+        XCTAssertEqual(XCTWaiter.wait(for: [downloaded], timeout: 45), .completed,
+                       "Duplicate playlist entries must share one complete music file")
+        XCTAssertTrue(app.buttons["syncedTrack-fixture-unavailable"].waitForExistence(timeout: 10))
+        let unavailable = expectation(for: NSPredicate(format: "label CONTAINS %@", "來源未提供"),
+                                      evaluatedWith: app.buttons["syncedTrack-fixture-unavailable"])
+        XCTAssertEqual(XCTWaiter.wait(for: [unavailable], timeout: 10), .completed)
+        capture(app, name: "YouTube-playlist-downloaded-files")
+        app.buttons["syncedTrack-fixture-row-duplicate"].tap()
+        let toggle = app.buttons["playerToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        app.buttons["循環佇列"].tap()
+        if toggle.label == "播放" { toggle.tap() }
+        XCTAssertEqual(app.staticTexts["nowPlayingTrackTitle"].value as? String, "播放佇列第 2 首，共 2 首")
+        let probe = app.staticTexts["localTransportProbe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 10))
         let advances = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > 0.2 }, evaluatedWith: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [advances], timeout: 45), .completed, "The local fixture must really play")
-        app.buttons["暫停 YouTube"].tap()
-        let paused = expectation(for: NSPredicate { _, _ in (probe.value as? String ?? "").hasSuffix("|paused") }, evaluatedWith: probe)
+        toggle.tap()
+        let paused = expectation(for: NSPredicate { _, _ in (probe.value as? String ?? "").hasSuffix("|0.0") }, evaluatedWith: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
         let stoppedTime = probeTime(probe); wait(2)
         XCTAssertEqual(probeTime(probe), stoppedTime, accuracy: 0.15)
-        capture(app, name: "YouTube-real-media-paused")
-        app.buttons["播放 YouTube"].tap()
+        XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
+        capture(app, name: "Downloaded-audio-paused-without-video")
+        toggle.tap()
         let resumes = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > stoppedTime + 0.25 }, evaluatedWith: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [resumes], timeout: 15), .completed)
-        app.buttons["暫停 YouTube"].tap()
-        app.buttons["關閉 YouTube 播放畫面"].tap()
+        toggle.tap()
+        app.buttons["關閉播放畫面"].tap()
     }
 
     func testPlatformSetup() {
@@ -180,7 +209,7 @@ final class FoliaUITests: XCTestCase {
             XCTAssertTrue(app.textFields["Client ID"].waitForExistence(timeout: 5))
             XCTAssertFalse(app.buttons["登入並讀取曲庫"].isEnabled)
             capture(app, name: "Spotify-setup")
-            app.buttons["關閉"].tap()
+            app.buttons["closePlatformAccount"].tap()
         app.segmentedControls.buttons["YouTube"].tap()
         let googleConnect = app.buttons["googleConnect"]
         XCTAssertTrue(googleConnect.waitForExistence(timeout: 5))
@@ -191,7 +220,7 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(app.textFields["Client ID"].exists)
         XCTAssertFalse(app.links["開啟 Google Cloud 憑證設定"].exists)
         capture(app, name: "YouTube-account-info")
-        app.buttons["關閉"].tap()
+        app.buttons["closePlatformAccount"].tap()
     }
 
     private func openSubtitlePreferences(in app: XCUIApplication) {

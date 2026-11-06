@@ -61,6 +61,8 @@ struct NowPlayingScreen: View {
               if controlsVisible {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
+                        .accessibilityIdentifier("nowPlayingTrackTitle")
+                        .accessibilityValue(player.index.map { "播放佇列第 \($0 + 1) 首，共 \(player.queue.count) 首" } ?? "")
                         .accessibilityAddTraits(.isHeader)
                     if !track.subtitle.isEmpty {
                         Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)

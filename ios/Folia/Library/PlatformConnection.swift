@@ -14,6 +14,7 @@ final class PlatformConnection {
     private(set) var connecting = false
     private(set) var storageError: String?
     var connected: Bool { credential != nil }
+    var libraryIdentity: String? { credential?.libraryID }
 
     private var credential: Credential?
     @ObservationIgnored private let authorizer = PlatformAuthorization()
@@ -25,6 +26,7 @@ final class PlatformConnection {
         let accessToken: String
         let refreshToken: String?
         let expires: Date
+        var libraryID: String? = nil
     }
     private struct TokenResponse: Decodable {
         let access_token: String
@@ -50,8 +52,12 @@ final class PlatformConnection {
         session = URLSession(configuration: configuration)
         do {
             if let data = try readCredential() {
-                let saved = try JSONDecoder().decode(Credential.self, from: data)
+                var saved = try JSONDecoder().decode(Credential.self, from: data)
                 if platform == .spotify || googleConfiguration.acceptsCredential(clientID: saved.clientID) {
+                    if saved.libraryID.flatMap(UUID.init(uuidString:)) == nil {
+                        saved.libraryID = UUID().uuidString
+                        try writeCredential(saved)
+                    }
                     credential = saved
                     if platform == .spotify { clientID = saved.clientID }
                 }
@@ -123,8 +129,20 @@ final class PlatformConnection {
     }
 
     func page(_ collection: LibraryCollection, cursor: String?) async throws -> LibraryPage {
-        let revision = sessionID
         let url = try PlatformLibrary.endpoint(platform: platform, collection: collection, cursor: cursor)
+        let data = try await libraryData(url)
+        do { return try PlatformLibrary.decode(data, platform: platform, collection: collection) }
+        catch { throw PlatformError.message("平台回傳的曲庫格式無法辨識，請稍後再試。") }
+    }
+
+    func youtubeDetails(_ ids: [String]) async throws -> [LibraryEntry] {
+        guard platform == .youtube else { throw PlatformError.message("這個來源不是 YouTube。") }
+        let data = try await libraryData(PlatformLibrary.videoDetailsURL(ids))
+        return try PlatformLibrary.decode(data, platform: .youtube, collection: .liked).entries
+    }
+
+    private func libraryData(_ url: URL) async throws -> Data {
+        let revision = sessionID
         var token = try await accessToken()
         var result = try await request(url: url, token: token)
         if result.1.statusCode == 401 {
@@ -135,8 +153,7 @@ final class PlatformConnection {
         guard sessionID == revision else { throw CancellationError() }
         switch result.1.statusCode {
         case 200..<300:
-            do { return try PlatformLibrary.decode(result.0, platform: platform, collection: collection) }
-            catch { throw PlatformError.message("平台回傳的曲庫格式無法辨識，請稍後再試。") }
+            return result.0
         case 401: throw PlatformError.message("登入已失效，請中斷連線後重新登入。")
         case 403:
             let message = platform == .spotify
@@ -199,7 +216,8 @@ final class PlatformConnection {
         }
         return Credential(clientID: clientID, accessToken: token.access_token,
                           refreshToken: token.refresh_token ?? previous?.refreshToken,
-                          expires: Date().addingTimeInterval(token.expires_in))
+                          expires: Date().addingTimeInterval(token.expires_in),
+                          libraryID: previous?.libraryID ?? UUID().uuidString)
     }
 
     private func request(url: URL, token: String) async throws -> (Data, HTTPURLResponse) {

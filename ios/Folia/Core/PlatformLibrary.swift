@@ -74,11 +74,12 @@ enum LibraryCollection: Equatable {
     case playlists, liked, playlist(String)
 }
 
-struct LibraryEntry: Identifiable, Equatable {
+struct LibraryEntry: Identifiable, Equatable, Codable, Sendable {
     let id: String
     let title: String
     let subtitle: String
     let url: URL
+    var duration: Double? = nil
 }
 
 struct LibraryPage {
@@ -88,6 +89,15 @@ struct LibraryPage {
 
 // Only API metadata is read. Links retain the source platform's playback destination.
 enum PlatformLibrary {
+    static func videoDetailsURL(_ ids: [String]) throws -> URL {
+        guard !ids.isEmpty, ids.count <= 50, ids.allSatisfy(YouTubeVideo.validID) else {
+            throw PlatformError.message("影片識別碼無效。")
+        }
+        var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/videos")!
+        parts.queryItems = [.init(name: "part", value: "snippet,contentDetails"), .init(name: "id", value: ids.joined(separator: ","))]
+        return parts.url!
+    }
+
     static func endpoint(platform: LibraryPlatform, collection: LibraryCollection, cursor: String?) throws -> URL {
         var parts: URLComponents
         if platform == .spotify {
@@ -156,7 +166,8 @@ enum PlatformLibrary {
             let path = collection == .playlists ? "playlist?list=\(id)" : "watch?v=\(id)"
             let rowID = collection == .playlists || collection == .liked ? id : item.id ?? id
             return LibraryEntry(id: rowID, title: title, subtitle: snippet.videoOwnerChannelTitle ?? snippet.channelTitle ?? "",
-                                url: URL(string: "https://music.youtube.com/" + path)!)
+                                url: URL(string: "https://music.youtube.com/" + path)!,
+                                duration: PlaylistAudioRules.duration(item.contentDetails?.duration))
         }
         return LibraryPage(entries: entries, next: page.nextPageToken)
     }
@@ -186,7 +197,9 @@ enum PlatformLibrary {
         struct Item: Decodable {
             let id: String?
             let snippet: Snippet?
+            let contentDetails: Details?
         }
+        struct Details: Decodable { let duration: String? }
         struct Snippet: Decodable {
             let title: String?
             let channelTitle: String?
