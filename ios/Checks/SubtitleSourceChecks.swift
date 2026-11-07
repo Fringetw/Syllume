@@ -1,0 +1,90 @@
+import Foundation
+
+enum SubtitleSourceChecks {
+    static func run() throws {
+        let old = try JSONDecoder().decode(SubtitlePreferences.self, from: Data(#"{"enabled":false,"target":"t","convertOriginal":false,"neteaseAPI":"https://example.com/music"}"#.utf8))
+        precondition(!old.enabled && !old.convertOriginal && old.target == "t")
+        precondition(old.searchNetease && old.searchQQ && old.searchYouTube)
+        let roundTrip = try JSONDecoder().decode(SubtitlePreferences.self, from: JSONEncoder().encode(old))
+        precondition(roundTrip == old)
+        let form = String(decoding: SubtitleNetwork.neteaseForm("A+B & 雨"), as: UTF8.self)
+        precondition(form.contains("A%2BB%20%26%20") && form.contains("type=1") && form.contains("limit=8"))
+        let queryURL = YouTubeCaptionDecoders.searchURL("A+B & 雨")
+        let queryParts = URLComponents(url: queryURL, resolvingAgainstBaseURL: false)!
+        precondition(queryParts.percentEncodedQuery?.contains("A%2BB") == true)
+        precondition(queryParts.host == "www.youtube.com" && queryParts.path == "/results")
+        precondition(queryParts.queryItems?.first { $0.name == "sp" }?.value == "EgIoAQ%3D%3D")
+        precondition(queryParts.queryItems?.first { $0.name == "search_query" }?.value == "A+B & 雨 中文字幕")
+        let safeReply = SubtitleSourceDecoders.replySummary(Data(#"{"code":200,"result":null,"token":"MUST_NOT_LEAK","lrc":{"lyric":"PRIVATE_LYRIC"}}"#.utf8))
+        precondition(safeReply.contains("result=null") && safeReply.contains("code=200") && !safeReply.contains("MUST_NOT_LEAK") && !safeReply.contains("PRIVATE_LYRIC"))
+        let netease = try SubtitleSourceDecoders.neteaseSearch(Data(#"{"code":200,"result":{"songs":[{"id":42,"name":"Test","ar":[{"name":"Artist"}],"dt":60000}]}}"#.utf8))
+        precondition(netease.first?.song.id == "42" && netease.first?.song.durationMs == 60000)
+        let words = try SubtitleSourceDecoders.neteaseLyrics(Data(#"{"code":200,"lrc":{"lyric":"[00:01]Blue sky\n[00:06]Still here"},"tlyric":{"lyric":"[00:01.10]蓝色天空\n[00:08]錯位"},"romalrc":{"lyric":"[00:01]blu skai"}}"#.utf8))
+        precondition(words[0].fullText == "Blue sky" && words[0].translation == "蓝色天空" && words[0].romanization == "blu skai")
+        precondition(words[1].translation == nil)
+        let qq = try SubtitleSourceDecoders.qqSearch(Data(#"{"code":0,"data":{"song":{"list":[{"songid":7,"songname":"A &amp; B","singer":[{"name":"歌手 (かしゅ)"}],"interval":60}]}}}"#.utf8))
+        precondition(qq[0].song.title == "A & B" && qq[0].song.artist == "歌手" && qq[0].song.durationMs == 60000)
+        let payload: [String: Any] = ["code": 0, "request": ["code": 0, "data": ["crypt": 0, "qrc": 0,
+            "lyric": Data("[00:01]Blue sky".utf8).base64EncodedString(), "trans": Data("[00:01]蓝色天空".utf8).base64EncodedString()]]]
+        let qqLines = try SubtitleSourceDecoders.qqLyrics(JSONSerialization.data(withJSONObject: payload))
+        precondition(qqLines.first?.translation == "蓝色天空")
+        for code in [301, 401, 429, 2001, 500] {
+            do { try SubtitleSourceDecoders.check(code, success: 0); preconditionFailure("Provider refusal became success") }
+            catch let error as SubtitleReadError {
+                precondition(error.code == ([301, 401].contains(code) ? "not-signed-in" : [429, 2001].contains(code) ? "rate-limited" : "unavailable"))
+            }
+        }
+        precondition(SubtitleSourceDecoders.entities("&#x98A8; &amp; &#38642;") == "風 & 雲")
+        let search = #"var ytInitialData = {"estimatedResults":"1","contents":[{"videoRenderer":{"videoId":"abcdefghijk","title":{"runs":[{"text":"【中日字幕】Artist - Song (Live)"}]},"ownerText":{"runs":[{"text":"Translator"}]},"lengthText":{"simpleText":"3:45"}}}]};"#
+        let video = try YouTubeCaptionDecoders.search(search)[0].song
+        precondition(video.id == "abcdefghijk" && video.title == "Song (Live)" && video.artist == "Artist" && video.durationMs == 225000)
+        let official = YouTubeCaptionDecoders.metadata(id: "abcdefghijk", title: "米津玄師 Kenshi Yonezu - Lemon", artist: "米津玄師", duration: 256)
+        precondition(official.artist == "米津玄師" && official.title == "Lemon")
+        let multilingual = YouTubeCaptionDecoders.metadata(id: "abcdefghijk", title: "米津玄師 Kenshi Yonezu - Lemon", artist: "Kenshi Yonezu 米津玄師", duration: 256)
+        precondition(multilingual.artist == "米津玄師" && multilingual.title == "Lemon")
+        let unrelated = YouTubeCaptionDecoders.metadata(id: "abcdefghijk", title: "米津玄師 Kenshi Yonezu - Lemon", artist: "Another Performer 米津玄師", duration: 256)
+        precondition(unrelated.artist == "米津玄師 Kenshi Yonezu")
+        for code in [405, 460, -460, 403, 451] {
+            do { try SubtitleSourceDecoders.check(code, success: 200); preconditionFailure("Platform restriction ignored") }
+            catch let error as SubtitleReadError {
+                precondition(error.code == (code == 405 ? "rate-limited" : [403,451].contains(code) ? "region-restricted" : "verification-required"))
+            }
+        }
+        let escaped = #"window["ytInitialData"]={"text":"quoted \" } text","estimatedResults":"0"};"#
+        let empty = try YouTubeCaptionDecoders.search(escaped)
+        precondition(empty.isEmpty)
+        let watch = #"var ytInitialPlayerResponse = {"playabilityStatus":{"status":"OK"},"videoDetails":{"videoId":"abcdefghijk"},"captions":{"playerCaptionsTracklistRenderer":{"captionTracks":[{"languageCode":"zh-Hant","baseUrl":"https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=zh-Hant"},{"languageCode":"zh","kind":"asr","baseUrl":"https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=zh&kind=asr"},{"languageCode":"en","baseUrl":"https://www.youtube.com/api/timedtext?v=abcdefghijk&lang=en"},{"languageCode":"zh","baseUrl":"https://evil.example/api/timedtext"},{"languageCode":"zh","baseUrl":"https://www.youtube.com/api/timedtext?v=abcdefghijk&tlang=zh"}]}}};"#
+        let tracks = try YouTubeCaptionDecoders.tracks(watch, videoID: "abcdefghijk")
+        precondition(tracks.count == 3 && tracks[0].chinese && !tracks[0].automatic && tracks[1].automatic)
+        precondition(tracks.allSatisfy { $0.url.query?.contains("fmt=json3") == true })
+        let signedWatch = watch.replacingOccurrences(of: "lang=zh-Hant", with: "lang=zh-Hant&signature=a%2Bb")
+        let signedTracks = try YouTubeCaptionDecoders.tracks(signedWatch, videoID: "abcdefghijk")
+        precondition(signedTracks[0].url.absoluteString.contains("signature=a%2Bb"))
+        for raw in ["http://www.youtube.com/api/timedtext", "https://youtube.com.evil.example/api/timedtext",
+                    "https://www.youtube.com@evil.example/api/timedtext", "https://www.youtube.com/watch"] {
+            precondition(!YouTubeCaptionDecoders.allowedCaptionURL(URL(string: raw)))
+        }
+        let original = try YouTubeCaptionDecoders.cues(Data(#"{"events":[{"tStartMs":1000,"dDurationMs":4000,"segs":[{"utf8":"Blue "},{"utf8":"sky"}]},{"tStartMs":6000,"dDurationMs":4000,"segs":[{"utf8":"Still here"}]}]}"#.utf8))
+        precondition(original[0].fullText == "Blue sky" && original[0].endTime == 5)
+        let chinese = try YouTubeCaptionDecoders.cues(Data(#"{"events":[{"tStartMs":1000,"dDurationMs":4000,"segs":[{"utf8":"藍色天空"}]},{"tStartMs":6100,"dDurationMs":4000,"segs":[{"utf8":"還在這裡"}]}]}"#.utf8))
+        let dual = try YouTubeCaptionDecoders.cues(Data(#"{"events":[{"tStartMs":1000,"dDurationMs":4000,"segs":[{"utf8":"Blue sky\n藍色天空"}]},{"tStartMs":6000,"dDurationMs":4000,"segs":[{"utf8":"まだここにいる\n還在這裡"}]}]}"#.utf8), chinese: true)
+        precondition(dual[0].fullText == "Blue sky" && dual[0].translation == "藍色天空")
+        precondition(dual[1].fullText == "まだここにいる" && dual[1].translation == "還在這裡")
+        let wrap = try YouTubeCaptionDecoders.cues(Data(#"{"events":[{"tStartMs":1000,"dDurationMs":4000,"segs":[{"utf8":"一行中文\n另一行中文"}]}]}"#.utf8), chinese: true)
+        precondition(wrap[0].translation == nil && wrap[0].fullText == "一行中文\n另一行中文")
+        let pairedDual = YouTubeCaptionDecoders.bilingual(chinese: dual, original: original)
+        precondition(pairedDual[0].translation == "藍色天空")
+        let combined = YouTubeCaptionDecoders.bilingual(chinese: chinese, original: original)
+        precondition(combined.map(\.translation) == ["藍色天空", "還在這裡"] && combined[1].startTime == 6)
+        precondition(YouTubeCaptionDecoders.bilingual(chinese: chinese, original: nil) == chinese)
+        let sameVideo = YouTubeCaptionDecoders.bilingual(chinese: chinese, original: nil, sameVideoBaseline: original)
+        precondition(sameVideo[0].fullText == "Blue sky" && sameVideo[0].translation == "藍色天空")
+        let offsetChinese = chinese.map { LyricLine(startTime: $0.startTime + 3, endTime: $0.endTime + 3, fullText: $0.fullText) }
+        precondition(YouTubeCaptionDecoders.bilingual(chinese: offsetChinese, original: nil, sameVideoBaseline: original) == offsetChinese)
+        do { _ = try YouTubeCaptionDecoders.tracks(watch, videoID: "otherID1234"); preconditionFailure("Wrong video response accepted") }
+        catch is SubtitleReadError {}
+        do { _ = try YouTubeCaptionDecoders.embeddedObject("unusual traffic /sorry/", name: "ytInitialData"); preconditionFailure("Challenge became no results") }
+        catch let error as SubtitleReadError { precondition(error.code == "verification-required") }
+        print("PASS: subtitle source migration, NetEase / QQ translations, YouTube manual tracks, pairing, refusal and URL checks")
+    }
+}

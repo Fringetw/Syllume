@@ -80,6 +80,8 @@ struct NavidromeClient: Sendable {
         let album: String?
         let duration: Double?
         let coverArt: String?
+        let suffix: String?
+        let bitRate: Int?
     }
 
     private static let session: URLSession = {
@@ -91,10 +93,10 @@ struct NavidromeClient: Sendable {
 
     func ping() async throws { _ = try await request("ping") }
 
-    func search(_ query: String) async throws -> [Track] {
+    func search(_ query: String, limit: Int = 100) async throws -> [Track] {
         let response = try await request("search3", parameters: [
             .init(name: "query", value: query), .init(name: "artistCount", value: "0"),
-            .init(name: "albumCount", value: "0"), .init(name: "songCount", value: "100")
+            .init(name: "albumCount", value: "0"), .init(name: "songCount", value: String(max(1, min(100, limit))))
         ])
         return (response.searchResult3?.song ?? []).map {
             Track(id: $0.id, source: .navidrome, title: $0.title, artist: $0.artist, album: $0.album,
@@ -106,6 +108,20 @@ struct NavidromeClient: Sendable {
         try account.endpoint("stream", parameters: [.init(name: "id", value: track.id)])
     }
 
+    func downloadCandidates(for song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+        let response = try await request("search3", parameters: [
+            .init(name: "query", value: DownloadSongMatch.searchTitle(song.title)), .init(name: "artistCount", value: "0"),
+            .init(name: "albumCount", value: "0"), .init(name: "songCount", value: "50")
+        ])
+        return try (response.searchResult3?.song ?? []).compactMap { recording in
+            guard DownloadSongMatch.matches(song, title: recording.title, artists: [recording.artist ?? ""], duration: recording.duration),
+                  let format = recording.suffix?.lowercased(), ["flac", "alac", "wav", "aiff", "aif", "mp3", "m4a", "aac"].contains(format) else { return nil }
+            return DownloadAudioCandidate(url: try account.endpoint("download", parameters: [.init(name: "id", value: recording.id)]),
+                title: recording.title, artist: recording.artist ?? "", duration: recording.duration ?? 0,
+                format: format, bitrate: (recording.bitRate ?? 0) * 1000, source: "Navidrome")
+        }
+    }
+
     func artwork(for track: Track) async -> Data? {
         guard let cover = track.coverID, let url = try? account.endpoint("getCoverArt", parameters: [
             .init(name: "id", value: cover), .init(name: "size", value: "600")
@@ -114,13 +130,27 @@ struct NavidromeClient: Sendable {
     }
 
     func lyrics(for track: Track) async -> LyricTimeline? {
-        if let modern = try? await request("getLyricsBySongId", parameters: [
+        try? await subtitleLyrics(for: track)
+    }
+
+    func subtitleLyrics(for track: Track) async throws -> LyricTimeline? {
+        var modernFailure: Error?
+        do {
+            let modern = try await request("getLyricsBySongId", parameters: [
             .init(name: "id", value: track.id), .init(name: "enhanced", value: "true")
-        ]), let timeline = modern.lyricsList?.timeline(), !timeline.lines.isEmpty { return timeline }
-        guard !Task.isCancelled, let artist = track.artist,
-              let legacy = try? await request("getLyrics", parameters: [
+            ])
+            if let timeline = modern.lyricsList?.timeline(), !timeline.lines.isEmpty { return timeline }
+        } catch { modernFailure = error }
+        try Task.checkCancellation()
+        guard let artist = track.artist else {
+            if let modernFailure { throw modernFailure }; return nil
+        }
+        let legacy = try await request("getLyrics", parameters: [
                 .init(name: "artist", value: artist), .init(name: "title", value: track.title)
-              ]), let value = legacy.lyrics?.value else { return nil }
+              ])
+        guard let value = legacy.lyrics?.value else {
+            if let modernFailure { throw modernFailure }; return nil
+        }
         let timeline = LyricTimeline(lrc: value)
         return timeline.lines.isEmpty ? nil : timeline
     }

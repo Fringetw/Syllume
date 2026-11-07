@@ -6,6 +6,13 @@ struct LibraryScreen: View {
     let library: LocalLibrary
     let player: PlaybackModel
     let navidrome: NavidromeConnection
+    @Environment(\.scenePhase) private var scenePhase
+
+    @State private var spotify = PlatformConnection(.spotify)
+    @State private var youtube = PlatformConnection(.youtube)
+    @State private var youtubeSync = YouTubeSyncController()
+    @State private var subtitles = SubtitleController()
+    @State private var showingSettings = false
 
     @State private var showingPlayer = false
     @State private var showingServer = false
@@ -16,7 +23,7 @@ struct LibraryScreen: View {
     @State private var query = ""
     @State private var source: Source = .local
 
-    private enum Source: Hashable { case local, navidrome }
+    private enum Source: Hashable { case local, navidrome, spotify, youtube }
     private static let lyricTypes: [UTType] = [
         UTType(importedAs: "org.folia.lyrics.lrc"), UTType(importedAs: "org.folia.lyrics.fia")
     ]
@@ -26,8 +33,10 @@ struct LibraryScreen: View {
             VStack(spacing: 0) {
                 masthead
                 Picker("音樂來源", selection: $source) {
-                    Text("本機曲庫").tag(Source.local)
+                    Text("本機").tag(Source.local)
                     Text("Navidrome").tag(Source.navidrome)
+                    Text("Spotify").tag(Source.spotify)
+                    Text("YouTube").tag(Source.youtube)
                 }
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 22)
@@ -40,6 +49,12 @@ struct LibraryScreen: View {
                         player.play(tracks, from: track, client: client)
                         showingPlayer = true
                     }
+                case .spotify:
+                    PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: pauseForPlatform, playYouTube: { _, _ in })
+                case .youtube:
+                    YouTubeMusicScreen(connection: youtube, sync: youtubeSync, library: library, account: navidrome.account) { track, queue in
+                        player.play(queue, from: track); showingPlayer = true
+                    }
                 }
             }
             .background(FoliaPalette.surface.ignoresSafeArea())
@@ -50,9 +65,27 @@ struct LibraryScreen: View {
                 }
             }
         }
-        .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player) }
+        .overlay(alignment: .topLeading) {
+            SubtitleEngineAnchor(controller: subtitles).frame(width: 1, height: 1)
+                .allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player, subtitles: subtitles) }
+        .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
-        .onChange(of: navidrome.account) { _, _ in player.clearNavidrome() }
+        .onAppear { subtitles.sources(library: library, account: navidrome.account) }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { subtitles.synchronize() }
+            if phase == .background { youtubeSync.cancel() }
+        }
+        .onChange(of: youtube.sessionID, initial: true) { _, _ in youtubeSync.activate(youtube) }
+        .onChange(of: navidrome.account) { _, _ in
+            player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
+            youtubeSync.cancel()
+            if source == .youtube { youtubeSync.synchronize(connection: youtube, library: library, account: navidrome.account) }
+        }
+        .onChange(of: subtitleInput, initial: true) { _, next in
+            subtitles.load(next, timeline: player.timeline)
+        }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: lyricTarget == nil ? [.audio] + Self.lyricTypes : Self.lyricTypes,
                       allowsMultipleSelection: lyricTarget == nil, onCompletion: handleImport)
@@ -80,12 +113,12 @@ struct LibraryScreen: View {
                     .accessibilityAddTraits(.isHeader)
             }
             Spacer()
-            Button { showingServer = true } label: {
+            Button { showingSettings = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.title3).frame(width: 44, height: 44)
                     .background(.white.opacity(0.06), in: Circle())
             }
-            .accessibilityLabel("Navidrome 設定")
+            .accessibilityLabel("Folia 設定")
             Button {
                 lyricTarget = nil
                 showingImporter = true
@@ -97,7 +130,7 @@ struct LibraryScreen: View {
             .accessibilityLabel("匯入音樂")
             .disabled(library.importInProgress)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
         .padding(.horizontal, 22)
         .padding(.vertical, 12)
     }
@@ -107,6 +140,13 @@ struct LibraryScreen: View {
         return text.isEmpty ? library.tracks : library.tracks.filter {
             $0.title.localizedStandardContains(text) || $0.subtitle.localizedStandardContains(text)
         }
+    }
+
+    private var subtitleInput: SubtitleInput? {
+        guard let track = player.current else { return nil }
+        return SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue, title: track.title,
+            artist: track.artist ?? "", durationMs: player.duration * 1000),
+            revision: player.timelineRevision, loading: player.lyricsLoading)
     }
 
     private var localLibrary: some View {
@@ -129,7 +169,7 @@ struct LibraryScreen: View {
                     if visibleTracks.isEmpty { Text("沒有符合的歌曲。").foregroundStyle(.secondary) }
                     ForEach(visibleTracks) { track in
                         TrackRow(track: track, active: player.current?.source == .local && player.current?.id == track.id) {
-                            player.play(visibleTracks, from: track)
+                                player.play(visibleTracks, from: track)
                             showingPlayer = true
                         }
                         .contextMenu {
@@ -157,7 +197,7 @@ struct LibraryScreen: View {
                     Text("F O L I A   S E S S I O N   /   0 1").font(.system(size: 9, weight: .medium, design: .monospaced))
                         .foregroundStyle(FoliaPalette.accent)
                     Text("潮汐之間").font(.system(.title2, design: .serif, weight: .semibold))
-                    Text("試聽 30 秒 · 同步歌詞").font(.footnote).foregroundStyle(.secondary)
+                    Text("試看商籟動畫 · 30 秒音樂示範").font(.footnote).foregroundStyle(.secondary)
                 }
                 Spacer()
                 Image(systemName: "play.fill")
@@ -170,8 +210,9 @@ struct LibraryScreen: View {
             }
             .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.10)) }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
         .accessibilityLabel("試聽潮汐之間，30 秒同步歌詞示範")
+        .accessibilityIdentifier("demoTrack")
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -193,6 +234,8 @@ struct LibraryScreen: View {
             if (error as NSError).code != NSUserCancelledError { message = "無法從「檔案」讀取選取的內容。" }
         }
     }
+
+    private func pauseForPlatform() { player.pauseForExternalPlayback() }
 }
 
 struct TrackRow: View {
@@ -221,6 +264,6 @@ struct TrackRow: View {
             .frame(minHeight: 46)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
     }
 }

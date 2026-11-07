@@ -12,7 +12,9 @@ final class PlaybackModel {
     private(set) var isBuffering = false
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
-    private(set) var timeline = LyricTimeline(lines: [])
+    private(set) var timeline = LyricTimeline(lines: []) { didSet { timelineRevision = UUID() } }
+    private(set) var timelineRevision = UUID()
+    private(set) var externalPlayback = false
     private(set) var artwork: UIImage?
     private(set) var lyricsLoading = false
     private(set) var error: String?
@@ -20,6 +22,13 @@ final class PlaybackModel {
 
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
     var canAdvance: Bool { index.map { $0 + 1 < queue.count || repeatQueue } ?? false }
+    #if DEBUG
+    var mediaProbe: String {
+        // Observe the clock even in cover mode or when a downloaded track has no lyrics.
+        _ = position; _ = isPlaying; _ = isBuffering
+        return String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
+    }
+    #endif
 
     @ObservationIgnored private let player = AVPlayer()
     @ObservationIgnored private let library: LocalLibrary
@@ -41,6 +50,7 @@ final class PlaybackModel {
 
     func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil) {
         guard let index = tracks.firstIndex(of: selected) else { return }
+        externalPlayback = false
         self.client = client
         queue = tracks
         load(index)
@@ -49,6 +59,7 @@ final class PlaybackModel {
     func toggle() { isPlaying ? pause() : resume() }
 
     func resume() {
+        guard !externalPlayback else { return }
         if let index, error != nil, player.currentItem?.status == .failed || player.currentItem == nil {
             load(index)
         } else {
@@ -78,6 +89,19 @@ final class PlaybackModel {
         player.pause()
         isPlaying = false
         refreshTransport()
+    }
+
+    func useLyrics(_ record: LyricSearchRecord) {
+        guard current != nil, let text = record.syncedLyrics else { return }
+        lyricsTask?.cancel(); lyricsLoading = false
+        timeline = LyricTimeline(lrc: text)
+    }
+
+    func pauseForExternalPlayback() {
+        pause()
+        externalPlayback = true
+        system?.updateCommands(model: self)
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
 
     func next() {
@@ -143,11 +167,15 @@ final class PlaybackModel {
         guard position == index else { return }
         lyricsTask?.cancel()
         timeline = LyricTimeline(lines: [])
-        lyricsLoading = track.lyricFile != nil
+        lyricsLoading = track.lyricFile != nil || track.id.hasPrefix("download-")
         guard lyricsLoading else { return }
         let revision = generation
         lyricsTask = Task { [weak self, library] in
-            let parsed = try? await library.lyrics(for: track)
+            var parsed = try? await library.lyrics(for: track)
+            if parsed == nil, track.id.hasPrefix("download-"), !Task.isCancelled {
+                let result = try? await OnlineLyrics.shared.exact(title: track.title, artist: track.artist ?? "", duration: track.duration ?? 0)
+                if let text = result?.syncedLyrics { parsed = LyricTimeline(lrc: text) }
+            }
             guard let self, generation == revision, !Task.isCancelled else { return }
             timeline = parsed ?? LyricTimeline(lines: [])
             lyricsLoading = false
@@ -157,7 +185,7 @@ final class PlaybackModel {
     func tick() {
         guard let item = player.currentItem else { return }
         let seconds = player.currentTime().seconds
-        if !seeking, seconds.isFinite { position = max(0, seconds) }
+        if !seeking, seconds.isFinite, abs(position - seconds) > 0.01 { position = max(0, seconds) }
         let itemDuration = item.duration.seconds
         if itemDuration.isFinite, itemDuration > 0, duration != itemDuration {
             duration = itemDuration
@@ -293,7 +321,7 @@ final class PlaybackModel {
     }
 
     private func publishNowPlaying() {
-        guard let track = current else {
+        guard !externalPlayback, let track = current else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return
         }

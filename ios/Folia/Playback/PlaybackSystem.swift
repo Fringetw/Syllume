@@ -12,7 +12,7 @@ final class PlaybackSystem {
 
     init(model: PlaybackModel, player: AVPlayer) {
         self.player = player
-        tickToken = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 20), queue: .main) { [weak model] _ in
+        tickToken = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 10), queue: .main) { [weak model] _ in
             MainActor.assumeIsolated { model?.tick() }
         }
         transportToken = player.observe(\.timeControlStatus, options: [.new]) { [weak model] _, _ in
@@ -61,11 +61,11 @@ final class PlaybackSystem {
 
     func updateCommands(model: PlaybackModel) {
         let remote = MPRemoteCommandCenter.shared()
-        let hasTrack = model.current != nil
+        let hasTrack = model.current != nil && !model.externalPlayback
         remote.playCommand.isEnabled = hasTrack
         remote.pauseCommand.isEnabled = hasTrack
         remote.togglePlayPauseCommand.isEnabled = hasTrack
-        remote.nextTrackCommand.isEnabled = model.canAdvance
+        remote.nextTrackCommand.isEnabled = hasTrack && model.canAdvance
         remote.previousTrackCommand.isEnabled = hasTrack
         remote.changePlaybackPositionCommand.isEnabled = hasTrack && model.duration > 0
     }

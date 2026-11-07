@@ -3,7 +3,12 @@ import Foundation
 // Cross-platform checks run without an iPhone or a server account.
 @main
 struct Checks {
-    static func main() throws {
+    @MainActor static func main() async throws {
+        try PlatformChecks.run()
+        try YouTubeChecks.run()
+        try YouTubeSyncChecks.run()
+        try SubtitleSourceChecks.run()
+        if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let lrc = LyricTimeline(lrc: """
             [offset:500]
@@ -46,6 +51,13 @@ struct Checks {
         precondition(fia.lines[0].translation == "flower")
         precondition(fia.lines[0].romanization == "hana")
         precondition(fia.lines[0].words[0].startTime == 2.2)
+        let enriched = Data(#"[{"startTime":0,"endTime":4,"fullText":"頭髮","words":[{"text":"頭髮","startTime":0,"endTime":4,"syllables":[{"text":"頭","startTime":0,"endTime":2,"ruby":[{"text":"tou","startTime":0,"endTime":2}]}]}],"wordSegments":["頭","髮"],"backgroundVocals":[{"text":"風","startTime":1,"endTime":2,"words":[]}],"alternateTexts":[{"role":"translation","language":"zh-Hant","text":"髮絲"}]}]"#.utf8)
+        let preserved = try JSONDecoder().decode([LyricLine].self, from: enriched)
+        let roundTrip = try JSONSerialization.jsonObject(with: JSONEncoder().encode(preserved)) as! NSArray
+        let originalObject = try JSONSerialization.jsonObject(with: enriched) as! NSArray
+        precondition(roundTrip == originalObject)
+        precondition(LyricTimeline(lines: preserved).lines[0].extra == preserved[0].extra)
+        precondition(preserved[0].translationText == "髮絲")
         precondition((try? LyricTimeline(folia: Data(#"{"format":"folia-lyricdata","version":2,"lyrics":{"lines":[]}}"#.utf8))) == nil)
 
         let spacing = LyricTimeline(lines: [
@@ -76,6 +88,9 @@ struct Checks {
         precondition(navidrome.lines[0].words.map(\.endTime) == [1.8, 4.3])
         precondition(navidrome.lines[0].translation == "藍色月亮")
         precondition(navidrome.lines[0].romanization == "blu mun")
+        if case .array(let vocals)? = navidrome.lines[0].extra["backgroundVocals"],
+           case .object(let vocal)? = vocals.first { precondition(vocal["text"] == .string("Backing")) }
+        else { preconditionFailure("Navidrome harmony was dropped") }
         precondition(navidrome.activeIndex(at: 5) == nil)
         let demo = try String(contentsOf: ios.appending(path: "Folia/Resources/tide.lrc"), encoding: .utf8)
         precondition(LyricTimeline(lrc: demo).lines.count == 5)
@@ -98,7 +113,9 @@ struct Checks {
         precondition(Set(included.filter { $0.hasSuffix(".swift") }) == Set(swiftSources))
         precondition(included.count == Set(included).count)
         precondition(included.allSatisfy { FileManager.default.fileExists(atPath: app.appending(path: $0).path) })
-        precondition(Set(["Resources/tide.lrc", "Resources/tide.m4a", "Resources/Assets.xcassets"]).isSubset(of: included))
+        precondition(Set(["Resources/tide.lrc", "Resources/tide.m4a", "Resources/Assets.xcassets", "Resources/FoliaStage", "Resources/FoliaYouTube"]).isSubset(of: included))
+        let bridge = try String(contentsOf: app.appending(path: "Resources/FoliaYouTube/player.js"), encoding: .utf8)
+        precondition(bridge.contains("commandRevision") && bridge.contains("player.pauseVideo()"))
         let info = try readPlist(app.appending(path: "Resources/Info.plist"))
         precondition((info["UIBackgroundModes"] as? [String])?.contains("audio") == true)
         precondition(info["UIApplicationSceneManifest"] != nil)

@@ -68,9 +68,26 @@ struct NavidromeLyrics: Decodable {
                 let end = word.end.map(main.seconds) ?? next ?? lineEnd ?? (wordStart + 1.5)
                 return LyricWord(text: word.value, startTime: wordStart, endTime: max(wordStart, end))
             }
+            let backing = options.filter { candidate in
+                candidate.value != cue?.value || candidate.agentId != cue?.agentId || candidate.start != cue?.start
+            }.compactMap { candidate -> LyricJSON? in
+                guard let begin = candidate.start.map(main.seconds) else { return nil }
+                let end = candidate.end.map(main.seconds) ?? begin
+                let parts = (candidate.cue ?? []).enumerated().compactMap { i, word -> LyricJSON? in
+                    guard let from = word.start.map(main.seconds) else { return nil }
+                    let next = candidate.cue.flatMap { i + 1 < $0.count ? $0[i + 1].start.map(main.seconds) : nil }
+                    return .object(["text": .string(word.value), "startTime": .number(from),
+                        "endTime": .number(max(from, word.end.map(main.seconds) ?? next ?? end))])
+                }
+                var vocal: [String: LyricJSON] = ["text": .string(candidate.value), "startTime": .number(begin),
+                    "endTime": .number(max(begin, end)), "words": .array(parts)]
+                if let agent = candidate.agentId { vocal["agentId"] = .string(agent) }
+                return .object(vocal)
+            }
             return LyricLine(startTime: start, endTime: max(start, lineEnd ?? start), fullText: text,
                              translation: Self.alternate(in: translations, at: start),
-                             romanization: Self.alternate(in: pronunciations, at: start), words: words)
+                             romanization: Self.alternate(in: pronunciations, at: start), words: words,
+                             extra: backing.isEmpty ? [:] : ["backgroundVocals": .array(backing)])
         }
         return LyricTimeline(lines: LyricTimeline.finish(entries))
     }

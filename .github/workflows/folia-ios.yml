@@ -2,6 +2,11 @@ name: Folia native iOS
 
 on:
   workflow_dispatch:
+    inputs:
+      require_google_login:
+        description: Require the maintainer Google login configuration
+        type: boolean
+        default: false
   push:
     paths:
       - 'ios/**'
@@ -16,12 +21,36 @@ permissions:
 
 jobs:
   build:
+    # Same-repository branches are already checked on push; keep PR checks for forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15-intel
-    timeout-minutes: 25
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      - name: Configure maintainer Google login
+        env:
+          GOOGLE_IOS_CLIENT_ID: ${{ vars.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_IOS_BUNDLE_ID: ${{ vars.GOOGLE_IOS_BUNDLE_ID }}
+          FOLIA_BUILD_BUNDLE_ID: ${{ vars.FOLIA_BUILD_BUNDLE_ID }}
+          REQUIRE_GOOGLE_LOGIN: ${{ inputs.require_google_login || false }}
+        run: |
+          if [ "$REQUIRE_GOOGLE_LOGIN" = "true" ]; then
+            python3 ios/Tools/configure_google_oauth.py --require-configured
+          else
+            python3 ios/Tools/configure_google_oauth.py
+          fi
       - name: Check the lyric timeline and Xcode project references
-        run: bash ios/Checks/run.sh
+        env:
+          FOLIA_PROBE_SUBTITLE_SOURCES: "1"
+        run: |
+          set -o pipefail
+          bash ios/Checks/run.sh | tee "$RUNNER_TEMP/Folia-subtitle-source-checks.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Folia-subtitle-source-checks
+          path: ${{ runner.temp }}/Folia-subtitle-source-checks.txt
+          if-no-files-found: ignore
       - name: Compile for iOS Simulator
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
@@ -32,14 +61,58 @@ jobs:
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
           -configuration Release -destination 'generic/platform=iOS'
           -derivedDataPath "$RUNNER_TEMP/FoliaDevice" CODE_SIGNING_ALLOWED=NO build
+      # Make the successfully compiled device build available while simulator checks run.
       - name: Package unsigned IPA
         run: |
           mkdir -p "$RUNNER_TEMP/FoliaPackage/Payload"
           cp -R "$RUNNER_TEMP/FoliaDevice/Build/Products/Release-iphoneos/Folia.app" "$RUNNER_TEMP/FoliaPackage/Payload/"
           cd "$RUNNER_TEMP/FoliaPackage"
           /usr/bin/zip -qry Folia-iOS-unsigned.ipa Payload
+          python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Folia.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
       - uses: actions/upload-artifact@v4
         with:
           name: Folia-iOS-unsigned
-          path: ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
+          path: |
+            ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
+            ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
           if-no-files-found: error
+      - name: Exercise YouTube playlist selection and audio playback on iPhone Simulator
+        timeout-minutes: 14
+        run: |
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          echo "FOLIA_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \
+            -resultBundlePath "$RUNNER_TEMP/FoliaPlaylistUI.xcresult" \
+            -only-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
+            -only-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+      - name: Exercise remaining playback and platform setup on iPhone Simulator
+        timeout-minutes: 26
+        run: |
+          xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
+            -destination "platform=iOS Simulator,id=$FOLIA_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \
+            -resultBundlePath "$RUNNER_TEMP/FoliaUI.xcresult" \
+            -skip-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
+            -skip-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+      - name: Export simulator screenshots
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/FoliaUIScreenshots"
+          for result in FoliaPlaylistUI FoliaUI; do
+            if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
+              if ! xcrun xcresulttool export attachments --path "$RUNNER_TEMP/$result.xcresult" \
+                --output-path "$RUNNER_TEMP/FoliaUIScreenshots/$result"; then
+                echo "::warning::Could not export attachments from $result"
+              fi
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Folia-iOS-UI-checks
+          path: ${{ runner.temp }}/FoliaUIScreenshots
+          if-no-files-found: ignore

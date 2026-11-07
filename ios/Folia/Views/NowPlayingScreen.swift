@@ -4,16 +4,19 @@ import UIKit
 // Playback controls and lyric stage are separate clock consumers.
 struct NowPlayingScreen: View {
     let player: PlaybackModel
+    let subtitles: SubtitleController
 
     @Environment(\.dismiss) private var dismiss
-    @State private var mode: Mode = .lyrics
+    @AppStorage("Folia.LyricDisplayMode") private var mode: LyricDisplayMode = .sonnet
+    @State private var controlsVisible = true
     @State private var showingQueue = false
 
-    private enum Mode: Hashable { case cover, lyrics }
+    @State private var showingSearch = false
 
     var body: some View {
         if let track = player.current {
             VStack(spacing: 16) {
+              if controlsVisible {
                 HStack {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }
                         .accessibilityLabel("關閉播放畫面")
@@ -22,27 +25,40 @@ struct NowPlayingScreen: View {
                         .foregroundStyle(FoliaPalette.accent)
                         .accessibilityLabel("現正播放")
                     Spacer()
+                    Button { showingSearch = true } label: { Image(systemName: "text.magnifyingglass").frame(width: 44, height: 44) }
+                        .accessibilityLabel("尋找歌詞")
+                    Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
+                        .accessibilityLabel("進入沉浸模式")
                     Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
                         .accessibilityLabel("播放佇列")
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(FoliaPressStyle())
 
                 Picker("播放畫面", selection: $mode) {
-                    Text("歌詞").tag(Mode.lyrics)
-                    Text("封面").tag(Mode.cover)
+                    ForEach(LyricDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
                 }
                 .pickerStyle(.segmented)
-                .frame(maxWidth: 240)
+                .frame(maxWidth: 340)
+              }
 
                 Group {
                     switch mode {
-                    case .lyrics: LyricStage(player: player).id(track.id)
+                    case .sonnet, .lumiere:
+                        if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline) }
+                        else {
+                            SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
+                                        timeline: subtitles.timeline, revision: subtitles.revision,
+                                        position: player.position, playing: player.isPlaying && !player.isBuffering,
+                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue)
+                        }
+                    case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
                     case .cover: artwork
                     }
                 }
                 .frame(maxHeight: .infinity)
                 .layoutPriority(1)
 
+              if controlsVisible {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
                         .accessibilityAddTraits(.isHeader)
@@ -58,14 +74,42 @@ struct NowPlayingScreen: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
                 TransportControls(player: player).id(track.id)
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
+                    LocalTransportProbe(player: player)
+                }
+                #endif
+              }
             }
             .padding(.horizontal, 22)
             .padding(.top, 4)
             .padding(.bottom, 12)
             .frame(maxWidth: 630)
             .frame(maxWidth: .infinity)
-            .background(FoliaAtmosphere().ignoresSafeArea())
+            .background(PlaybackAtmosphere(playing: player.isPlaying && !showingSearch && !showingQueue).ignoresSafeArea())
+            .overlay(alignment: .bottomTrailing) {
+                if !controlsVisible {
+                    Button { controlsVisible = true } label: {
+                        Image(systemName: "slider.horizontal.3").frame(width: 48, height: 48)
+                            .background(.ultraThinMaterial, in: Circle())
+                    }
+                    .accessibilityLabel("顯示播放控制").padding(18)
+                }
+            }
             .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
+            .sheet(isPresented: $showingSearch) {
+                LyricSearchScreen(subtitles: subtitles, title: track.title, artist: track.artist ?? "") { record in
+                    guard player.current?.id == track.id, player.current?.source == track.source else { return }
+                    player.useLyrics(record)
+                }
+                    .id(track.id)
+            }
+            .onChange(of: track.id) { _, _ in showingSearch = false }
+            .onChange(of: SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue,
+                title: track.title, artist: track.artist ?? "", durationMs: player.duration * 1000),
+                revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in
+                subtitles.load(next, timeline: player.timeline)
+            }
         } else {
             Color.clear.onAppear { dismiss() }
         }
@@ -94,6 +138,16 @@ struct NowPlayingScreen: View {
         }
     }
 }
+
+#if DEBUG
+private struct LocalTransportProbe: View {
+    let player: PlaybackModel
+    var body: some View {
+        Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
+            .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+    }
+}
+#endif
 
 private struct TransportControls: View {
     let player: PlaybackModel
@@ -142,6 +196,7 @@ private struct TransportControls: View {
                         .background(FoliaPalette.accent, in: Circle())
                 }
                 .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
+                .accessibilityIdentifier("playerToggle")
                 .padding(.horizontal, 10)
 
                 Button { player.next() } label: {
@@ -152,7 +207,7 @@ private struct TransportControls: View {
                 Spacer()
                 Color.clear.frame(width: 44, height: 1).accessibilityHidden(true)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(FoliaPressStyle())
         }
     }
 
@@ -199,7 +254,7 @@ struct MiniPlayer: View {
             }
             .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
         }
-        .buttonStyle(.plain)
+        .buttonStyle(FoliaPressStyle())
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
         .background(.regularMaterial, in: .rect(cornerRadius: 16))

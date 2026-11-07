@@ -1,0 +1,5 @@
+# Preserve the imported upstream sources and third-party license text byte for byte.
+ios/Visualizer/desktop/** -whitespace
+ios/Folia/Resources/FoliaStage/THIRD_PARTY_NOTICES.txt -whitespace
+# Generated shader strings retain their upstream whitespace.
+ios/Folia/Resources/FoliaStage/sonnet.js -whitespace
