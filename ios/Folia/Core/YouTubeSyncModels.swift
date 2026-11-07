@@ -30,6 +30,7 @@ struct YouTubeSyncSnapshot: Codable, Equatable {
     var songs: [SyncedYouTubeSong] = []
     var bindings: [String: YouTubeAudioBinding] = [:]
     var lastSync: Date?
+    var attempts: [String: Date]? = nil
 }
 
 struct DownloadAudioCandidate: Sendable {
@@ -50,6 +51,13 @@ struct DownloadAudioCandidate: Sendable {
 }
 
 enum DownloadSongMatch {
+    static func downloadOrder(_ songs: [SyncedYouTubeSong], attempts: [String: Date]) -> [SyncedYouTubeSong] {
+        var seen = Set<String>()
+        return songs.enumerated().filter { seen.insert($0.element.videoID).inserted }.sorted {
+            let a = attempts[$0.element.videoID] ?? .distantPast, b = attempts[$1.element.videoID] ?? .distantPast
+            return a == b ? $0.offset < $1.offset : a < b
+        }.map { $0.element }
+    }
     static func searchTitle(_ title: String) -> String {
         var title = title
         for text in ["official music video", "official video", "official audio", "music video", "lyric video", "lyrics video", "official mv", "official", "完整版", "中文字幕", "繁體中文", "中字"] {
@@ -92,5 +100,13 @@ enum DownloadSongMatch {
         guard let parts = URLComponents(string: value), parts.scheme == "https", let host = parts.host,
               !host.isEmpty, parts.user == nil, parts.password == nil, parts.fragment == nil else { return nil }
         return parts.url
+    }
+}
+
+enum AudioRetryPolicy {
+    static func delay(status: Int, retryAfter: String?) -> Double? {
+        guard status == 429 || status == 503 else { return nil }
+        let value = Double(retryAfter ?? "") ?? 60
+        return value.isFinite ? min(3600, max(1, value)) : 60
     }
 }

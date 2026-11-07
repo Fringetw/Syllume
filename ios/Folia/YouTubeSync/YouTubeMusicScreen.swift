@@ -84,7 +84,7 @@ struct YouTubeMusicScreen: View {
                         if !sync.busy && sync.snapshot.songs.isEmpty { Text("這份歌單沒有可讀取的影片。").foregroundStyle(.secondary) }
                     }
                     Section {
-                        Text("音檔存放於「檔案 → 我的 iPhone → Folia → YouTube Music」。自動選擇可取得的無損／較高音質完整音源；無法取得的歌曲可手動附加。")
+                        Text("下載的音檔存放於「檔案 → 我的 iPhone → Folia → YouTube Music」。自動選擇可取得的無損／較高音質完整音源；無法取得的歌曲可手動附加。")
                         Text("歌單在開啟此頁、回到 App 或下拉時同步。iOS 暫停 App 後，下次回來會接續未完成項目。")
                         if sync.snapshot.choice?.id == "liked" {
                             Text("YouTube 官方 API 最多提供最近 1,000 部喜歡的影片。")

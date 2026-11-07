@@ -2,6 +2,7 @@ import Foundation
 
 // Public music metadata and original Navidrome downloads are independent of Google OAuth.
 actor AudioDownloadService {
+    private var blockedUntil = Date.distantPast
     private let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
@@ -65,6 +66,7 @@ actor AudioDownloadService {
 
     private func metadata(path: String, parameters: [URLQueryItem]) async throws -> Data {
         try Task.checkCancellation()
+        guard Date() >= blockedUntil else { throw PlatformError.message("音源服務暫時限制請求，請稍後重新同步。") }
         var form = URLComponents(); form.queryItems = parameters
         var request = URLRequest(url: URL(string: "https://music.163.com/api/" + path)!)
         request.httpMethod = "POST"
@@ -74,6 +76,11 @@ actor AudioDownloadService {
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         let (bytes, response) = try await session.bytes(for: request, delegate: AudioDownloadGuard(host: "music.163.com"))
         defer { bytes.task.cancel() }
+        if let http = response as? HTTPURLResponse,
+           let delay = AudioRetryPolicy.delay(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
+            blockedUntil = Date().addingTimeInterval(delay)
+            throw PlatformError.message("音源服務暫時限制請求，請稍後重新同步。")
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               response.expectedContentLength <= 2_000_000 else {
             throw PlatformError.message("音源服務暫時無法回應，請稍後重新同步。")

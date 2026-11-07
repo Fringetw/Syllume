@@ -39,6 +39,16 @@ enum YouTubeSyncChecks {
         let decoded = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: data)
         precondition(decoded == snapshot && decoded.choice?.collection == .liked)
         precondition(!String(decoding: data, as: UTF8.self).contains("music.126.net"))
+        let second = SyncedYouTubeSong(LibraryEntry(id: "row-2", title: "Next", subtitle: "Artist",
+            url: URL(string: "https://music.youtube.com/watch?v=abcdefghijk")!, duration: 240))!
+        let pending = DownloadSongMatch.downloadOrder([song, second, song], attempts: [song.videoID: Date()])
+        precondition(pending.map(\.videoID) == [second.videoID, song.videoID])
+        let legacy = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(#"{"choice":{"id":"liked","title":"喜歡的影片"},"songs":[],"bindings":{}}"#.utf8))
+        precondition(legacy.attempts == nil && legacy.choice == .liked)
+        precondition(AudioRetryPolicy.delay(status: 429, retryAfter: "120") == 120)
+        precondition(AudioRetryPolicy.delay(status: 503, retryAfter: "999999") == 3600)
+        precondition(AudioRetryPolicy.delay(status: 429, retryAfter: "NaN") == 60)
+        precondition(AudioRetryPolicy.delay(status: 200, retryAfter: "120") == nil)
         print("PASS: playlist persistence, version/artist/duration matching, lossless priority, preview and CDN rejection")
     }
 }

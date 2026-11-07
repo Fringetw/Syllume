@@ -79,11 +79,14 @@ final class YouTubeSyncController {
                 for index in songs.indices where songs[index].duration == nil { songs[index].duration = durations[songs[index].videoID] }
                 var next = snapshot; next.songs = songs; next.lastSync = Date()
                 try save(next); snapshot = next; statuses = [:]
-                var visited = Set<String>()
-                for (index, song) in songs.enumerated() where visited.insert(song.videoID).inserted {
+                let pending = DownloadSongMatch.downloadOrder(songs.filter { localTrack(for: $0, library: library) == nil },
+                    attempts: snapshot.attempts ?? [:])
+                for (index, song) in pending.enumerated() {
                     try ensureCurrent(ticket, session: session, connection: connection)
                     if localTrack(for: song, library: library) != nil { continue }
-                    phase = "準備音樂 \(index + 1)／\(songs.count)"
+                    var attempts = snapshot.attempts ?? [:]; attempts[song.videoID] = Date(); snapshot.attempts = attempts
+                    try save()
+                    phase = "準備音樂 \(index + 1)／\(pending.count)"
                     statuses[song.videoID] = "正在比對完整音源…"
                     do {
                         #if DEBUG
