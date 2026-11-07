@@ -8,11 +8,32 @@ struct YouTubeCaptionTrack: Sendable, Equatable {
     var chinese: Bool { language.lowercased() == "zh" || language.lowercased().hasPrefix("zh-") }
 }
 
+struct YouTubeWebCaptionRequest: Sendable {
+    let videoID: String
+    let version: String
+    let script: URL
+    let endpoint: URL
+    let headers: [String: String]
+
+    func body(signatureTimestamp: Int) throws -> Data {
+        try JSONSerialization.data(withJSONObject: [
+            "context": ["client": ["clientName": "WEB", "clientVersion": version]],
+            "videoId": videoID,
+            "playbackContext": ["contentPlaybackContext": [
+                "html5Preference": "HTML5_PREF_WANTS", "signatureTimestamp": signatureTimestamp
+            ]]
+        ])
+    }
+}
+
 // Public page data only; do not evaluate page scripts or manufacture machine-translated tracks.
 enum YouTubeCaptionDecoders {
     static func embeddedObject(_ page: String, name: String) throws -> [String: Any] {
+        try embeddedObject(page, markers: [name + " =", name + "=", "[\"" + name + "\"] =", "[\"" + name + "\"]="])
+    }
+    private static func embeddedObject(_ page: String, markers: [String]) throws -> [String: Any] {
         guard page.utf8.count <= 8_000_000 else { throw SubtitleReadError("invalid-response") }
-        for marker in [name + " =", name + "=", "[\"" + name + "\"] =", "[\"" + name + "\"]="] {
+        for marker in markers {
             guard let found = page.range(of: marker),
                   let start = page[found.upperBound...].firstIndex(of: "{") else { continue }
             var quoted = false, escaped = false, depth = 0, cursor = start
@@ -169,6 +190,10 @@ enum YouTubeCaptionDecoders {
     }
     static func playerResponse(_ page: String, videoID: String) throws -> [String: Any] {
         let root = try embeddedObject(page, name: "ytInitialPlayerResponse")
+        try validatePlayer(root, videoID: videoID)
+        return root
+    }
+    private static func validatePlayer(_ root: [String: Any], videoID: String) throws {
         if let status = root["playabilityStatus"] as? [String: Any], let value = status["status"] as? String, value != "OK" {
             let reason = (status["reason"] as? String ?? "").lowercased()
             let challenge = reason.contains("bot") || reason.contains("verify") || reason.contains("驗證")
@@ -177,10 +202,61 @@ enum YouTubeCaptionDecoders {
         guard let details = root["videoDetails"] as? [String: Any], details["videoId"] as? String == videoID else {
             throw SubtitleReadError("invalid-response")
         }
-        return root
     }
+
+    static func webCaptionRequest(_ page: String, videoID: String) throws -> YouTubeWebCaptionRequest {
+        let watch = try playerResponse(page, videoID: videoID)
+        guard YouTubeVideo.validID(videoID), (watch["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK" else {
+            throw SubtitleReadError("verification-required")
+        }
+        let config = try embeddedObject(page, markers: ["ytcfg.set("])
+        let context = config["INNERTUBE_CONTEXT"] as? [String: Any]
+        let client = context?["client"] as? [String: Any]
+        let scriptPath = (config["PLAYER_JS_URL"] as? String)
+            ?? page.firstMatch(of: #/"(?:jsUrl|PLAYER_JS_URL)"\s*:\s*"([^"]+\/base\.js)"/#).map { String($0.1) }
+        let origin = "https://www.youtube.com"
+        guard client?["clientName"] as? String == "WEB",
+              let version = (config["INNERTUBE_CLIENT_VERSION"] as? String) ?? (client?["clientVersion"] as? String),
+              version.range(of: #"^[0-9.]{3,32}$"#, options: .regularExpression) != nil,
+              let key = config["INNERTUBE_API_KEY"] as? String,
+              key.range(of: #"^[A-Za-z0-9_-]{20,128}$"#, options: .regularExpression) != nil,
+              let scriptPath, scriptPath.count <= 512,
+              let script = URL(string: scriptPath, relativeTo: URL(string: origin))?.absoluteURL,
+              script.scheme == "https", script.host == "www.youtube.com", script.user == nil, script.password == nil,
+              script.port == nil, script.query == nil, script.fragment == nil,
+              script.path.hasPrefix("/s/player/"), script.path.hasSuffix("/base.js") else { throw SubtitleReadError("invalid-response") }
+        var endpoint = URLComponents(string: origin + "/youtubei/v1/player")!
+        endpoint.queryItems = [.init(name: "prettyPrint", value: "false"), .init(name: "key", value: key)]
+        var headers = ["Origin": origin, "Accept-Language": "en-US,en", "X-Youtube-Client-Name": "1", "X-Youtube-Client-Version": version]
+        for (field, name) in [("VISITOR_DATA", "X-Goog-Visitor-Id"), ("USER_AGENT", "User-Agent")] {
+            if let value = config[field] as? String, !value.isEmpty, value.utf8.count <= 1024,
+               value.rangeOfCharacter(from: .controlCharacters) == nil { headers[name] = value }
+        }
+        if headers["User-Agent"] == nil { headers["User-Agent"] = "Mozilla/5.0" }
+        return YouTubeWebCaptionRequest(videoID: videoID, version: version, script: script, endpoint: endpoint.url!, headers: headers)
+    }
+
+    static func signatureTimestamp(_ data: Data) throws -> Int {
+        guard let text = String(data: data, encoding: .utf8),
+              let match = text.firstMatch(of: #/(?:signatureTimestamp|sts)\s*:\s*([0-9]{5})/#),
+              let stamp = Int(match.1) else { throw SubtitleReadError("invalid-response") }
+        return stamp
+    }
+
     static func tracks(_ page: String, videoID: String) throws -> [YouTubeCaptionTrack] {
-        let root = try playerResponse(page, videoID: videoID)
+        try tracks(player: playerResponse(page, videoID: videoID), videoID: videoID)
+    }
+
+    static func tracks(playerData: Data, videoID: String) throws -> [YouTubeCaptionTrack] {
+        let root = try SubtitleSourceDecoders.object(playerData)
+        try validatePlayer(root, videoID: videoID)
+        guard (root["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK" else {
+            throw SubtitleReadError("invalid-response")
+        }
+        return tracks(player: root, videoID: videoID)
+    }
+
+    private static func tracks(player root: [String: Any], videoID: String) -> [YouTubeCaptionTrack] {
         let captions = root["captions"] as? [String: Any]
         let renderer = captions?["playerCaptionsTracklistRenderer"] as? [String: Any]
         let listed = renderer?["captionTracks"] as? [[String: Any]] ?? []
@@ -189,8 +265,10 @@ enum YouTubeCaptionDecoders {
         let defaultIndex = audio.indices.contains(audioIndex) ? audio[audioIndex]["defaultCaptionTrackIndex"] as? Int : nil
         return listed.prefix(60).enumerated().compactMap { index, track in
             guard let language = track["languageCode"] as? String, let raw = track["baseUrl"] as? String,
+                  language.range(of: #"^[A-Za-z0-9-]{2,32}$"#, options: .regularExpression) != nil,
                   var parts = URLComponents(string: raw), allowedCaptionURL(parts.url),
-                  !(parts.queryItems ?? []).contains(where: { $0.name == "tlang" }) else { return nil }
+                  let queryItems = parts.queryItems, queryItems.filter({ $0.name == "v" }).map(\.value) == [videoID],
+                  !queryItems.contains(where: { $0.name == "tlang" }) else { return nil }
             // Keep the platform's signed parameters byte-for-byte; only the output format changes.
             let query = (parts.percentEncodedQuery ?? "").split(separator: "&").filter { !$0.hasPrefix("fmt=") }
             parts.percentEncodedQuery = (query.map(String.init) + ["fmt=json3"]).joined(separator: "&")

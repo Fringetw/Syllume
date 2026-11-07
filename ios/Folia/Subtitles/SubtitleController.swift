@@ -145,9 +145,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
 
     func readTranslation(videoID: String) {
         guard preferences.active, YouTubeVideo.validID(videoID) else { return }
+        let baseline = raw.lines
         readTranslation(source: "YouTube 翻譯影片") { progress in
             do {
-                return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID)
+                return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID, baseline: baseline)
             } catch let ccFailure as SubtitleReadError where ccFailure.code == "captions-unavailable" {
                 try Task.checkCancellation()
                 await progress(-1)

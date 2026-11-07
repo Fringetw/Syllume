@@ -94,6 +94,22 @@ enum SubtitleSourceChecks {
         precondition(tracks.count == 3 && tracks[0].chinese && !tracks[0].automatic && tracks[1].automatic)
         precondition(tracks.allSatisfy { $0.url.query?.contains("fmt=json3") == true })
         let signedWatch = watch.replacingOccurrences(of: "lang=zh-Hant", with: "lang=zh-Hant&signature=a%2Bb")
+        let config = #"ytcfg.set({"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"2.20261107.00.00"}},"INNERTUBE_API_KEY":"public-fixture-api-key","PLAYER_JS_URL":"/s/player/example/base.js","VISITOR_DATA":"anonymous-fixture"});"#
+        let web = try YouTubeCaptionDecoders.webCaptionRequest(config + watch, videoID: "abcdefghijk")
+        precondition(web.script.absoluteString == "https://www.youtube.com/s/player/example/base.js")
+        precondition(web.endpoint.path == "/youtubei/v1/player" && web.headers["X-Goog-Visitor-Id"] == "anonymous-fixture")
+        let stamp = try YouTubeCaptionDecoders.signatureTimestamp(Data("player={signatureTimestamp: 12345};".utf8))
+        let body = try SubtitleSourceDecoders.object(web.body(signatureTimestamp: stamp))
+        precondition(body["videoId"] as? String == "abcdefghijk" && stamp == 12345)
+        precondition(body["contentCheckOk"] == nil && body["racyCheckOk"] == nil)
+        let freshData = try JSONSerialization.data(withJSONObject: YouTubeCaptionDecoders.playerResponse(watch, videoID: "abcdefghijk"))
+        let freshTracks = try YouTubeCaptionDecoders.tracks(playerData: freshData, videoID: "abcdefghijk")
+        precondition(freshTracks == tracks)
+        let unrelatedScript = config.replacingOccurrences(of: "/s/player/example/base.js", with: "https://example.com/s/player/example/base.js")
+        do {
+            _ = try YouTubeCaptionDecoders.webCaptionRequest(unrelatedScript + watch, videoID: "abcdefghijk")
+            preconditionFailure("Player script outside the YouTube origin was accepted")
+        } catch is SubtitleReadError {}
         let signedTracks = try YouTubeCaptionDecoders.tracks(signedWatch, videoID: "abcdefghijk")
         precondition(signedTracks[0].url.absoluteString.contains("signature=a%2Bb"))
         for raw in ["http://www.youtube.com/api/timedtext", "https://youtube.com.evil.example/api/timedtext",
