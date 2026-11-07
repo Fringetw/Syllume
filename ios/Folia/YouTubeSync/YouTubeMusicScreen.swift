@@ -184,8 +184,12 @@ struct YouTubeMusicScreen: View {
                     Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     Text(status(song)).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 }
-            }.padding(.vertical, 5)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.vertical, 5)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
         .accessibilityIdentifier("youtubeSong-" + song.id)
         .accessibilityValue(status(song))
         .contextMenu {
