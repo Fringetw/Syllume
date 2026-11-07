@@ -95,7 +95,8 @@ enum SubtitleSourceChecks {
         precondition(tracks.allSatisfy { $0.url.query?.contains("fmt=json3") == true })
         let signedWatch = watch.replacingOccurrences(of: "lang=zh-Hant", with: "lang=zh-Hant&signature=a%2Bb")
         let config = #"ytcfg.set({"INNERTUBE_CONTEXT":{"client":{"clientName":"WEB","clientVersion":"2.20261107.00.00"}},"INNERTUBE_API_KEY":"public-fixture-api-key","PLAYER_JS_URL":"/s/player/example/base.js","VISITOR_DATA":"anonymous-fixture"});"#
-        let web = try YouTubeCaptionDecoders.webCaptionRequest(config + watch, videoID: "abcdefghijk")
+        let earlierConfig = #"ytcfg.set('EXPERIMENT_FLAGS', {}); ytcfg.set({"loaded":true}); ytcfg.set({unquoted:true});"#
+        let web = try YouTubeCaptionDecoders.webCaptionRequest(earlierConfig + config + watch, videoID: "abcdefghijk")
         precondition(web.script.absoluteString == "https://www.youtube.com/s/player/example/base.js")
         precondition(web.endpoint.path == "/youtubei/v1/player" && web.headers["X-Goog-Visitor-Id"] == "anonymous-fixture")
         let stamp = try YouTubeCaptionDecoders.signatureTimestamp(Data("player={signatureTimestamp: 12345};".utf8))

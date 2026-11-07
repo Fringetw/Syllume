@@ -31,31 +31,42 @@ enum YouTubeCaptionDecoders {
     static func embeddedObject(_ page: String, name: String) throws -> [String: Any] {
         try embeddedObject(page, markers: [name + " =", name + "=", "[\"" + name + "\"] =", "[\"" + name + "\"]="])
     }
-    private static func embeddedObject(_ page: String, markers: [String]) throws -> [String: Any] {
+    private static func embeddedObject(_ page: String, markers: [String],
+                                       matching: ([String: Any]) -> Bool = { _ in true }) throws -> [String: Any] {
         guard page.utf8.count <= 8_000_000 else { throw SubtitleReadError("invalid-response") }
         for marker in markers {
-            guard let found = page.range(of: marker),
-                  let start = page[found.upperBound...].firstIndex(of: "{") else { continue }
-            var quoted = false, escaped = false, depth = 0, cursor = start
-            while cursor < page.endIndex {
-                let char = page[cursor]
-                if quoted {
-                    if escaped { escaped = false }
-                    else if char == "\\" { escaped = true }
-                    else if char == "\"" { quoted = false }
-                } else if char == "\"" { quoted = true }
-                else if char == "{" { depth += 1; if depth > 128 { break } }
-                else if char == "}" {
-                    depth -= 1
-                    if depth == 0 { return try SubtitleSourceDecoders.object(Data(page[start...cursor].utf8)) }
-                }
-                cursor = page.index(after: cursor)
+            var offset = page.startIndex
+            for _ in 0..<16 {
+                guard let found = page.range(of: marker, range: offset..<page.endIndex) else { break }
+                offset = found.upperBound
+                let tail = page[offset...].drop(while: \.isWhitespace)
+                guard tail.first == "{" else { continue }
+                if let object = jsonObject(in: page, at: tail.startIndex), matching(object) { return object }
             }
         }
         if page.contains("consent.youtube.com") || page.contains("/sorry/") || page.contains("unusual traffic") {
             throw SubtitleReadError("verification-required")
         }
         throw SubtitleReadError("invalid-response")
+    }
+
+    private static func jsonObject(in page: String, at start: String.Index) -> [String: Any]? {
+        var quoted = false, escaped = false, depth = 0, cursor = start
+        while cursor < page.endIndex {
+            let char = page[cursor]
+            if quoted {
+                if escaped { escaped = false }
+                else if char == "\\" { escaped = true }
+                else if char == "\"" { quoted = false }
+            } else if char == "\"" { quoted = true }
+            else if char == "{" { depth += 1; if depth > 128 { return nil } }
+            else if char == "}" {
+                depth -= 1
+                if depth == 0 { return try? SubtitleSourceDecoders.object(Data(page[start...cursor].utf8)) }
+            }
+            cursor = page.index(after: cursor)
+        }
+        return nil
     }
     private static func text(_ raw: Any?) -> String {
         if let raw = raw as? String { return raw }
@@ -209,7 +220,9 @@ enum YouTubeCaptionDecoders {
         guard YouTubeVideo.validID(videoID), (watch["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK" else {
             throw SubtitleReadError("verification-required")
         }
-        let config = try embeddedObject(page, markers: ["ytcfg.set("])
+        let config = try embeddedObject(page, markers: ["ytcfg.set("]) {
+            $0["INNERTUBE_CONTEXT"] is [String: Any] && $0["INNERTUBE_API_KEY"] is String
+        }
         let context = config["INNERTUBE_CONTEXT"] as? [String: Any]
         let client = context?["client"] as? [String: Any]
         let scriptPath = (config["PLAYER_JS_URL"] as? String)
