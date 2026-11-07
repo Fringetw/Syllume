@@ -11,6 +11,7 @@ final class PlatformConnection {
     let googleConfiguration: GoogleClientConfiguration
     private(set) var clientID: String
     private(set) var sessionID = UUID()
+    private(set) var libraryID: String?
     private(set) var connecting = false
     private(set) var storageError: String?
     var connected: Bool { credential != nil }
@@ -25,6 +26,7 @@ final class PlatformConnection {
         let accessToken: String
         let refreshToken: String?
         let expires: Date
+        var libraryID: String?
     }
     private struct TokenResponse: Decodable {
         let access_token: String
@@ -50,13 +52,22 @@ final class PlatformConnection {
         session = URLSession(configuration: configuration)
         do {
             if let data = try readCredential() {
-                let saved = try JSONDecoder().decode(Credential.self, from: data)
+                var saved = try JSONDecoder().decode(Credential.self, from: data)
                 if platform == .spotify || googleConfiguration.acceptsCredential(clientID: saved.clientID) {
+                    if saved.libraryID == nil { saved.libraryID = UUID().uuidString; try writeCredential(saved) }
                     credential = saved
+                    libraryID = saved.libraryID
                     if platform == .spotify { clientID = saved.clientID }
                 }
             }
         } catch { storageError = "無法讀取曲庫登入資料，請重新連接。" }
+        #if DEBUG
+        if platform == .youtube, ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
+            let id = "021A0A60-4BED-4416-8784-A4C7416A4A11"
+            credential = Credential(clientID: "debug", accessToken: "debug", refreshToken: nil, expires: .distantFuture, libraryID: id)
+            libraryID = id
+        }
+        #endif
     }
 
     func connect(clientID input: String) async throws {
@@ -99,6 +110,7 @@ final class PlatformConnection {
         guard sessionID == revision else { throw CancellationError() }
         try writeCredential(token)
         credential = token
+        libraryID = token.libraryID
         clientID = candidate
         storageError = nil
         sessionID = UUID()
@@ -118,11 +130,21 @@ final class PlatformConnection {
         refreshTask?.cancel()
         refreshTask = nil
         credential = nil
+        libraryID = nil
         storageError = nil
         sessionID = UUID()
     }
 
     func page(_ collection: LibraryCollection, cursor: String?) async throws -> LibraryPage {
+        #if DEBUG
+        if platform == .youtube, ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
+            if collection == .playlists {
+                return LibraryPage(entries: [LibraryEntry(id: "fixture-list", title: "測試歌單", subtitle: "", url: URL(string: "https://music.youtube.com/playlist?list=fixture-list")!)], next: nil)
+            }
+            return LibraryPage(entries: [LibraryEntry(id: "fixture-row", title: "潮汐之間", subtitle: "Folia 示範音軌",
+                url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 30)], next: nil)
+        }
+        #endif
         let revision = sessionID
         let url = try PlatformLibrary.endpoint(platform: platform, collection: collection, cursor: cursor)
         var token = try await accessToken()
@@ -147,6 +169,27 @@ final class PlatformConnection {
         case 429: throw PlatformError.message("平台請求次數已達上限，請稍後再載入。")
         default: throw PlatformError.message("平台暫時無法提供曲庫，請稍後重試。")
         }
+    }
+
+    func videoDurations(_ ids: [String]) async throws -> [String: Double] {
+        guard platform == .youtube, !ids.isEmpty, ids.count <= 50, ids.allSatisfy(YouTubeVideo.validID) else { return [:] }
+        let revision = sessionID
+        var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/videos")!
+        parts.queryItems = [.init(name: "part", value: "contentDetails"), .init(name: "id", value: ids.joined(separator: ","))]
+        var result = try await request(url: parts.url!, token: accessToken())
+        if result.1.statusCode == 401 { result = try await request(url: parts.url!, token: accessToken(refresh: true)) }
+        try Task.checkCancellation()
+        guard sessionID == revision else { throw CancellationError() }
+        guard (200..<300).contains(result.1.statusCode) else { throw PlatformError.message("無法取得歌曲長度，請重新同步。") }
+        struct Page: Decodable {
+            let items: [Item]
+            struct Item: Decodable { let id: String; let contentDetails: Details }
+            struct Details: Decodable { let duration: String }
+        }
+        let page = try JSONDecoder().decode(Page.self, from: result.0)
+        return Dictionary(uniqueKeysWithValues: page.items.compactMap { item in
+            PlatformLibrary.isoDuration(item.contentDetails.duration).map { (item.id, $0) }
+        })
     }
 
     private func accessToken(refresh: Bool = false) async throws -> String {
@@ -199,7 +242,7 @@ final class PlatformConnection {
         }
         return Credential(clientID: clientID, accessToken: token.access_token,
                           refreshToken: token.refresh_token ?? previous?.refreshToken,
-                          expires: Date().addingTimeInterval(token.expires_in))
+                          expires: Date().addingTimeInterval(token.expires_in), libraryID: previous?.libraryID ?? UUID().uuidString)
     }
 
     private func request(url: URL, token: String) async throws -> (Data, HTTPURLResponse) {

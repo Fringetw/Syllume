@@ -16,6 +16,7 @@ final class LocalLibrary {
         storage = URL.applicationSupportDirectory.appending(path: "FoliaMusic", directoryHint: .isDirectory)
         do {
             try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(at: Self.downloadDirectory, withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: index.path) {
                 tracks = try JSONDecoder().decode([Track].self, from: Data(contentsOf: index))
             }
@@ -26,6 +27,19 @@ final class LocalLibrary {
     }
 
     func assetURL(for track: Track) -> URL? { track.audioFile.map { folder(for: track.id).appending(path: $0) } }
+
+    static var downloadDirectory: URL { URL.documentsDirectory.appending(path: "YouTube Music", directoryHint: .isDirectory) }
+
+    func availableTrack(_ id: String) -> Track? {
+        guard let track = tracks.first(where: { $0.id == id }), let url = assetURL(for: track),
+              FileManager.default.fileExists(atPath: url.path) else { return nil }
+        return track
+    }
+
+    func importDownload(_ url: URL, candidate: DownloadAudioCandidate) async throws -> Track {
+        if storageError != nil { throw CocoaError(.fileWriteUnknown) }
+        return try await importAudio(url, sidecars: [], download: candidate).0
+    }
 
     func artwork(for track: Track) -> Data? {
         guard let name = track.artworkFile else { return nil }
@@ -52,7 +66,7 @@ final class LocalLibrary {
             let preferred = matches.filter { $0.pathExtension.lowercased() == "fia" }
                 + matches.filter { $0.pathExtension.lowercased() != "fia" }
             do {
-                let invalidSidecar = try await importAudio(url, sidecars: preferred)
+                let invalidSidecar = try await importAudio(url, sidecars: preferred).1
                 usedSidecars.formUnion(matches)
                 if let invalidSidecar { failures.append(invalidSidecar) }
             } catch {
@@ -66,8 +80,8 @@ final class LocalLibrary {
         return messages.isEmpty ? nil : messages.joined(separator: "\n")
     }
 
-    private func importAudio(_ url: URL, sidecars: [URL]) async throws -> String? {
-        let id = UUID().uuidString
+    private func importAudio(_ url: URL, sidecars: [URL], download: DownloadAudioCandidate? = nil) async throws -> (Track, String?) {
+        let id = (download == nil ? "" : "download-") + UUID().uuidString
         let folder = folder(for: id)
         let name = "audio." + url.pathExtension.lowercased()
         let destination = folder.appending(path: name)
@@ -87,8 +101,11 @@ final class LocalLibrary {
             let artist = await Self.metadataString(.commonIdentifierArtist, in: metadata)
             let album = await Self.metadataString(.commonIdentifierAlbumName, in: metadata)
             let seconds = (try? await asset.load(.duration))?.seconds
-            var track = Track(id: id, source: .local, title: title ?? url.deletingPathExtension().lastPathComponent,
-                              artist: artist, album: album, duration: seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil },
+            if let download, !DownloadSongMatch.sameDuration(seconds, download.duration) {
+                throw PlatformError.message("音檔長度與歌曲不符，已略過試聽或不完整檔案。")
+            }
+            var track = Track(id: id, source: .local, title: download?.title ?? title ?? url.deletingPathExtension().lastPathComponent,
+                              artist: download?.artist ?? artist, album: album, duration: seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil },
                               audioFile: name)
             if let artwork = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = try? await artwork.load(.dataValue), data.count <= 8_000_000 {
@@ -110,8 +127,9 @@ final class LocalLibrary {
                 try Data(text.utf8).write(to: folder.appending(path: name), options: .atomic)
                 track.lyricFile = name
             }
+            try Task.checkCancellation()
             try save(tracks + [track])
-            return invalidSidecar
+            return (track, invalidSidecar)
         } catch {
             try? FileManager.default.removeItem(at: folder)
             throw error
@@ -164,6 +182,13 @@ final class LocalLibrary {
             && !liveIDs.contains(folder.lastPathComponent) {
             try? manager.removeItem(at: folder)
         }
+        let downloads = (try? manager.contentsOfDirectory(at: Self.downloadDirectory, includingPropertiesForKeys: nil,
+                                                          options: .skipsHiddenFiles)) ?? []
+        for folder in downloads where folder.lastPathComponent.hasPrefix("download-")
+            && UUID(uuidString: String(folder.lastPathComponent.dropFirst(9))) != nil
+            && !liveIDs.contains(folder.lastPathComponent) {
+            try? manager.removeItem(at: folder)
+        }
         for track in tracks {
             let files = (try? manager.contentsOfDirectory(at: folder(for: track.id), includingPropertiesForKeys: nil)) ?? []
             for file in files where ["lrc", "fia"].contains(file.pathExtension.lowercased())
@@ -175,7 +200,10 @@ final class LocalLibrary {
 
     private var index: URL { storage.appending(path: "catalog.json") }
 
-    private func folder(for id: String) -> URL { storage.appending(path: id, directoryHint: .isDirectory) }
+    private func folder(for id: String) -> URL {
+        let downloaded = id.hasPrefix("download-") && UUID(uuidString: String(id.dropFirst(9))) != nil
+        return (downloaded ? Self.downloadDirectory : storage).appending(path: id, directoryHint: .isDirectory)
+    }
 
     private func save(_ updated: [Track]) throws {
         if storageError != nil { throw CocoaError(.fileWriteUnknown) }

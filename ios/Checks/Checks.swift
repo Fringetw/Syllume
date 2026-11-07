@@ -6,6 +6,7 @@ struct Checks {
     @MainActor static func main() async throws {
         try PlatformChecks.run()
         try YouTubeChecks.run()
+        try YouTubeSyncChecks.run()
         try SubtitleSourceChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)

@@ -198,7 +198,7 @@ private struct PlatformEntries: View {
     }
 }
 
-private struct PlatformAccountSettings: View {
+struct PlatformAccountSettings: View {
     let connection: PlatformConnection
     @Environment(\.dismiss) private var dismiss
     @State private var clientID = ""
@@ -211,7 +211,7 @@ private struct PlatformAccountSettings: View {
             Form {
                 Section {
                     PlatformBrand(platform: connection.platform)
-                    Text("連接後可在 Folia 瀏覽歌單與收藏。YouTube 影片可在 App 內播放，並搭配 Folia 歌詞動畫；Spotify 會交由原平台播放。")
+                    Text("連接後可在 Folia 瀏覽歌單與收藏。YouTube 歌單可自動同步並配對本機音檔；Spotify 會交由原平台播放。")
                 }
                 if connection.platform == .spotify {
                     Section {

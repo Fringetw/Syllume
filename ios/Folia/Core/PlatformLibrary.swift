@@ -79,6 +79,7 @@ struct LibraryEntry: Identifiable, Equatable {
     let title: String
     let subtitle: String
     let url: URL
+    var duration: Double? = nil
 }
 
 struct LibraryPage {
@@ -156,13 +157,24 @@ enum PlatformLibrary {
             let path = collection == .playlists ? "playlist?list=\(id)" : "watch?v=\(id)"
             let rowID = collection == .playlists || collection == .liked ? id : item.id ?? id
             return LibraryEntry(id: rowID, title: title, subtitle: snippet.videoOwnerChannelTitle ?? snippet.channelTitle ?? "",
-                                url: URL(string: "https://music.youtube.com/" + path)!)
+                                url: URL(string: "https://music.youtube.com/" + path)!, duration: isoDuration(item.contentDetails?.duration))
         }
         return LibraryPage(entries: entries, next: page.nextPageToken)
     }
 
     private static func validID(_ id: String) -> Bool {
         !id.isEmpty && id.count <= 200 && id.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil
+    }
+
+    static func isoDuration(_ text: String?) -> Double? {
+        guard let text, let pattern = try? NSRegularExpression(pattern: "^PT(?:(\\d+)H)?(?:(\\d+)M)?(?:(\\d+(?:\\.\\d+)?)S)?$"),
+              let match = pattern.firstMatch(in: text, range: NSRange(text.startIndex..., in: text)) else { return nil }
+        let factors = [3600.0, 60.0, 1.0]
+        var result = 0.0
+        for i in 1...3 {
+            if let range = Range(match.range(at: i), in: text), let value = Double(text[range]) { result += value * factors[i - 1] }
+        }
+        return result.isFinite && result > 0 ? result : nil
     }
 
     private struct SpotifyPage: Decodable {
@@ -186,7 +198,9 @@ enum PlatformLibrary {
         struct Item: Decodable {
             let id: String?
             let snippet: Snippet?
+            let contentDetails: Details?
         }
+        struct Details: Decodable { let duration: String? }
         struct Snippet: Decodable {
             let title: String?
             let channelTitle: String?

@@ -80,6 +80,8 @@ struct NavidromeClient: Sendable {
         let album: String?
         let duration: Double?
         let coverArt: String?
+        let suffix: String?
+        let bitRate: Int?
     }
 
     private static let session: URLSession = {
@@ -104,6 +106,20 @@ struct NavidromeClient: Sendable {
 
     func stream(for track: Track) throws -> URL {
         try account.endpoint("stream", parameters: [.init(name: "id", value: track.id)])
+    }
+
+    func downloadCandidates(for song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+        let response = try await request("search3", parameters: [
+            .init(name: "query", value: song.title), .init(name: "artistCount", value: "0"),
+            .init(name: "albumCount", value: "0"), .init(name: "songCount", value: "50")
+        ])
+        return try (response.searchResult3?.song ?? []).compactMap { recording in
+            guard DownloadSongMatch.matches(song, title: recording.title, artists: [recording.artist ?? ""], duration: recording.duration),
+                  let format = recording.suffix?.lowercased(), ["flac", "alac", "wav", "aiff", "aif", "mp3", "m4a", "aac"].contains(format) else { return nil }
+            return DownloadAudioCandidate(url: try account.endpoint("download", parameters: [.init(name: "id", value: recording.id)]),
+                title: recording.title, artist: recording.artist ?? "", duration: recording.duration ?? 0,
+                format: format, bitrate: (recording.bitRate ?? 0) * 1000, source: "Navidrome")
+        }
     }
 
     func artwork(for track: Track) async -> Data? {

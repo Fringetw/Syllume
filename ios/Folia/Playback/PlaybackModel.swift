@@ -163,11 +163,15 @@ final class PlaybackModel {
         guard position == index else { return }
         lyricsTask?.cancel()
         timeline = LyricTimeline(lines: [])
-        lyricsLoading = track.lyricFile != nil
+        lyricsLoading = track.lyricFile != nil || track.id.hasPrefix("download-")
         guard lyricsLoading else { return }
         let revision = generation
         lyricsTask = Task { [weak self, library] in
-            let parsed = try? await library.lyrics(for: track)
+            var parsed = try? await library.lyrics(for: track)
+            if parsed == nil, track.id.hasPrefix("download-"), !Task.isCancelled {
+                let result = try? await OnlineLyrics.shared.exact(title: track.title, artist: track.artist ?? "", duration: track.duration ?? 0)
+                if let text = result?.syncedLyrics { parsed = LyricTimeline(lrc: text) }
+            }
             guard let self, generation == revision, !Task.isCancelled else { return }
             timeline = parsed ?? LyricTimeline(lines: [])
             lyricsLoading = false
