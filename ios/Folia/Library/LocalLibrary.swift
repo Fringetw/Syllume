@@ -96,7 +96,8 @@ final class LocalLibrary {
         let id = (download == nil ? "" : "download-") + UUID().uuidString
         let finalFolder = folder(for: id)
         let folder = download == nil ? finalFolder : storage.appending(path: ".download-" + UUID().uuidString, directoryHint: .isDirectory)
-        let name = "audio." + url.pathExtension.lowercased()
+        let fileStem = download.map { Self.downloadName($0.title, artist: $0.artist) } ?? "audio"
+        let name = fileStem + "." + url.pathExtension.lowercased()
         let destination = folder.appending(path: name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         do {
@@ -185,12 +186,23 @@ final class LocalLibrary {
         try? FileManager.default.removeItem(at: folder(for: id))
     }
 
+    private static func downloadName(_ title: String, artist: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "/\\:?*\"<>|").union(.controlCharacters).union(.newlines)
+        let value = [title, artist].filter { !$0.isEmpty }.joined(separator: " - ")
+            .components(separatedBy: forbidden).joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(CharacterSet(charactersIn: ".")))
+        return value.isEmpty ? "audio" : String(value.prefix(55))
+    }
+
     // A process can stop after copying files and before atomically updating the catalog.
     private func removeOrphans() {
         let manager = FileManager.default
         let liveIDs = Set(tracks.map(\.id))
-        let folders = (try? manager.contentsOfDirectory(at: storage, includingPropertiesForKeys: nil,
-                                                       options: .skipsHiddenFiles)) ?? []
+        let folders = (try? manager.contentsOfDirectory(at: storage, includingPropertiesForKeys: nil)) ?? []
+        for folder in folders where folder.lastPathComponent.hasPrefix(".download-")
+            && UUID(uuidString: String(folder.lastPathComponent.dropFirst(10))) != nil {
+            try? manager.removeItem(at: folder)
+        }
         for folder in folders where UUID(uuidString: folder.lastPathComponent) != nil
             && !liveIDs.contains(folder.lastPathComponent) {
             try? manager.removeItem(at: folder)

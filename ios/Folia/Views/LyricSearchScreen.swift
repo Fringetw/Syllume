@@ -24,92 +24,11 @@ struct LyricSearchScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("目前歌曲的中文字幕") {
-                    Button("尋找中文字幕") { subtitles.command("retry") }
-                        .accessibilityIdentifier("findChineseLyrics")
-                        .disabled(!subtitles.preferences.active)
-                    Text("依序搜尋已啟用的網易雲、QQ 音樂與 YouTube 來源，核對版本和時間後補上中文。來源開關在「設定 → 繁體字幕」。")
-                        .font(.caption).foregroundStyle(.secondary)
-                    ForEach(["netease", "qq", "ytm"], id: \.self) { provider in
-                        if let status = subtitles.sourceStatus[provider] {
-                            LabeledContent(provider == "netease" ? "網易雲" : provider == "qq" ? "QQ 音樂" : "YouTube", value: status)
-                                .font(.caption)
-                        }
-                    }
-                    Button("查看字幕來源與中文覆蓋率") { subtitles.command("status") }
-                    Button("還原這首歌的原字幕") { subtitles.command("restore") }
-                }
-                Section("YouTube 翻譯影片") {
-                    Button(searchingVideos ? "正在找翻譯影片…" : "依目前歌曲找翻譯影片", systemImage: "magnifyingglass") {
-                        searchVideos()
-                    }.disabled(searchingVideos || !subtitles.preferences.active)
-                    ForEach(videos, id: \.song.id) { record in
-                        Button {
-                            subtitles.readTranslation(videoID: record.song.id)
-                        } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(record.song.title)
-                                Text(record.song.artist + " · " + playbackTime(record.song.durationMs / 1000))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                        }.disabled(subtitles.videoProgress != nil)
-                    }
-                    TextField("貼上已有中文字幕的影片連結", text: $translationLink)
-                        .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .accessibilityIdentifier("translatedVideoURL")
-                    Button("讀取這部影片的字幕") {
-                        if let id = YouTubeVideo.identifier(from: translationLink) { subtitles.readTranslation(videoID: id) }
-                    }.disabled(YouTubeVideo.identifier(from: translationLink) == nil || subtitles.videoProgress != nil || !subtitles.preferences.active)
-                    Button("從「檔案」選擇影片來辨識") { importingVideo = true }
-                        .disabled(subtitles.videoProgress != nil || !subtitles.preferences.active)
-                    if let progress = subtitles.videoProgress {
-                        ProgressView(progress)
-                        Button("停止讀取", role: .cancel) { subtitles.cancelTranslationRead() }
-                    }
-                    if let videoError { Text(videoError).font(.footnote).foregroundStyle(.orange) }
-                    if let preview = subtitles.translationPreview {
-                        Text("讀到 \(preview.lines.count) 行 · " + (preview.aligned ? "已對齊原詞" : "採影片時間，可能需要校正"))
-                            .font(.caption).foregroundStyle(.secondary)
-                        ForEach(Array(preview.lines.prefix(4).enumerated()), id: \.offset) { _, line in
-                            LabeledContent(playbackTime(line.startTime), value: line.translation ?? line.fullText)
-                        }
-                        Button("套用這份字幕") { subtitles.applyTranslationPreview() }
-                        Button("取消預覽", role: .cancel) { subtitles.discardTranslationPreview() }
-                    }
-                    Text("先讀影片已有的人工字幕軌；若文字印在畫面上，會嘗試在 iPhone 上辨識。")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                if let player {
-                    Section("校正歌詞時間") {
-                        HStack {
-                            Button("延後 0.1 秒") { player.adjustLyrics(by: -0.1) }
-                            Spacer()
-                            Text(String(format: "%+.1f 秒", player.lyricOffset)).monospacedDigit()
-                            Spacer()
-                            Button("提前 0.1 秒") { player.adjustLyrics(by: 0.1) }
-                        }.buttonStyle(.borderless)
-                        Button("重設為原本時間") { player.adjustLyrics(by: -player.lyricOffset) }
-                    }
-                }
-                Section("尋找其他同步歌詞版本") {
-                    TextField("歌名", text: $title)
-                    TextField("歌手", text: $artist)
-                    Button(loading ? "正在尋找…" : "搜尋 LRCLIB") { search() }.disabled(loading || title.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if let error { Text(error).foregroundStyle(.orange) }
-                }
-                Section("選擇與目前音訊相同的版本") {
-                    ForEach(records) { record in
-                        Button { choose(record); dismiss() } label: {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(record.trackName).foregroundStyle(.primary)
-                                Text("\(record.artistName) · \(record.albumName) · \(playbackTime(record.duration))")
-                                    .font(.caption).foregroundStyle(.secondary)
-                                Text(record.syncedLyrics?.split(separator: "\n").prefix(2).joined(separator: "\n") ?? "")
-                                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                            }
-                        }
-                    }
-                }
+                chineseSection
+                videoSection
+                offsetSection
+                lrclibSection
+                recordsSection
             }
             .navigationTitle("尋找歌詞").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() }.accessibilityIdentifier("closeLyricSearch") } }
@@ -130,6 +49,108 @@ struct LyricSearchScreen: View {
             Button("好", role: .cancel) { subtitles.notice = nil }
         } message: { Text(subtitles.notice ?? "") }
     }
+
+    private var chineseSection: some View {
+        Section("目前歌曲的中文字幕") {
+            Button("尋找中文字幕") { subtitles.command("retry") }
+                .accessibilityIdentifier("findChineseLyrics")
+                .disabled(!subtitles.preferences.active)
+            Text("依序搜尋已啟用的網易雲、QQ 音樂與 YouTube 來源，核對版本和時間後補上中文。來源開關在「設定 → 繁體字幕」。")
+                .font(.caption).foregroundStyle(.secondary)
+            ForEach(["netease", "qq", "ytm"], id: \.self) { provider in
+                if let status = subtitles.sourceStatus[provider] {
+                    LabeledContent(provider == "netease" ? "網易雲" : provider == "qq" ? "QQ 音樂" : "YouTube", value: status)
+                        .font(.caption)
+                }
+            }
+            Button("查看字幕來源與中文覆蓋率") { subtitles.command("status") }
+            Button("還原這首歌的原字幕") { subtitles.command("restore") }
+        }
+    }
+
+    private var videoSection: some View {
+        Section("YouTube 翻譯影片") {
+            Button(searchingVideos ? "正在找翻譯影片…" : "依目前歌曲找翻譯影片", systemImage: "magnifyingglass") {
+                searchVideos()
+            }.disabled(searchingVideos || !subtitles.preferences.active)
+            ForEach(videos, id: \.song.id) { record in
+                Button {
+                    subtitles.readTranslation(videoID: record.song.id)
+                } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(record.song.title)
+                        Text(record.song.artist + " · " + playbackTime(record.song.durationMs / 1000))
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }.disabled(subtitles.videoProgress != nil)
+            }
+            TextField("貼上已有中文字幕的影片連結", text: $translationLink)
+                .textContentType(.URL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                .accessibilityIdentifier("translatedVideoURL")
+            Button("讀取這部影片的字幕") {
+                if let id = YouTubeVideo.identifier(from: translationLink) { subtitles.readTranslation(videoID: id) }
+            }.disabled(YouTubeVideo.identifier(from: translationLink) == nil || subtitles.videoProgress != nil || !subtitles.preferences.active)
+            Button("從「檔案」選擇影片來辨識") { importingVideo = true }
+                .disabled(subtitles.videoProgress != nil || !subtitles.preferences.active)
+            if let progress = subtitles.videoProgress {
+                ProgressView(progress)
+                Button("停止讀取", role: .cancel) { subtitles.cancelTranslationRead() }
+            }
+            if let videoError { Text(videoError).font(.footnote).foregroundStyle(.orange) }
+            if let preview = subtitles.translationPreview {
+                Text("讀到 \(preview.lines.count) 行 · " + (preview.aligned ? "已對齊原詞" : "採影片時間，可能需要校正"))
+                    .font(.caption).foregroundStyle(.secondary)
+                ForEach(Array(preview.lines.prefix(4).enumerated()), id: \.offset) { _, line in
+                    LabeledContent(playbackTime(line.startTime), value: line.translation ?? line.fullText)
+                }
+                Button("套用這份字幕") { subtitles.applyTranslationPreview() }
+                Button("取消預覽", role: .cancel) { subtitles.discardTranslationPreview() }
+            }
+            Text("先讀影片已有的人工字幕軌；若文字印在畫面上，會嘗試在 iPhone 上辨識。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var offsetSection: some View {
+        if let player {
+            Section("校正歌詞時間") {
+                HStack {
+                    Button("延後 0.1 秒") { player.adjustLyrics(by: -0.1) }
+                    Spacer()
+                    Text(String(format: "%+.1f 秒", player.lyricOffset)).monospacedDigit()
+                    Spacer()
+                    Button("提前 0.1 秒") { player.adjustLyrics(by: 0.1) }
+                }.buttonStyle(.borderless)
+                Button("重設為原本時間") { player.adjustLyrics(by: -player.lyricOffset) }
+            }
+        }
+    }
+
+    private var lrclibSection: some View {
+        Section("尋找其他同步歌詞版本") {
+            TextField("歌名", text: $title)
+            TextField("歌手", text: $artist)
+            Button(loading ? "正在尋找…" : "搜尋 LRCLIB") { search() }.disabled(loading || title.trimmingCharacters(in: .whitespaces).isEmpty)
+            if let error { Text(error).foregroundStyle(.orange) }
+        }
+    }
+
+    private var recordsSection: some View {
+        Section("選擇與目前音訊相同的版本") {
+            ForEach(records) { record in
+                Button { choose(record); dismiss() } label: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(record.trackName).foregroundStyle(.primary)
+                        Text("\(record.artistName) · \(record.albumName) · \(playbackTime(record.duration))")
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text(record.syncedLyrics?.split(separator: "\n").prefix(2).joined(separator: "\n") ?? "")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    }
+                }
+            }
+        }
+    }
+
     private func searchVideos() {
         videoSearch?.cancel(); searchingVideos = true; videoError = nil; videos = []
         let query = subtitles.currentSearchTerms ?? (title, artist)

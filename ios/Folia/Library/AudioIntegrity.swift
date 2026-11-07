@@ -1,10 +1,16 @@
 @preconcurrency import AVFoundation
 import AudioToolbox
 import CoreMedia
+import Foundation
 
 enum AudioIntegrity {
     static func inspect(_ url: URL, expected: Double, decode: Bool) async throws -> Double {
         let asset = AVURLAsset(url: url)
+        let timeout: Task<Void, Never>? = url.isFileURL ? nil : Task {
+            try? await Task.sleep(for: .seconds(12))
+            if !Task.isCancelled { asset.cancelLoading() }
+        }
+        defer { timeout?.cancel() }
         return try await withTaskCancellationHandler {
             let tracks = try await asset.loadTracks(withMediaType: .audio)
             let video = try await asset.loadTracks(withMediaType: .video)

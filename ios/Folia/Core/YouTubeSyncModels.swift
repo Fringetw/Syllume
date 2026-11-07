@@ -127,7 +127,7 @@ enum DownloadSongMatch {
             #"\bcover\b|翻唱"#, #"\bacoustic\b|不插[電电]|アコースティック"#,
             #"\b(?:instrumental|karaoke|off[ -]?vocal)\b|伴奏|カラオケ"#,
             #"\b(?:sped[ -]?up|nightcore|slowed)\b|加速|降速"#,
-            #"\b(?:tv size|short ver|radio edit|medley)\b|短版|串[燒烧]"#]
+            #"\b(?:tv[ -](?:size|ver(?:sion)?)|short ver(?:sion)?|radio edit|medley|extended mix|re-recorded|piano ver(?:sion)?)\b|短版|串[燒烧]|オルゴール"#]
         return Set(rules.indices.filter { title.range(of: rules[$0], options: [.regularExpression, .caseInsensitive]) != nil })
     }
     static func sameDuration(_ a: Double?, _ b: Double?) -> Bool {
@@ -170,15 +170,33 @@ enum DownloadSongMatch {
         if performers.count > 1 {
             guard performers.allSatisfy({ !keys.isDisjoint(with: artistKeys($0)) }) else { return false }
         }
-        let candidate = normalized(searchTitle(title))
+        let candidate = titleKeys(title)
         guard !candidate.isEmpty else { return false }
-        var forms = [metadata.title, searchTitle(song.title)]
+        var forms = titleKeys(metadata.title).union(titleKeys(song.title))
         for name in artists {
-            forms.append(searchTitle(song.title).replacingOccurrences(of: name, with: "", options: .caseInsensitive))
+            forms.formUnion(titleKeys(searchTitle(song.title).replacingOccurrences(of: name, with: "", options: .caseInsensitive)))
         }
-        let split = CharacterSet(charactersIn: "/／|｜「」『』\"“”()（）")
-        return forms.flatMap { [$0] + (versions($0).isEmpty ? $0.components(separatedBy: split) : []) }
-            .contains { normalized(searchTitle($0)) == candidate }
+        return !candidate.isDisjoint(with: forms)
+    }
+
+    private static func titleKeys(_ title: String) -> Set<String> {
+        let cleaned = searchTitle(title)
+        var variants = [cleaned]
+        if versions(title).isEmpty {
+            variants += cleaned.components(separatedBy: CharacterSet(charactersIn: "/／|｜「」『』\"“”"))
+            for variant in variants {
+                if let match = variant.firstMatch(of: #/^(.+?)\s*[(（]([^()（）]+)[)）]\s*$/#) {
+                    let first = String(match.1), alias = String(match.2)
+                    let cjk = { (value: String) in value.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]"#, options: .regularExpression) != nil }
+                    let kana = { (value: String) in value.range(of: #"[\p{Hiragana}\p{Katakana}]"#, options: .regularExpression) != nil }
+                    // E.g. QQ's Japanese song title followed by its Chinese translation.
+                    if cjk(first) != cjk(alias) || (cjk(first) && kana(first) != kana(alias)) {
+                        variants.append(first); variants.append(alias)
+                    }
+                }
+            }
+        }
+        return Set(variants.map(normalized).filter { !$0.isEmpty })
     }
 
     static func safeAudioURL(_ value: String) -> URL? {

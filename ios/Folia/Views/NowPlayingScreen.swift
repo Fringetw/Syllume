@@ -112,27 +112,7 @@ struct NowPlayingScreen: View {
             .padding(.bottom, 12)
             .frame(maxWidth: 630)
             .frame(maxWidth: .infinity)
-            .background {
-                if luminous {
-                    ZStack {
-                        FoliaPalette.surface
-                        RadialGradient(colors: [.indigo.opacity(0.64), .clear], center: .topTrailing, startRadius: 0, endRadius: 530)
-                        if !subtitles.timeline.lines.isEmpty {
-                            SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
-                                timeline: subtitles.timeline, revision: subtitles.revision, position: player.lyricPosition,
-                                playing: player.lyricClockRunning, style: "lumiere", rendering: !showingSearch && !showingQueue,
-                                showsTranslation: false)
-                        }
-                        LinearGradient(stops: [.init(color: .black.opacity(0.76), location: 0),
-                            .init(color: .clear, location: 0.24), .init(color: .clear, location: 0.65),
-                            .init(color: .black.opacity(0.91), location: 1)], startPoint: .top, endPoint: .bottom)
-                            .accessibilityHidden(true)
-                    }
-                    .ignoresSafeArea().allowsHitTesting(false)
-                } else {
-                    PlaybackAtmosphere(playing: player.lyricClockRunning && !showingSearch && !showingQueue).ignoresSafeArea()
-                }
-            }
+            .background { playbackBackground(for: track) }
             .tint(accent)
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: luminous)
             .overlay(alignment: .bottomTrailing) {
@@ -155,6 +135,29 @@ struct NowPlayingScreen: View {
             .onChange(of: track.id) { _, _ in showingSearch = false }
         } else {
             Color.clear.onAppear { dismiss() }
+        }
+    }
+
+    @ViewBuilder
+    private func playbackBackground(for track: Track) -> some View {
+        if luminous {
+            ZStack {
+                FoliaPalette.surface
+                RadialGradient(colors: [.indigo.opacity(0.64), .clear], center: .topTrailing, startRadius: 0, endRadius: 530)
+                if !subtitles.timeline.lines.isEmpty {
+                    SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
+                        timeline: subtitles.timeline, revision: subtitles.revision, position: player.lyricPosition,
+                        playing: player.lyricClockRunning, style: "lumiere", rendering: !showingSearch && !showingQueue,
+                        showsTranslation: false)
+                }
+                LinearGradient(stops: [.init(color: .black.opacity(0.76), location: 0),
+                    .init(color: .clear, location: 0.24), .init(color: .clear, location: 0.65),
+                    .init(color: .black.opacity(0.91), location: 1)], startPoint: .top, endPoint: .bottom)
+                    .accessibilityHidden(true)
+            }
+            .ignoresSafeArea().allowsHitTesting(false)
+        } else {
+            PlaybackAtmosphere(playing: player.lyricClockRunning && !showingSearch && !showingQueue).ignoresSafeArea()
         }
     }
 

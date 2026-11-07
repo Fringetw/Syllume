@@ -17,6 +17,10 @@ enum YouTubeSyncChecks {
 
         let recording = try DownloadSourceDecoders.search(Data(#"{"code":200,"result":{"songs":[{"id":1,"name":"LOSER","ar":[{"name":"米津玄師"}],"dt":244000},{"id":2,"name":"LOSER (Remix)","ar":[{"name":"米津玄師"}],"dt":244000}]}}"#.utf8), for: song)
         precondition(recording.count == 1 && recording[0].id == 1)
+        let kawaki = SyncedYouTubeSong(LibraryEntry(id: "row-alias", title: "カワキヲアメク", subtitle: "美波 - Topic",
+            url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 252))!
+        precondition(DownloadSongMatch.matches(kawaki, title: "カワキヲアメク (声嘶力竭)", artists: ["美波 (みなみ)"], duration: 251))
+        precondition(!DownloadSongMatch.matches(kawaki, title: "カワキヲアメク (Piano Version)", artists: ["美波"], duration: 251))
         let full = #"{"code":200,"data":[{"id":1,"code":200,"url":"http://m7.music.126.net/song.flac","type":"flac","br":900000,"time":244000,"freeTrialInfo":null}]}"#
         let audio = try DownloadSourceDecoders.audio(Data(full.utf8), recording: recording[0])!
         precondition(audio.lossless && audio.url.scheme == "https")

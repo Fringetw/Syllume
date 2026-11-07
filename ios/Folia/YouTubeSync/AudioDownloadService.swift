@@ -7,14 +7,16 @@ import YouTubeKit
 actor AudioDownloadService {
     static let shared = AudioDownloadService()
     private var blockedUntil: [String: Date] = [:]
-    private let session: URLSession = {
+    private let session = AudioDownloadService.anonymousSession(seconds: 600)
+    private let metadataSession = AudioDownloadService.anonymousSession(seconds: 13)
+    private static func anonymousSession(seconds: TimeInterval) -> URLSession {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 9
-        config.timeoutIntervalForResource = 600
+        config.timeoutIntervalForResource = seconds
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         return URLSession(configuration: config)
-    }()
+    }
 
     func withDuration(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
         guard song.duration == nil, YouTubeVideo.validID(song.videoID),
@@ -217,7 +219,7 @@ actor AudioDownloadService {
             request.httpMethod = "POST"; request.httpBody = Data((parts.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         }
-        let (bytes, response) = try await session.bytes(for: request, delegate: AudioDownloadGuard(origin: url, limit: maximum))
+        let (bytes, response) = try await metadataSession.bytes(for: request, delegate: AudioDownloadGuard(origin: url, limit: maximum))
         defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw SubtitleReadError("network") }
         if let delay = AudioRetryPolicy.delay(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
