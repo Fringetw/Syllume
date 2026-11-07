@@ -42,11 +42,12 @@ enum YouTubeCaptionDecoders {
         return (value["simpleText"] as? String) ?? (value["runs"] as? [[String: Any]] ?? [])
             .compactMap { $0["text"] as? String }.joined()
     }
-    static func searchURL(_ query: String) -> URL {
+    static func searchURL(_ query: String, requireCaptions: Bool = true) -> URL {
         var url = URLComponents(string: "https://www.youtube.com/results")!
         // Observed from YouTube's visible Subtitles/CC filter. URLComponents encodes the percent signs once more.
-        url.queryItems = [.init(name: "search_query", value: query + " 中文字幕"),
-            .init(name: "sp", value: "EgIoAQ%3D%3D"), .init(name: "hl", value: "zh-TW"), .init(name: "gl", value: "TW")]
+        url.queryItems = [.init(name: "search_query", value: query + (requireCaptions ? " 中文字幕" : " 中文 歌詞")),
+            .init(name: "hl", value: "zh-TW"), .init(name: "gl", value: "TW")]
+        if requireCaptions { url.queryItems?.append(.init(name: "sp", value: "EgIoAQ%3D%3D")) }
         url.percentEncodedQuery = url.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         return url.url!
     }
@@ -63,7 +64,8 @@ enum YouTubeCaptionDecoders {
                     let parts = text(video["lengthText"]).split(separator: ":").compactMap { Double($0) }
                     let seconds = parts.reduce(0) { $0 * 60 + $1 }
                     if !title.isEmpty, !artist.isEmpty, seconds > 0, seconds <= 3600 {
-                        songs.append(SubtitleRecord(song: metadata(id: id, title: title, artist: artist, duration: seconds)))
+                        songs.append(SubtitleRecord(song: metadata(id: id, title: title, artist: artist, duration: seconds),
+                            translatedVideo: isTranslatedUpload(title)))
                     }
                     return
                 }
@@ -75,11 +77,37 @@ enum YouTubeCaptionDecoders {
         guard !songs.isEmpty || root["estimatedResults"] as? String == "0" else { throw SubtitleReadError("invalid-response") }
         return songs
     }
+    static func isTranslatedUpload(_ title: String) -> Bool {
+        title.range(of: #"中[日英韓]?(?:雙語)?字幕|繁[中體]|中字|中文[翻譯歌詞]+|中文[翻译歌词]+|中日歌詞|繁中/日歌詞|Chinese subtitles"#,
+                    options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    private static func creditedArtists(_ text: String) -> String {
+        DownloadSongMatch.artistNames(text).map { part in
+            let east = part.replacingOccurrences(of: #"[^\p{Han}\p{Hiragana}\p{Katakana}ー・]"#, with: "", options: .regularExpression)
+            return east.count >= 2 && part.range(of: #"\p{Latin}"#, options: .regularExpression) != nil ? east : part
+        }.joined(separator: " / ")
+    }
+
     static func metadata(id: String, title: String, artist: String, duration: Double) -> SubtitleSong {
         // Only presentation labels are removed. Live/cover/remix/version markers must remain.
         let labels = #"\s*[【\[(（]\s*(?:中[日英韓]?字幕|中[日英韓]雙語字幕|中文字幕|中字|中文翻譯|中文翻译|CC字幕|official(?: music)? (?:video|audio)|lyrics?(?: video)?)\s*[】\])）]\s*"#
         let clean = title.replacingOccurrences(of: labels, with: " ", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        if DownloadSongMatch.versions(title).isEmpty,
+           let quoted = clean.firstMatch(of: #/[「『]([^」』]+)[」』]/#) {
+            let extracted = String(quoted.1).trimmingCharacters(in: .whitespacesAndNewlines)
+            let tail = DownloadSongMatch.searchTitle(String(clean[quoted.range.upperBound...]))
+                .trimmingCharacters(in: CharacterSet(charactersIn: " -–—:：|｜"))
+            let head = DownloadSongMatch.searchTitle(String(clean[..<quoted.range.lowerBound]))
+            let headKey = DownloadSongMatch.normalized(head)
+            let uploaderKeys = DownloadSongMatch.artistKeys(artist)
+            let credit = !tail.isEmpty && tail.count <= 150 && tail.range(of: #"(?i)^[\p{L}\p{N} &＆、,，/／×・.]+$"#, options: .regularExpression) != nil
+                ? tail : uploaderKeys.contains(where: { $0.count >= 2 && headKey.contains($0) }) ? head : artist
+            if !extracted.isEmpty {
+                return SubtitleSong(id: id, source: "ytm", title: extracted, artist: creditedArtists(credit), durationMs: duration * 1000)
+            }
+        }
         let titleParts = clean.components(separatedBy: " - ")
         // An explicit Artist - Song credit is more useful than a translation channel's name.
         let prefixArtist = titleParts.count == 2 && !titleParts[0].isEmpty ? titleParts[0] : artist
@@ -104,7 +132,7 @@ enum YouTubeCaptionDecoders {
         let creditedTitle = titleParts.count == 2 && !titleParts[1].isEmpty ? titleParts[1] : clean
         return SubtitleSong(id: id, source: "ytm", title: creditedTitle, artist: creditedArtist, durationMs: duration * 1000)
     }
-    static func tracks(_ page: String, videoID: String) throws -> [YouTubeCaptionTrack] {
+    static func playerResponse(_ page: String, videoID: String) throws -> [String: Any] {
         let root = try embeddedObject(page, name: "ytInitialPlayerResponse")
         if let status = root["playabilityStatus"] as? [String: Any], let value = status["status"] as? String, value != "OK" {
             let reason = (status["reason"] as? String ?? "").lowercased()
@@ -114,6 +142,10 @@ enum YouTubeCaptionDecoders {
         guard let details = root["videoDetails"] as? [String: Any], details["videoId"] as? String == videoID else {
             throw SubtitleReadError("invalid-response")
         }
+        return root
+    }
+    static func tracks(_ page: String, videoID: String) throws -> [YouTubeCaptionTrack] {
+        let root = try playerResponse(page, videoID: videoID)
         let captions = root["captions"] as? [String: Any]
         let renderer = captions?["playerCaptionsTracklistRenderer"] as? [String: Any]
         let listed = renderer?["captionTracks"] as? [[String: Any]] ?? []
@@ -124,9 +156,9 @@ enum YouTubeCaptionDecoders {
             guard let language = track["languageCode"] as? String, let raw = track["baseUrl"] as? String,
                   var parts = URLComponents(string: raw), allowedCaptionURL(parts.url),
                   !(parts.queryItems ?? []).contains(where: { $0.name == "tlang" }) else { return nil }
-            var query = (parts.queryItems ?? []).filter { $0.name != "fmt" }
-            query.append(URLQueryItem(name: "fmt", value: "json3")); parts.queryItems = query
-            parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+            // Keep the platform's signed parameters byte-for-byte; only the output format changes.
+            let query = (parts.percentEncodedQuery ?? "").split(separator: "&").filter { !$0.hasPrefix("fmt=") }
+            parts.percentEncodedQuery = (query.map(String.init) + ["fmt=json3"]).joined(separator: "&")
             guard let url = parts.url else { return nil }
             return YouTubeCaptionTrack(url: url, language: language, automatic: track["kind"] as? String == "asr", original: index == defaultIndex)
         }
@@ -157,7 +189,7 @@ enum YouTubeCaptionDecoders {
         }
         return LyricTimeline(lines: lines).lines
     }
-    private static func bilingualCue(_ text: String) -> (original: String, chinese: String)? {
+    static func bilingualCue(_ text: String) -> (original: String, chinese: String)? {
         let rows = text.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         guard (2...6).contains(rows.count) else { return nil }
         var originals: [String] = [], translations: [String] = []

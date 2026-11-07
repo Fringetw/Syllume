@@ -1,6 +1,6 @@
 import { getConverter, transformLines } from './upstream/mods/opencc-traditional-lyrics/converter.mjs';
 import { createChineseSelector } from './upstream/mods/opencc-traditional-lyrics/selectChinese.mjs';
-import { chineseTranslation } from './upstream/mods/opencc-traditional-lyrics/lyricQuality.mjs';
+import { chineseTranslation, repairWordTimings } from './upstream/mods/opencc-traditional-lyrics/lyricQuality.mjs';
 
 export const defaults = Object.freeze({ active: true, enabled: true, target: 'tw', convertOriginal: true,
     convertTranslation: true, protectJapanese: true, autoSelectChinese: true, fallbackOnFailure: true,
@@ -13,7 +13,7 @@ export function createSubtitleEngine({ request, publish: sendDisplay, report: se
     const publish = value => sendDisplay({ ...value, configurationRevision });
     const report = value => sendReport({ ...value, configurationRevision });
     let reportTimer = null;
-    const searchReady = () => input && (input.song.source !== 'ytm'
+    const searchReady = () => input && !input.manual && !input.waitingForAudio && (input.song.source !== 'ytm'
         || (input.duration > 0 && input.song.artist?.trim() && input.song.title !== 'YouTube 影片'));
     const folium = {
         host: { folia: 'Folia-iOS' },
@@ -23,14 +23,18 @@ export function createSubtitleEngine({ request, publish: sendDisplay, report: se
             listProviders: () => providers,
             describeSong: song => ({ durationMs: song?.durationMs ?? 0 }),
             searchSongs: (query, options) => request('search', { query, providerId: options.providerId }, options.signal),
-            getLyrics: (song, options) => request('lyrics', { ref: song.ref, providerId: song.source }, options.signal),
+            getLyrics: async (song, options) => {
+                const response = await request('lyrics', { ref: song.ref, providerId: song.source }, options.signal);
+                return { ...response, lines: repairWordTimings(response.lines, (song.durationMs ?? 0) / 1000) };
+            },
         },
         ui: { toast }, log: { info() {}, warn() {} },
     };
     function diagnostics() {
         if (!selector || !input) return;
         if (!searchReady()) {
-            report({ token: input.token, text: '等待 YouTube 提供歌曲名稱、歌手與時長；離線簡轉繁仍正常運作。', value: null });
+            report({ token: input.token, text: input.manual ? '正在顯示手動選取的翻譯字幕。' :
+                '等待歌曲資料與音源；離線簡轉繁仍可使用。', value: null });
             return;
         }
         report({ token: input.token, text: selector.reportText(), value: selector.getReport() });
@@ -41,8 +45,9 @@ export function createSubtitleEngine({ request, publish: sendDisplay, report: se
     }
     function refresh() {
         if (!input) return;
-        let lines = !settings.active || !selector ? input.lines
-            : transformLines(selector.transform(input.song, input.lines), settings);
+        let lines = !settings.active ? input.lines
+            : transformLines(input.manual || !selector ? input.lines :
+                selector.transform(input.song, input.lines), settings);
         if (settings.active) lines = lines.map(line => {
             const displayTranslation = chineseTranslation(line, getConverter()).text || line.translation;
             return displayTranslation && displayTranslation !== line.translation ? { ...line, displayTranslation } : line;

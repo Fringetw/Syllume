@@ -7,11 +7,15 @@ struct NowPlayingScreen: View {
     let subtitles: SubtitleController
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @AppStorage("Folia.LyricDisplayMode") private var mode: LyricDisplayMode = .sonnet
     @State private var controlsVisible = true
     @State private var showingQueue = false
 
     @State private var showingSearch = false
+
+    private var luminous: Bool { mode == .lumiere }
+    private var accent: Color { luminous ? Color(red: 1, green: 0.83, blue: 0.58) : FoliaPalette.accent }
 
     var body: some View {
         if let track = player.current {
@@ -22,7 +26,7 @@ struct NowPlayingScreen: View {
                         .accessibilityLabel("關閉播放畫面")
                     Spacer()
                     Text("N O W   P L A Y I N G").font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(FoliaPalette.accent)
+                        .foregroundStyle(accent)
                         .accessibilityLabel("現正播放")
                     Spacer()
                     Button { showingSearch = true } label: { Image(systemName: "text.magnifyingglass").frame(width: 44, height: 44) }
@@ -32,7 +36,7 @@ struct NowPlayingScreen: View {
                     Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
                         .accessibilityLabel("播放佇列")
                 }
-                .buttonStyle(FoliaPressStyle())
+                .buttonStyle(FoliaPressStyle(luminous: luminous))
 
                 Picker("播放畫面", selection: $mode) {
                     ForEach(LyricDisplayMode.allCases) { mode in Text(mode.title).tag(mode) }
@@ -43,12 +47,23 @@ struct NowPlayingScreen: View {
 
                 Group {
                     switch mode {
-                    case .sonnet, .lumiere:
+                    case .lumiere:
+                        if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline) }
+                        else if let index = subtitles.timeline.activeIndex(at: player.lyricPosition),
+                                let translation = subtitles.timeline.lines[index].translationText {
+                            VStack {
+                                Spacer()
+                                Text(translation).font(.callout.weight(.medium)).multilineTextAlignment(.center)
+                                    .padding(.horizontal, 16).padding(.vertical, 7)
+                                    .background(.black.opacity(0.45), in: Capsule())
+                            }.allowsHitTesting(false)
+                        } else { Color.clear }
+                    case .sonnet:
                         if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline) }
                         else {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                                         timeline: subtitles.timeline, revision: subtitles.revision,
-                                        position: player.position, playing: player.isPlaying && !player.isBuffering,
+                                        position: player.lyricPosition, playing: player.lyricClockRunning,
                                         style: mode.rawValue, rendering: !showingSearch && !showingQueue)
                         }
                     case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
@@ -68,12 +83,23 @@ struct NowPlayingScreen: View {
                     if let error = player.error {
                         Text(error).font(.footnote).foregroundStyle(.orange)
                     } else if player.isBuffering {
-                        Text("音訊緩衝中…").font(.footnote).foregroundStyle(.secondary)
+                        Text(player.audioSource == nil && track.source == .catalogue ? "正在尋找可播放的音源…" : "音訊緩衝中…")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    } else if let source = player.audioSource {
+                        Text(source).font(.caption).foregroundStyle(accent)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                TransportControls(player: player).id(track.id)
+                TransportControls(player: player, luminous: luminous, accent: accent).id(track.id)
+                    .padding(.horizontal, luminous ? 12 : 0)
+                    .padding(.vertical, luminous ? 8 : 0)
+                    .background {
+                        if luminous {
+                            RoundedRectangle(cornerRadius: 24).fill(.black.opacity(0.38))
+                                .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(accent.opacity(0.28)) }
+                        }
+                    }
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
                     LocalTransportProbe(player: player)
@@ -86,7 +112,29 @@ struct NowPlayingScreen: View {
             .padding(.bottom, 12)
             .frame(maxWidth: 630)
             .frame(maxWidth: .infinity)
-            .background(PlaybackAtmosphere(playing: player.isPlaying && !showingSearch && !showingQueue).ignoresSafeArea())
+            .background {
+                if luminous {
+                    ZStack {
+                        FoliaPalette.surface
+                        RadialGradient(colors: [.indigo.opacity(0.64), .clear], center: .topTrailing, startRadius: 0, endRadius: 530)
+                        if !subtitles.timeline.lines.isEmpty {
+                            SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
+                                timeline: subtitles.timeline, revision: subtitles.revision, position: player.lyricPosition,
+                                playing: player.lyricClockRunning, style: "lumiere", rendering: !showingSearch && !showingQueue,
+                                showsTranslation: false)
+                        }
+                        LinearGradient(stops: [.init(color: .black.opacity(0.76), location: 0),
+                            .init(color: .clear, location: 0.24), .init(color: .clear, location: 0.65),
+                            .init(color: .black.opacity(0.91), location: 1)], startPoint: .top, endPoint: .bottom)
+                            .accessibilityHidden(true)
+                    }
+                    .ignoresSafeArea().allowsHitTesting(false)
+                } else {
+                    PlaybackAtmosphere(playing: player.lyricClockRunning && !showingSearch && !showingQueue).ignoresSafeArea()
+                }
+            }
+            .tint(accent)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: luminous)
             .overlay(alignment: .bottomTrailing) {
                 if !controlsVisible {
                     Button { controlsVisible = true } label: {
@@ -98,18 +146,13 @@ struct NowPlayingScreen: View {
             }
             .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
             .sheet(isPresented: $showingSearch) {
-                LyricSearchScreen(subtitles: subtitles, title: track.title, artist: track.artist ?? "") { record in
+                LyricSearchScreen(subtitles: subtitles, title: track.title, artist: track.artist ?? "", player: player) { record in
                     guard player.current?.id == track.id, player.current?.source == track.source else { return }
                     player.useLyrics(record)
                 }
                     .id(track.id)
             }
             .onChange(of: track.id) { _, _ in showingSearch = false }
-            .onChange(of: SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue,
-                title: track.title, artist: track.artist ?? "", durationMs: player.duration * 1000),
-                revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in
-                subtitles.load(next, timeline: player.timeline)
-            }
         } else {
             Color.clear.onAppear { dismiss() }
         }
@@ -151,6 +194,8 @@ private struct LocalTransportProbe: View {
 
 private struct TransportControls: View {
     let player: PlaybackModel
+    let luminous: Bool
+    let accent: Color
 
     @State private var scrubPosition = 0.0
     @State private var isScrubbing = false
@@ -176,7 +221,7 @@ private struct TransportControls: View {
 
             HStack(spacing: 0) {
                 Button { player.toggleRepeat() } label: {
-                    Image(systemName: "repeat").foregroundStyle(player.repeatQueue ? FoliaPalette.accent : .secondary)
+                    Image(systemName: "repeat").foregroundStyle(player.repeatQueue ? accent : .secondary)
                         .frame(width: 44, height: 48)
                 }
                 .accessibilityLabel("循環佇列")
@@ -193,7 +238,8 @@ private struct TransportControls: View {
                         .font(.title2.weight(.semibold))
                         .frame(width: 62, height: 62)
                         .foregroundStyle(FoliaPalette.surface)
-                        .background(FoliaPalette.accent, in: Circle())
+                        .background(accent, in: Circle())
+                        .shadow(color: luminous ? accent.opacity(0.4) : .clear, radius: 12)
                 }
                 .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
                 .accessibilityIdentifier("playerToggle")
@@ -207,7 +253,7 @@ private struct TransportControls: View {
                 Spacer()
                 Color.clear.frame(width: 44, height: 1).accessibilityHidden(true)
             }
-            .buttonStyle(FoliaPressStyle())
+            .buttonStyle(FoliaPressStyle(luminous: luminous))
         }
     }
 

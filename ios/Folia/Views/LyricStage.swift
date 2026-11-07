@@ -73,7 +73,7 @@ struct LyricStage: View {
                 }
             }
         } else {
-            let index = timeline.activeIndex(at: player.position)
+            let index = timeline.activeIndex(at: player.lyricPosition)
             GeometryReader { geometry in
               ScrollViewReader { reader in
                 ScrollView {
@@ -82,10 +82,10 @@ struct LyricStage: View {
                             let line = timeline.lines[row]
                             let active = row == index
                             Button {
-                                player.seek(to: line.startTime)
+                                player.seekToLyric(line.startTime)
                             } label: {
-                                LyricRow(line: line, active: active, position: active ? player.position : 0,
-                                         playing: player.isPlaying, distance: index.map { abs(row - $0) } ?? 0)
+                                LyricRow(line: line, active: active, position: active ? player.lyricPosition : 0,
+                                         playing: player.lyricClockRunning, distance: index.map { abs(row - $0) } ?? 0)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
                             .buttonStyle(.plain)

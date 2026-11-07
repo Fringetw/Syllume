@@ -1,93 +1,235 @@
 import Foundation
+#if canImport(YouTubeKit)
+import YouTubeKit
+#endif
 
-// Public music metadata and original Navidrome downloads are independent of Google OAuth.
+// Public sources use a cookie-free session; Google OAuth remains confined to playlist metadata.
 actor AudioDownloadService {
-    private var blockedUntil = Date.distantPast
+    static let shared = AudioDownloadService()
+    private var blockedUntil: [String: Date] = [:]
     private let session: URLSession = {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 12
-        configuration.timeoutIntervalForResource = 600
-        configuration.httpShouldSetCookies = false
-        configuration.httpCookieStorage = nil
-        return URLSession(configuration: configuration)
+        let config = URLSessionConfiguration.ephemeral
+        config.timeoutIntervalForRequest = 9
+        config.timeoutIntervalForResource = 600
+        config.httpShouldSetCookies = false
+        config.httpCookieStorage = nil
+        return URLSession(configuration: config)
     }()
 
-    func candidates(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
-        var candidates: [DownloadAudioCandidate] = []
-        var failure: Error?
-        if let account {
-            do { candidates += try await NavidromeClient(account: account).downloadCandidates(for: song) }
-            catch is CancellationError { throw CancellationError() }
-            catch { failure = error }
-        }
-        do {
-            let data = try await metadata(path: "cloudsearch/pc", parameters: [
-                .init(name: "s", value: DownloadSongMatch.searchTitle(song.title) + " " + song.artist.replacingOccurrences(of: " - Topic", with: "")),
-                .init(name: "type", value: "1"), .init(name: "limit", value: "12"), .init(name: "offset", value: "0")
-            ])
-            for recording in try DownloadSourceDecoders.search(data, for: song).prefix(3) {
-                for level in ["hires", "lossless", "exhigh", "standard"] {
-                    try Task.checkCancellation()
-                    let audio = try await metadata(path: "song/enhance/player/url/v1", parameters: [
-                        .init(name: "ids", value: "[\(recording.id)]"), .init(name: "level", value: level),
-                        .init(name: "encodeType", value: "flac")
-                    ])
-                    if let candidate = try DownloadSourceDecoders.audio(audio, recording: recording) {
-                        candidates.append(candidate); break
-                    }
-                }
-            }
-        } catch is CancellationError { throw CancellationError() }
-        catch { failure = error }
-        if candidates.isEmpty, let failure { throw failure }
-        return candidates.sorted(by: DownloadAudioCandidate.preferred)
+    func withDuration(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
+        guard song.duration == nil, YouTubeVideo.validID(song.videoID),
+              let details = try? await publicVideo(song.videoID) else { return song }
+        var updated = song; updated.duration = details.duration; return updated
     }
 
-    func download(_ candidate: DownloadAudioCandidate) async throws -> URL {
-        try Task.checkCancellation()
-        guard DownloadSongMatch.safeAudioURL(candidate.url.absoluteString) != nil else {
-            throw PlatformError.message("音源未提供安全的下載連結。")
+    func candidates(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
+        guard YouTubeVideo.validID(song.videoID) else { return [] }
+        async let netease = attempt { try await self.netease(song) }
+        async let qq = attempt { try await self.qq(song) }
+        async let personal = attempt {
+            guard let account else { return [] }
+            return try await NavidromeClient(account: account).downloadCandidates(for: song)
         }
-        let policy = AudioDownloadGuard(host: candidate.url.host ?? "")
-        let (temporary, response) = try await session.download(from: candidate.url, delegate: policy)
+        let batches = await [netease, qq, personal]
+        try Task.checkCancellation()
+        let candidates = batches.flatMap { (try? $0.get()) ?? [] }.sorted(by: DownloadAudioCandidate.preferred)
+        if candidates.isEmpty, let failure = batches.compactMap({ if case .failure(let error) = $0 { return error }; return nil }).first {
+            throw failure
+        }
+        return candidates
+    }
+
+    private func attempt(_ work: @Sendable () async throws -> [DownloadAudioCandidate]) async -> Result<[DownloadAudioCandidate], Error> {
+        do { return .success(try await work()) } catch { return .failure(error) }
+    }
+
+    private func query(_ song: SyncedYouTubeSong) -> String {
+        let metadata = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title, artist: song.artist, duration: song.duration ?? 0)
+        return String((metadata.title + " " + (DownloadSongMatch.artistNames(metadata.artist).first ?? "")).prefix(120))
+    }
+
+    private func netease(_ song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+        let data = try await metadata(URL(string: "https://music.163.com/api/cloudsearch/pc")!, provider: "netease",
+            form: [.init(name: "s", value: query(song)), .init(name: "type", value: "1"), .init(name: "limit", value: "12")])
+        var result: [DownloadAudioCandidate] = []
+        for recording in try DownloadSourceDecoders.search(data, for: song).prefix(2) {
+            async let high = attempt { try await self.neteaseAudio(recording, level: "hires") }
+            async let lossless = attempt { try await self.neteaseAudio(recording, level: "lossless") }
+            async let standard = attempt { try await self.neteaseAudio(recording, level: "exhigh") }
+            let replies = await [high, lossless, standard]
+            try Task.checkCancellation()
+            let found = replies.flatMap { (try? $0.get()) ?? [] }
+            if found.isEmpty, let error = replies.compactMap({ if case .failure(let error) = $0 { return error }; return nil }).first {
+                if result.isEmpty { throw error }
+            }
+            var seen = Set<URL>()
+            result += found.sorted(by: DownloadAudioCandidate.preferred).filter { seen.insert($0.url).inserted }
+        }
+        return result
+    }
+
+    private func neteaseAudio(_ recording: DownloadSourceDecoders.Song, level: String) async throws -> [DownloadAudioCandidate] {
+        let audio = try await metadata(URL(string: "https://music.163.com/api/song/enhance/player/url/v1")!, provider: "netease",
+            form: [.init(name: "ids", value: "[\(recording.id)]"), .init(name: "level", value: level), .init(name: "encodeType", value: "flac")])
+        return try DownloadSourceDecoders.audio(audio, recording: recording).map { [$0] } ?? []
+    }
+
+    private func qq(_ song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+        var search = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp")!
+        search.queryItems = [.init(name: "w", value: query(song)), .init(name: "format", value: "json"),
+                             .init(name: "p", value: "1"), .init(name: "n", value: "8")]
+        search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+        let data = try await metadata(search.url!, provider: "qq")
+        var results: [DownloadAudioCandidate] = []
+        for recording in try DownloadSourceDecoders.qqSearch(data, for: song).prefix(2) {
+            try Task.checkCancellation()
+            let names = DownloadSourceDecoders.qqFormats.map { $0.prefix + recording.mediaID + "." + $0.format }
+            let body: [String: Any] = ["comm": ["uin": 0, "format": "json", "ct": 24, "cv": 0],
+                "req_0": ["module": "vkey.GetVkeyServer", "method": "CgiGetVkey", "param": [
+                    "guid": String(UInt64.random(in: 1_000_000_000...9_999_999_999)), "songmid": names.map { _ in recording.mid },
+                    "songtype": names.map { _ in 0 }, "filename": names, "uin": "0", "loginflag": 1, "platform": "20"]]]
+            var endpoint = URLComponents(string: "https://u.y.qq.com/cgi-bin/musicu.fcg")!
+            endpoint.queryItems = [.init(name: "format", value: "json"),
+                .init(name: "data", value: String(decoding: try JSONSerialization.data(withJSONObject: body), as: UTF8.self))]
+            let response = try await metadata(endpoint.url!, provider: "qq")
+            results += try DownloadSourceDecoders.qqAudio(response, recording: recording)
+        }
+        return results
+    }
+
+    func youtube(_ song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+        #if canImport(YouTubeKit)
+        let details = try await publicVideo(song.videoID)
+        guard song.duration == nil || DownloadSongMatch.sameDuration(song.duration, details.duration) else {
+            throw PlatformError.message("YouTube 影片的長度與清單中的歌曲不符。")
+        }
+        let video = YouTube(videoID: song.videoID, useOAuth: false, allowOAuthCache: false, methods: [.local])
+        guard !(try await video.ageRestricted) else { throw PlatformError.message("YouTube 需要年齡驗證。") }
+        let streams = try await video.streams.filter { $0.includesAudioTrack && !$0.includesVideoTrack && $0.fileExtension == .m4a }
+        let streamCandidates = streams.filter { Self.publicMediaURL($0.url, provider: "youtube") }
+            .sorted { ($0.averageBitrate ?? $0.bitrate ?? 0) > ($1.averageBitrate ?? $1.bitrate ?? 0) }
+        guard let first = streamCandidates.first else { throw PlatformError.message("YouTube 未提供可用的完整音訊。") }
+        try await first.waitUntilAvailable()
+        try Task.checkCancellation()
+        let recording = YouTubeCaptionDecoders.metadata(id: song.videoID, title: details.title, artist: details.artist, duration: details.duration)
+        return streamCandidates.prefix(3).map { stream in
+            DownloadAudioCandidate(url: stream.url, title: recording.title, artist: recording.artist,
+                duration: details.duration, format: "m4a", bitrate: stream.averageBitrate ?? stream.bitrate ?? 0, source: "YouTube", recording: recording)
+        }
+        #else
+        throw PlatformError.message("目前建置未包含 YouTube 音訊來源。")
+        #endif
+    }
+
+    func translatedVideo(_ id: String) async throws -> URL {
+        #if canImport(YouTubeKit)
+        let details = try await publicVideo(id)
+        guard details.duration <= 600 else { throw SubtitleReadError("video-too-long") }
+        let video = YouTube(videoID: id, useOAuth: false, allowOAuthCache: false, methods: [.local])
+        guard !(try await video.ageRestricted) else { throw SubtitleReadError("verification-required") }
+        let candidates = try await video.streams.filter { $0.includesVideoTrack && $0.fileExtension == .mp4
+            && Self.publicMediaURL($0.url, provider: "youtube") }
+        // 720p retains readable CJK glyphs without fetching a full-resolution 4K video.
+        let preferred = candidates.filter { ($0.videoResolution ?? 0) <= 720 }
+            .sorted { ($0.videoResolution ?? 0) > ($1.videoResolution ?? 0) }
+        guard let stream = preferred.first else { throw SubtitleReadError("caption-read-failed") }
+        try await stream.waitUntilAvailable()
+        return try await download(DownloadAudioCandidate(url: stream.url, title: details.title, artist: details.artist,
+            duration: details.duration, format: "mp4", bitrate: stream.bitrate ?? 0, source: "YouTube"), limit: 120_000_000)
+        #else
+        throw SubtitleReadError("captions-unavailable")
+        #endif
+    }
+
+    func publicVideo(_ id: String) async throws -> (title: String, artist: String, duration: Double) {
+        guard YouTubeVideo.validID(id) else { throw SubtitleReadError("invalid-response") }
+        var url = URLComponents(string: "https://www.youtube.com/watch")!
+        url.queryItems = [.init(name: "v", value: id), .init(name: "hl", value: "zh-TW")]
+        let bytes = try await metadata(url.url!, provider: "youtube", maximum: 8_000_000)
+        guard let page = String(data: bytes, encoding: .utf8) else { throw SubtitleReadError("invalid-response") }
+        let root = try YouTubeCaptionDecoders.playerResponse(page, videoID: id)
+        guard (root["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK",
+              let item = root["videoDetails"] as? [String: Any],
+              item["isLiveContent"] as? Bool != true,
+              let title = item["title"] as? String, let artist = item["author"] as? String else {
+            throw SubtitleReadError("verification-required")
+        }
+        let duration = SubtitleSourceDecoders.number(item["lengthSeconds"])
+        guard duration > 0, duration <= 5400 else { throw SubtitleReadError("invalid-response") }
+        return (title, artist, duration)
+    }
+
+    func download(_ candidate: DownloadAudioCandidate, limit: Int = 500_000_000) async throws -> URL {
+        try Task.checkCancellation()
+        guard let parts = URLComponents(url: candidate.url, resolvingAgainstBaseURL: false),
+              DownloadSongMatch.safeAudioURL(candidate.url.absoluteString) != nil,
+              ["flac", "alac", "wav", "aiff", "aif", "mp3", "m4a", "aac", "mp4"].contains(candidate.format),
+              (candidate.expectedBytes ?? 0) <= limit else { throw PlatformError.message("音源連結或檔案格式無效。") }
+        let policy = AudioDownloadGuard(origin: candidate.url, limit: limit)
+        var request = URLRequest(url: candidate.url)
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        if candidate.source == "網易雲" { request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer") }
+        if candidate.source == "QQ 音樂" { request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer") }
+        let (temporary, response) = try await session.download(for: request, delegate: policy)
         do {
             try Task.checkCancellation()
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                  let final = response.url, final.scheme == "https", final.host == candidate.url.host,
-                  (try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) <= AudioDownloadGuard.limit else {
-                throw PlatformError.message("音源下載失敗，或檔案超過 500 MB。")
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+                  http.value(forHTTPHeaderField: "Content-Range") == nil,
+                  let final = response.url, final.scheme == "https", final.host == parts.host, final.port == parts.port else {
+                throw PlatformError.message("來源未傳回完整音檔，已略過。")
             }
-            // A media extension is needed by AVFoundation when the CDN's temporary file has none.
-            let destination = temporary.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + "." + candidate.format)
+            let size = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            let mime = response.mimeType?.lowercased() ?? ""
+            guard size >= 1024, size <= limit, !mime.hasPrefix("text/"), !mime.contains("json"), !mime.contains("xml"),
+                  response.expectedContentLength <= 0 || response.expectedContentLength == Int64(size),
+                  candidate.expectedBytes == nil || candidate.expectedBytes == size else {
+                throw PlatformError.message("下載內容不完整或不是有效音訊，已略過。")
+            }
+            let destination = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + "." + candidate.format)
             try FileManager.default.moveItem(at: temporary, to: destination)
             return destination
         } catch { try? FileManager.default.removeItem(at: temporary); throw error }
     }
 
-    private func metadata(path: String, parameters: [URLQueryItem]) async throws -> Data {
+    static func publicMediaURL(_ url: URL, provider: String) -> Bool {
+        guard let host = url.host?.lowercased(), DownloadSongMatch.safeAudioURL(url.absoluteString) != nil,
+              url.port == nil || url.port == 443 else { return false }
+        let domain = provider == "qq" ? "qqmusic.qq.com" : provider == "netease" ? "music.126.net" : "googlevideo.com"
+        return host == domain || host.hasSuffix("." + domain)
+    }
+
+    func portrait(_ url: URL) async -> Data? {
+        guard ["yt3.googleusercontent.com", "yt3.ggpht.com", "yt4.ggpht.com"].contains(url.host ?? ""),
+              DownloadSongMatch.safeAudioURL(url.absoluteString) != nil,
+              url.port == nil || url.port == 443 else { return nil }
+        return try? await metadata(url, provider: "portrait", maximum: 600_000)
+    }
+
+    private func metadata(_ url: URL, provider: String, form: [URLQueryItem]? = nil, maximum: Int = 2_000_000) async throws -> Data {
         try Task.checkCancellation()
-        guard Date() >= blockedUntil else { throw PlatformError.message("音源服務暫時限制請求，請稍後重新同步。") }
-        var form = URLComponents(); form.queryItems = parameters
-        var request = URLRequest(url: URL(string: "https://music.163.com/api/" + path)!)
-        request.httpMethod = "POST"
-        request.httpBody = Data((form.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
-        request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
-        request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer")
+        guard Date() >= (blockedUntil[provider] ?? .distantPast) else { throw SubtitleReadError("rate-limited") }
+        var request = URLRequest(url: url, timeoutInterval: 9)
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
-        let (bytes, response) = try await session.bytes(for: request, delegate: AudioDownloadGuard(host: "music.163.com"))
+        if provider == "netease" { request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer") }
+        if provider == "qq" { request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer") }
+        if let form {
+            var parts = URLComponents(); parts.queryItems = form
+            request.httpMethod = "POST"; request.httpBody = Data((parts.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        }
+        let (bytes, response) = try await session.bytes(for: request, delegate: AudioDownloadGuard(origin: url, limit: maximum))
         defer { bytes.task.cancel() }
-        if let http = response as? HTTPURLResponse,
-           let delay = AudioRetryPolicy.delay(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
-            blockedUntil = Date().addingTimeInterval(delay)
-            throw PlatformError.message("音源服務暫時限制請求，請稍後重新同步。")
+        guard let http = response as? HTTPURLResponse else { throw SubtitleReadError("network") }
+        if let delay = AudioRetryPolicy.delay(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
+            blockedUntil[provider] = Date().addingTimeInterval(delay)
+            throw SubtitleReadError("rate-limited")
         }
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              response.expectedContentLength <= 2_000_000 else {
-            throw PlatformError.message("音源服務暫時無法回應，請稍後重新同步。")
-        }
+        if http.statusCode == 403 || http.statusCode == 451 { throw SubtitleReadError("region-restricted") }
+        guard http.statusCode == 200, response.expectedContentLength <= Int64(maximum) else { throw SubtitleReadError("unavailable") }
         var data = Data()
         for try await byte in bytes {
-            guard data.count < 2_000_000 else { throw PlatformError.message("音源搜尋回應過大。") }
+            try Task.checkCancellation()
+            guard data.count < maximum else { throw SubtitleReadError("invalid-response") }
             data.append(byte)
         }
         return data
@@ -95,18 +237,18 @@ actor AudioDownloadService {
 }
 
 private final class AudioDownloadGuard: NSObject, URLSessionDownloadDelegate, Sendable {
-    static let limit = 500_000_000
-    let host: String
-    init(host: String) { self.host = host }
+    let origin: URL
+    let limit: Int
+    init(origin: URL, limit: Int) { self.origin = origin; self.limit = limit }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) { }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
-        if totalBytesWritten > Self.limit || totalBytesExpectedToWrite > Self.limit { downloadTask.cancel() }
+        if totalBytesWritten > Int64(limit) || totalBytesExpectedToWrite > Int64(limit) { downloadTask.cancel() }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        guard let url = request.url, url.scheme == "https", url.host == host,
-              url.user == nil, url.password == nil else { completionHandler(nil); return }
+        guard let url = request.url, url.scheme == "https", url.host == origin.host, url.port == origin.port,
+              url.user == nil, url.password == nil, url.fragment == nil else { completionHandler(nil); return }
         completionHandler(request)
     }
 }

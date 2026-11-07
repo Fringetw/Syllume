@@ -4,6 +4,7 @@ import Foundation
 struct YouTubePlaylistChoice: Codable, Equatable, Identifiable, Sendable {
     let id: String
     let title: String
+    var isLocal: Bool { id.hasPrefix("local-") }
     var collection: LibraryCollection { id == "liked" ? .liked : .playlist(id) }
     static let liked = YouTubePlaylistChoice(id: "liked", title: "喜歡的影片")
 }
@@ -14,9 +15,16 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
     let title: String
     let artist: String
     var duration: Double?
+    var channelID: String? = nil
+    var avatarURL: URL? = nil
+    var localTrackID: String? = nil
+    init(local track: Track) {
+        id = "file-" + UUID().uuidString; videoID = id; title = track.title
+        artist = track.artist ?? ""; duration = track.duration; localTrackID = track.id
+    }
     init?(_ entry: LibraryEntry) {
         guard let videoID = YouTubeVideo.identifier(from: entry.url.absoluteString) else { return nil }
-        id = entry.id; self.videoID = videoID; title = entry.title; artist = entry.subtitle; duration = entry.duration
+        id = entry.id; self.videoID = videoID; title = entry.title; artist = entry.subtitle; duration = entry.duration; channelID = entry.channelID
     }
 }
 
@@ -25,12 +33,38 @@ struct YouTubeAudioBinding: Codable, Equatable, Sendable {
     let quality: String
 }
 
+struct FoliaPlaylistEdits: Codable, Equatable {
+    var name: String?
+    var added: [SyncedYouTubeSong] = []
+    var removed: Set<String> = []
+    var order: [String] = []
+    func applying(to source: [SyncedYouTubeSong]) -> [SyncedYouTubeSong] {
+        var seen = Set<String>()
+        let rows = (source + added).filter { !removed.contains($0.id) && seen.insert($0.id).inserted }
+        let byID = Dictionary(uniqueKeysWithValues: rows.map { ($0.id, $0) })
+        var ordered = Set<String>()
+        return order.compactMap { id in ordered.insert(id).inserted ? byID[id] : nil }
+            + rows.filter { !ordered.contains($0.id) }
+    }
+}
+
+struct FoliaSavedPlaylist: Codable, Equatable {
+    let choice: YouTubePlaylistChoice
+    let songs: [SyncedYouTubeSong]
+    let lastSync: Date?
+}
+
 struct YouTubeSyncSnapshot: Codable, Equatable {
     var choice: YouTubePlaylistChoice?
     var songs: [SyncedYouTubeSong] = []
     var bindings: [String: YouTubeAudioBinding] = [:]
     var lastSync: Date?
     var attempts: [String: Date]? = nil
+    var edits: [String: FoliaPlaylistEdits]? = nil
+    var saved: [String: FoliaSavedPlaylist]? = nil
+    var currentEdits: FoliaPlaylistEdits { choice.flatMap { edits?[$0.id] } ?? FoliaPlaylistEdits() }
+    var playlistTitle: String { currentEdits.name ?? choice?.title ?? "Folia 播放清單" }
+    var playlistSongs: [SyncedYouTubeSong] { currentEdits.applying(to: songs) }
 }
 
 struct DownloadAudioCandidate: Sendable {
@@ -42,10 +76,19 @@ struct DownloadAudioCandidate: Sendable {
     let bitrate: Int
     let source: String
     var localTrackID: String? = nil
+    var recording: SubtitleSong? = nil
+    var streamingURL: URL? = nil
+    var expectedBytes: Int? = nil
+    var sampleRate: Double? = nil
+    var bits: Int? = nil
     var lossless: Bool { ["flac", "alac", "wav", "aiff", "aif"].contains(format.lowercased()) }
     var quality: String { source + " · " + format.uppercased() + (lossless ? " 無損" : source == "本機音檔" ? "" : bitrate > 0 ? " \(bitrate / 1000) kbps" : " 原始音質") }
     static func preferred(_ lhs: Self, _ rhs: Self) -> Bool {
         if lhs.lossless != rhs.lossless { return lhs.lossless }
+        if lhs.lossless {
+            if lhs.bits != rhs.bits { return (lhs.bits ?? 0) > (rhs.bits ?? 0) }
+            if lhs.sampleRate != rhs.sampleRate { return (lhs.sampleRate ?? 0) > (rhs.sampleRate ?? 0) }
+        }
         return lhs.bitrate > rhs.bitrate
     }
 }
@@ -59,41 +102,83 @@ enum DownloadSongMatch {
         }.map { $0.element }
     }
     static func searchTitle(_ title: String) -> String {
-        var title = title
-        for text in ["official music video", "official video", "official audio", "music video", "lyric video", "lyrics video", "official mv", "official", "完整版", "中文字幕", "繁體中文", "中字"] {
-            title = title.replacingOccurrences(of: text, with: "", options: .caseInsensitive)
+        let brackets = #"(?i)[【\[(（]([^】\])）]*)[】\])）]"#
+        var clean = title
+        if let regex = try? NSRegularExpression(pattern: brackets) {
+            for match in regex.matches(in: title, range: NSRange(title.startIndex..., in: title)).reversed() {
+                guard let all = Range(match.range, in: clean), let inside = Range(match.range(at: 1), in: clean) else { continue }
+                let label = String(clean[inside])
+                if versions(label).isEmpty && (label.range(of: #"(?i)中文字幕|中[日英韓]?字幕|繁[中體]|中字|歌詞翻譯|歌词翻译|official|music video|^\s*mv\s*$|4k"#, options: .regularExpression) != nil) {
+                    clean.replaceSubrange(all, with: " ")
+                }
+            }
         }
-        return title.components(separatedBy: CharacterSet(charactersIn: "()（）[]【】")).joined(separator: " ")
-            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        clean = clean.replacingOccurrences(of: #"(?i)\s+(?:official(?: music)? (?:video|audio)|lyrics? (?:music )?video|music video|official mv|mv|lyrics|中字|中文字幕)\s*$"#,
+            with: "", options: .regularExpression)
+        return clean.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
     static func normalized(_ text: String) -> String {
         let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-        return folded.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
+        let traditional = folded.applyingTransform(StringTransform(rawValue: "Hans-Hant"), reverse: false) ?? folded
+        return traditional.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
     }
-
+    static func versions(_ title: String) -> Set<Int> {
+        let rules = [#"\blive\b|現場|现场|ライブ|ライヴ"#, #"\bremix\b|混音|リミックス"#,
+            #"\bcover\b|翻唱"#, #"\bacoustic\b|不插[電电]|アコースティック"#,
+            #"\b(?:instrumental|karaoke|off[ -]?vocal)\b|伴奏|カラオケ"#,
+            #"\b(?:sped[ -]?up|nightcore|slowed)\b|加速|降速"#,
+            #"\b(?:tv size|short ver|radio edit|medley)\b|短版|串[燒烧]"#]
+        return Set(rules.indices.filter { title.range(of: rules[$0], options: [.regularExpression, .caseInsensitive]) != nil })
+    }
     static func sameDuration(_ a: Double?, _ b: Double?) -> Bool {
         guard let a, let b, a.isFinite, b.isFinite, a > 0, b > 0 else { return false }
-        return abs(a - b) <= max(5, min(a, b) * 0.025)
+        return abs(a - b) <= min(8, max(2, min(a, b) * 0.02))
     }
-
-    // Require title, artist and version evidence before automatically downloading another platform's recording.
-    static func matches(_ song: SyncedYouTubeSong, title: String, artists: [String], duration: Double?) -> Bool {
-        guard sameDuration(song.duration, duration) else { return false }
-        let versions = ["live", "remix", "cover", "acoustic", "instrumental", "karaoke", "nightcore", "sped up", "slowed", "medley", "翻唱", "現場", "伴奏", "合唱", "串燒"]
-        let targetText = song.title.lowercased(), candidateText = title.lowercased()
-        for version in versions {
-            if targetText.contains(version) != candidateText.contains(version) { return false }
+    static func artistNames(_ text: String) -> [String] {
+        let clean = text.replacingOccurrences(of: #"(?i)\s*[-–—]\s*Topic\s*$"#, with: "", options: .regularExpression)
+        return clean.components(separatedBy: CharacterSet(charactersIn: "/／、,，&＆;；×"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+    }
+    static func artistKeys(_ text: String) -> Set<String> {
+        var keys = Set<String>()
+        for name in artistNames(text) {
+            let bare = name.replacingOccurrences(of: #"[（(][\p{Hiragana}\p{Katakana}ー\s]+[）)]$"#, with: "", options: .regularExpression)
+            let full = normalized(bare)
+            if !full.isEmpty { keys.insert(full) }
+            if bare.range(of: #"\p{Latin}"#, options: .regularExpression) != nil,
+               bare.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}]"#, options: .regularExpression) != nil {
+                for pattern in [#"[^\p{Han}\p{Hiragana}\p{Katakana}ー・]"#, #"[^\p{Latin}]"#] {
+                    let alias = normalized(bare.replacingOccurrences(of: pattern, with: "", options: .regularExpression))
+                    if alias.count >= 2 { keys.insert(alias) }
+                }
+            }
         }
-        let target = normalized(song.title + " " + song.artist)
-        let knownArtists = artists.map(normalized).filter { !$0.isEmpty }
-        guard knownArtists.contains(where: { target.contains($0) }) else { return false }
-        var cleaned = searchTitle(song.title)
-        for artist in artists { cleaned = cleaned.replacingOccurrences(of: artist, with: "", options: .caseInsensitive) }
-        let key = normalized(title)
-        guard !key.isEmpty else { return false }
-        if normalized(cleaned) == key { return true }
-        return cleaned.components(separatedBy: CharacterSet(charactersIn: "/／|｜「」『』\"“”"))
-            .contains { normalized($0) == key }
+        return keys
+    }
+    static func matches(_ song: SyncedYouTubeSong, title: String, artists: [String], duration: Double?) -> Bool {
+        guard let expected = song.duration, let duration, expected.isFinite, duration.isFinite,
+              expected > 0, duration > 0, duration <= 5400, versions(song.title) == versions(title) else { return false }
+        let metadata = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title, artist: song.artist, duration: expected)
+        let videoPresentation = song.title.range(of: #"(?i)music video|official mv|\bmv\b|【AMV|「[^」]+」"#, options: .regularExpression) != nil
+        // Music-video intros are allowed only with strong title/performer evidence. Actual downloaded
+        // audio must separately match the chosen provider recording's duration and decode completely.
+        guard sameDuration(expected, duration) || (videoPresentation && duration <= expected + 3 && expected - duration <= 18) else { return false }
+        let keys = artists.reduce(into: Set<String>()) { $0.formUnion(artistKeys($1)) }
+        let performers = artistNames(metadata.artist)
+        let requested = artistKeys(metadata.artist).union(artistKeys(song.artist))
+        guard !keys.isDisjoint(with: requested) else { return false }
+        if performers.count > 1 {
+            guard performers.allSatisfy({ !keys.isDisjoint(with: artistKeys($0)) }) else { return false }
+        }
+        let candidate = normalized(searchTitle(title))
+        guard !candidate.isEmpty else { return false }
+        var forms = [metadata.title, searchTitle(song.title)]
+        for name in artists {
+            forms.append(searchTitle(song.title).replacingOccurrences(of: name, with: "", options: .caseInsensitive))
+        }
+        let split = CharacterSet(charactersIn: "/／|｜「」『』\"“”()（）")
+        return forms.flatMap { [$0] + (versions($0).isEmpty ? $0.components(separatedBy: split) : []) }
+            .contains { normalized(searchTitle($0)) == candidate }
     }
 
     static func safeAudioURL(_ value: String) -> URL? {

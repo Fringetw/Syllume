@@ -43,7 +43,7 @@ final class LocalLibrary {
             let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             var candidate = DownloadAudioCandidate(url: url, title: track.title, artist: track.artist ?? "", duration: track.duration ?? 0,
                 format: url.pathExtension.lowercased(), bitrate: Int(min(100_000_000, Double(bytes) * 8 / max(1, track.duration ?? 1))), source: "本機音檔")
-            candidate.localTrackID = track.id
+            candidate.localTrackID = track.id; candidate.recording = track.recording
             return candidate
         }
     }
@@ -94,7 +94,8 @@ final class LocalLibrary {
 
     private func importAudio(_ url: URL, sidecars: [URL], download: DownloadAudioCandidate? = nil) async throws -> (Track, String?) {
         let id = (download == nil ? "" : "download-") + UUID().uuidString
-        let folder = folder(for: id)
+        let finalFolder = folder(for: id)
+        let folder = download == nil ? finalFolder : storage.appending(path: ".download-" + UUID().uuidString, directoryHint: .isDirectory)
         let name = "audio." + url.pathExtension.lowercased()
         let destination = folder.appending(path: name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -113,12 +114,10 @@ final class LocalLibrary {
             let artist = await Self.metadataString(.commonIdentifierArtist, in: metadata)
             let album = await Self.metadataString(.commonIdentifierAlbumName, in: metadata)
             let seconds = (try? await asset.load(.duration))?.seconds
-            if let download, !DownloadSongMatch.sameDuration(seconds, download.duration) {
-                throw PlatformError.message("音檔長度與歌曲不符，已略過試聽或不完整檔案。")
-            }
+            if let download { _ = try await AudioIntegrity.inspect(destination, expected: download.duration, decode: true) }
             var track = Track(id: id, source: .local, title: download?.title ?? title ?? url.deletingPathExtension().lastPathComponent,
                               artist: download?.artist ?? artist, album: album, duration: seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil },
-                              audioFile: name)
+                              audioFile: name, recording: download?.recording, integrityChecked: download != nil ? true : nil)
             if let artwork = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = try? await artwork.load(.dataValue), data.count <= 8_000_000 {
                 try data.write(to: folder.appending(path: "cover"), options: .atomic)
@@ -140,10 +139,12 @@ final class LocalLibrary {
                 track.lyricFile = name
             }
             try Task.checkCancellation()
+            if download != nil { try FileManager.default.moveItem(at: folder, to: finalFolder) }
             try save(tracks + [track])
             return (track, invalidSidecar)
         } catch {
             try? FileManager.default.removeItem(at: folder)
+            if download != nil { try? FileManager.default.removeItem(at: finalFolder) }
             throw error
         }
     }

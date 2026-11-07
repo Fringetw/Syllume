@@ -48,6 +48,11 @@ final class FoliaUITests: XCTestCase {
         app.buttons["builtInTraditionalLyrics"].tap()
         XCTAssertTrue(app.switches["subtitleActive"].waitForExistence(timeout: 5))
         capture(app, name: "Built-in-module-entry")
+        let report = app.staticTexts["subtitleReport"]
+        for _ in 0..<10 { if report.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(report.isHittable)
+        XCTAssertTrue(report.label.contains("顯示"))
+        XCTAssertFalse(report.label.contains("完整結構化紀錄"))
     }
 
     func testSubtitleSourceSettingsPersist() {
@@ -112,6 +117,7 @@ final class FoliaUITests: XCTestCase {
         XCTAssertTrue(lumiere.waitForExistence(timeout: 20))
         let lumiereReady = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: lumiere)
         XCTAssertEqual(XCTWaiter.wait(for: [lumiereReady], timeout: 120), .completed, "Lumiere: \(String(describing: lumiere.value))")
+        XCTAssertGreaterThan(lumiere.frame.height, app.frame.height * 0.8)
         capture(app, name: "Lumiere-paused")
         toggle.tap(); wait(2); capture(app, name: "Lumiere-playing"); toggle.tap()
         app.buttons["尋找歌詞"].tap()
@@ -160,8 +166,7 @@ final class FoliaUITests: XCTestCase {
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let audio = app.buttons["youtubeSong-fixture-row"]
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
-        let ready = expectation(for: NSPredicate(format: "value CONTAINS %@", "Debug 本機夾具"), evaluatedWith: audio)
-        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
+        XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
         audio.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
@@ -180,6 +185,17 @@ final class FoliaUITests: XCTestCase {
         let resumed = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > stopped + 0.25 }, evaluatedWith: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 15), .completed)
         toggle.tap(); capture(app, name: "YouTube-audio-without-video")
+        app.buttons["關閉播放畫面"].tap()
+        audio.press(forDuration: 1)
+        let download = app.buttons["下載音樂"].firstMatch
+        XCTAssertTrue(download.waitForExistence(timeout: 10))
+        download.tap()
+        let confirm = app.sheets.buttons["下載音樂"].firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+        XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
+        confirm.tap()
+        let saved = expectation(for: NSPredicate(format: "value CONTAINS %@", "示範音軌"), evaluatedWith: audio)
+        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 20), .completed)
     }
 
     func testPlatformSetup() {

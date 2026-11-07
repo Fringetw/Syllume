@@ -118,7 +118,10 @@ struct NavidromeClient: Sendable {
                   let format = recording.suffix?.lowercased(), ["flac", "alac", "wav", "aiff", "aif", "mp3", "m4a", "aac"].contains(format) else { return nil }
             return DownloadAudioCandidate(url: try account.endpoint("download", parameters: [.init(name: "id", value: recording.id)]),
                 title: recording.title, artist: recording.artist ?? "", duration: recording.duration ?? 0,
-                format: format, bitrate: (recording.bitRate ?? 0) * 1000, source: "Navidrome")
+                format: format, bitrate: (recording.bitRate ?? 0) * 1000, source: "Navidrome",
+                recording: SubtitleSong(id: recording.id, source: "navidrome", title: recording.title,
+                    artist: recording.artist ?? "", durationMs: (recording.duration ?? 0) * 1000),
+                streamingURL: try account.endpoint("stream", parameters: [.init(name: "id", value: recording.id), .init(name: "format", value: "raw")]))
         }
     }
 
