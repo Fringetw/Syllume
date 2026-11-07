@@ -55,7 +55,7 @@ jobs:
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
           -configuration Debug -destination 'generic/platform=iOS Simulator'
-          -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" CODE_SIGNING_ALLOWED=NO build
+          -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
       - name: Compile unsigned iPhone app
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
@@ -87,8 +87,9 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/FoliaPlaylistUI.xcresult" \
             -only-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
             -only-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
-            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Exercise remaining playback and platform setup on iPhone Simulator
+        if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
         timeout-minutes: 26
         run: |
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
@@ -97,7 +98,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/FoliaUI.xcresult" \
             -skip-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
             -skip-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
-            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator screenshots
         if: always()
         run: |

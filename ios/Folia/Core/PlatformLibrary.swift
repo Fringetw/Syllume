@@ -80,6 +80,7 @@ struct LibraryEntry: Identifiable, Equatable {
     let subtitle: String
     let url: URL
     var duration: Double? = nil
+    var channelID: String? = nil
 }
 
 struct LibraryPage {
@@ -157,7 +158,8 @@ enum PlatformLibrary {
             let path = collection == .playlists ? "playlist?list=\(id)" : "watch?v=\(id)"
             let rowID = collection == .playlists || collection == .liked ? id : item.id ?? id
             return LibraryEntry(id: rowID, title: title, subtitle: snippet.videoOwnerChannelTitle ?? snippet.channelTitle ?? "",
-                                url: URL(string: "https://music.youtube.com/" + path)!, duration: isoDuration(item.contentDetails?.duration))
+                                url: URL(string: "https://music.youtube.com/" + path)!, duration: isoDuration(item.contentDetails?.duration),
+                                channelID: snippet.videoOwnerChannelId ?? (collection == .liked ? snippet.channelId : nil))
         }
         return LibraryPage(entries: entries, next: page.nextPageToken)
     }
@@ -205,6 +207,8 @@ enum PlatformLibrary {
             let title: String?
             let channelTitle: String?
             let videoOwnerChannelTitle: String?
+            let channelId: String?
+            let videoOwnerChannelId: String?
             let resourceId: Resource?
         }
         struct Resource: Decodable { let videoId: String? }

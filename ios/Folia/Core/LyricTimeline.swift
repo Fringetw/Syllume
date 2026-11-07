@@ -147,6 +147,24 @@ struct LyricTimeline: Sendable {
         }
     }
 
+    /// Keep usable lines when a provider adds a bad tail timestamp, zero-length line, or invalid words.
+    func prepared(for duration: Double) -> LyricTimeline {
+        let end = duration.isFinite && duration > 0 ? min(duration, 5400) : 5400
+        let rows = lines.filter { !$0.fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && $0.startTime >= -1 && $0.startTime < end }
+        return LyricTimeline(lines: rows.enumerated().compactMap { index, row in
+            let start = max(0, row.startTime)
+            let next = index + 1 < rows.count ? rows[index + 1].startTime : min(end, start + 8)
+            let stop = min(end, row.endTime > start ? row.endTime : max(start + 0.2, next))
+            guard stop > start else { return nil }
+            var words = row.words.filter { $0.startTime.isFinite && $0.endTime.isFinite
+                && $0.endTime > $0.startTime && $0.startTime >= start - 0.25 && $0.endTime <= stop + 0.25 }
+            if words.count != row.words.count { words = [] }
+            return LyricLine(startTime: start, endTime: stop, fullText: row.fullText, translation: row.translation,
+                romanization: row.romanization, words: words, extra: row.extra)
+        })
+    }
+
     func activeIndex(at time: Double) -> Int? {
         var low = 0
         var high = lines.count

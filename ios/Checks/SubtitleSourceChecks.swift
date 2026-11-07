@@ -15,6 +15,19 @@ enum SubtitleSourceChecks {
         precondition(queryParts.host == "www.youtube.com" && queryParts.path == "/results")
         precondition(queryParts.queryItems?.first { $0.name == "sp" }?.value == "EgIoAQ%3D%3D")
         precondition(queryParts.queryItems?.first { $0.name == "search_query" }?.value == "A+B & 雨 中文字幕")
+        let broad = URLComponents(url: YouTubeCaptionDecoders.searchURL("JANE DOE 米津玄師", requireCaptions: false), resolvingAgainstBaseURL: false)!
+        precondition(!broad.queryItems!.contains { $0.name == "sp" })
+        let jane = "【AMV 繁中/日歌詞】鏈鋸人:蕾潔篇ED「JANE DOE」- 米津玄師Kenshi Yonezu&宇多田ヒカルHikaru Utada lyrics Music Video"
+        precondition(YouTubeCaptionDecoders.isTranslatedUpload(jane))
+        let translated = YouTubeCaptionDecoders.metadata(id: "t8HwSSH5Hes", title: jane, artist: "Mark Chong", duration: 236)
+        precondition(translated.title == "JANE DOE" && translated.artist == "米津玄師 / 宇多田ヒカル")
+        let timed = (0..<8).map { i in LyricLine(startTime: Double(i) * 2, endTime: Double(i) * 2 + 1.8, fullText: "Line \(i)") }
+        let shifted = timed.map { LyricLine(startTime: $0.startTime + 0.55, endTime: $0.endTime + 0.55, fullText: "中文譯文") }
+        let paired = SubtitleSourceDecoders.attach(timed, translations: shifted)
+        precondition(paired.allSatisfy { $0.translation == "中文譯文" })
+        let broken = LyricLine(startTime: 100, endTime: 105, fullText: "Bad tail")
+        let kept = LyricTimeline(lines: paired + [broken]).prepared(for: 16)
+        precondition(kept.lines.count == 8 && kept.lines.last?.translation == "中文譯文")
         let safeReply = SubtitleSourceDecoders.replySummary(Data(#"{"code":200,"result":null,"token":"MUST_NOT_LEAK","lrc":{"lyric":"PRIVATE_LYRIC"}}"#.utf8))
         precondition(safeReply.contains("result=null") && safeReply.contains("code=200") && !safeReply.contains("MUST_NOT_LEAK") && !safeReply.contains("PRIVATE_LYRIC"))
         let netease = try SubtitleSourceDecoders.neteaseSearch(Data(#"{"code":200,"result":{"songs":[{"id":42,"name":"Test","ar":[{"name":"Artist"}],"dt":60000}]}}"#.utf8))

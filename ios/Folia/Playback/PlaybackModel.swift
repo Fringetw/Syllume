@@ -19,6 +19,20 @@ final class PlaybackModel {
     private(set) var lyricsLoading = false
     private(set) var error: String?
     private(set) var repeatQueue = false
+    private(set) var lyricClockRunning = false
+    private(set) var lyricOffset = 0.0
+    private(set) var audioSource: String?
+    private(set) var activeLocalTrackID: String?
+    var lyricPosition: Double { max(0, position + lyricOffset) }
+    var subtitleInput: SubtitleInput? {
+        guard let track = current else { return nil }
+        let recording = activeRecording ?? track.recording
+        return SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue,
+            title: recording?.title ?? track.title, artist: recording?.artist ?? track.artist ?? "",
+            durationMs: (duration * 10).rounded() * 100, ref: recording?.ref,
+            originVideoID: track.playlistSong.flatMap { YouTubeVideo.validID($0.videoID) ? $0.videoID : nil } ?? recording?.originVideoID),
+            revision: timelineRevision, loading: lyricsLoading)
+    }
 
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
     var canAdvance: Bool { index.map { $0 + 1 < queue.count || repeatQueue } ?? false }
@@ -40,6 +54,16 @@ final class PlaybackModel {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var seekGeneration = UUID()
     @ObservationIgnored private var seeking = false
+    @ObservationIgnored private var resolveTask: Task<Void, Never>?
+    @ObservationIgnored private var streamTimeout: Task<Void, Never>?
+    @ObservationIgnored private var resolveTicket = UUID()
+    private var activeRecording: SubtitleSong?
+    @ObservationIgnored private var account: NavidromeAccount?
+    @ObservationIgnored private var candidates: [DownloadAudioCandidate] = []
+    @ObservationIgnored private var searchedCatalogue = false
+    @ObservationIgnored private var searchedYouTube = false
+    @ObservationIgnored private var triedLocal = false
+    @ObservationIgnored private var sourceFailures: [String] = []
     @ObservationIgnored private var resumeAfterInterruption = false
 
     init(library: LocalLibrary) {
@@ -56,11 +80,50 @@ final class PlaybackModel {
         load(index)
     }
 
+    func playPlaylist(_ songs: [SyncedYouTubeSong], from song: SyncedYouTubeSong,
+                      bindings: [String: YouTubeAudioBinding], account: NavidromeAccount?) {
+        let tracks = songs.map { Self.playlistTrack($0, bindings: bindings) }
+        guard let track = tracks.first(where: { $0.id == song.id }) else { return }
+        self.account = account
+        play(tracks, from: track)
+    }
+
+    func playNext(_ song: SyncedYouTubeSong, bindings: [String: YouTubeAudioBinding], account: NavidromeAccount?) {
+        if let index {
+            self.account = account
+            var track = Self.playlistTrack(song, bindings: bindings)
+            if queue.contains(where: { $0.id == track.id }) {
+                track = Track(id: UUID().uuidString, source: .catalogue, title: track.title, artist: track.artist,
+                    album: nil, duration: track.duration, playlistSong: song, preferredLocalID: track.preferredLocalID)
+            }
+            queue.insert(track, at: index + 1)
+            system?.updateCommands(model: self)
+        } else { playPlaylist([song], from: song, bindings: bindings, account: account) }
+    }
+
+    private static func playlistTrack(_ song: SyncedYouTubeSong, bindings: [String: YouTubeAudioBinding]) -> Track {
+        Track(id: song.id, source: .catalogue, title: song.title, artist: song.artist, album: nil,
+            duration: song.duration, playlistSong: song, preferredLocalID: bindings[song.videoID]?.trackID ?? song.localTrackID)
+    }
+
+    func adjustLyrics(by amount: Double) {
+        guard let track = current, amount.isFinite else { return }
+        lyricOffset = min(15, max(-15, ((lyricOffset + amount) * 10).rounded() / 10))
+        UserDefaults.standard.set(lyricOffset, forKey: offsetKey(track))
+    }
+
+    private func offsetKey(_ track: Track) -> String {
+        "folia.lyricOffset." + (track.playlistSong?.videoID ?? (track.source.rawValue + "." + track.id))
+    }
+
     func toggle() { isPlaying ? pause() : resume() }
 
     func resume() {
         guard !externalPlayback else { return }
-        if let index, error != nil, player.currentItem?.status == .failed || player.currentItem == nil {
+        if let track = current, track.source == .catalogue, error == nil,
+           player.currentItem == nil || player.currentItem?.status == .failed {
+            resolveCatalogue(track)
+        } else if let index, (error != nil || player.currentItem == nil), resolveTask == nil {
             load(index)
         } else {
             startCurrentItem()
@@ -88,13 +151,18 @@ final class PlaybackModel {
         resumeAfterInterruption = false
         player.pause()
         isPlaying = false
+        streamTimeout?.cancel(); streamTimeout = nil
+        if resolveTask != nil {
+            resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
+            lyricsLoading = false
+        }
         refreshTransport()
     }
 
     func useLyrics(_ record: LyricSearchRecord) {
         guard current != nil, let text = record.syncedLyrics else { return }
         lyricsTask?.cancel(); lyricsLoading = false
-        timeline = LyricTimeline(lrc: text)
+        timeline = LyricTimeline(lrc: text).prepared(for: duration)
     }
 
     func pauseForExternalPlayback() {
@@ -126,12 +194,15 @@ final class PlaybackModel {
         system?.updateCommands(model: self)
     }
 
+    func seekToLyric(_ time: Double) { seek(to: time - lyricOffset) }
+
     func seek(to time: Double) {
         guard let item = player.currentItem, time.isFinite else { return }
         let target = duration > 0 ? min(duration, max(0, time)) : max(0, time)
         let revision = UUID()
         seekGeneration = revision
         seeking = true
+        lyricClockRunning = false
         position = target
         let precise = CMTime(seconds: target, preferredTimescale: 600)
         item.seek(to: precise, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
@@ -140,7 +211,7 @@ final class PlaybackModel {
                 seeking = false
                 let actual = player.currentTime().seconds
                 if actual.isFinite { position = max(0, actual) }
-                publishNowPlaying()
+                refreshTransport()
             }
         }
         publishNowPlaying()
@@ -158,26 +229,43 @@ final class PlaybackModel {
     }
 
     func clearNavidrome() {
-        if current?.source == .navidrome { clear() }
+        account = nil
+        if current?.source == .navidrome || audioSource?.hasPrefix("Navidrome") == true { clear() }
     }
 
     func reloadLocalLyrics(_ track: Track) {
-        guard let position = queue.firstIndex(where: { $0.source == .local && $0.id == track.id }) else { return }
-        queue[position] = track
-        guard position == index else { return }
+        guard let index, current?.id == track.id || activeLocalTrackID == track.id else { return }
+        if current?.source == .local { queue[index] = track }
+        loadLyrics(track: track, recording: track.recording ?? activeRecording)
+    }
+
+    private func loadLyrics(track: Track, recording: SubtitleSong?, remoteClient: NavidromeClient? = nil) {
         lyricsTask?.cancel()
-        timeline = LyricTimeline(lines: [])
-        lyricsLoading = track.lyricFile != nil || track.id.hasPrefix("download-")
-        guard lyricsLoading else { return }
         let revision = generation
+        let needsLookup = track.source == .catalogue || track.id.hasPrefix("download-") || activeLocalTrackID != nil
+        lyricsLoading = track.lyricFile != nil || recording != nil || remoteClient != nil || needsLookup
+        guard lyricsLoading else { return }
         lyricsTask = Task { [weak self, library] in
             var parsed = try? await library.lyrics(for: track)
-            if parsed == nil, track.id.hasPrefix("download-"), !Task.isCancelled {
-                let result = try? await OnlineLyrics.shared.exact(title: track.title, artist: track.artist ?? "", duration: track.duration ?? 0)
+            if parsed == nil, let remoteClient, let recording, recording.source == "navidrome" {
+                let remote = Track(id: recording.id, source: .navidrome, title: recording.title,
+                    artist: recording.artist, album: nil, duration: recording.durationMs / 1000)
+                parsed = await remoteClient.lyrics(for: remote)
+            } else if parsed == nil, let recording, ["netease", "qq"].contains(recording.source) {
+                if let lines = try? await SubtitleNetwork.shared.lyrics(SubtitleRecord(song: recording),
+                    netease: "", original: [], current: recording), !lines.isEmpty {
+                    parsed = LyricTimeline(lines: lines)
+                }
+            }
+            if parsed == nil, needsLookup, !Task.isCancelled {
+                let artist = recording?.artist ?? track.artist ?? ""
+                let title = recording?.title ?? track.title
+                let duration = recording.map { $0.durationMs / 1000 } ?? track.duration ?? 0
+                let result = try? await OnlineLyrics.shared.exact(title: title, artist: artist, duration: duration)
                 if let text = result?.syncedLyrics { parsed = LyricTimeline(lrc: text) }
             }
             guard let self, generation == revision, !Task.isCancelled else { return }
-            timeline = parsed ?? LyricTimeline(lines: [])
+            if let next = parsed?.prepared(for: duration), !next.lines.isEmpty { timeline = next }
             lyricsLoading = false
         }
     }
@@ -204,6 +292,14 @@ final class PlaybackModel {
 
     func playbackFailed(item: AVPlayerItem) {
         guard player.currentItem === item else { return }
+        if let track = current, track.source == .catalogue {
+            sourceFailures.append((audioSource ?? "音源") + "無法持續播放")
+            streamTimeout?.cancel(); streamTimeout = nil
+            player.replaceCurrentItem(with: nil)
+            lyricClockRunning = false
+            if isPlaying { resolveCatalogue(track) }
+            return
+        }
         fail(current?.source == .navidrome
              ? "無法串流這首歌。請檢查連線、音訊格式或伺服器轉碼設定。"
              : "無法播放這個音訊檔。")
@@ -227,12 +323,37 @@ final class PlaybackModel {
         let queued = queue[index]
         let track = queued.source == .local ? (library.tracks.first { $0.id == queued.id } ?? queued) : queued
         duration = track.duration ?? 0
+        lyricOffset = min(15, max(-15, UserDefaults.standard.double(forKey: offsetKey(track))))
         error = nil
         let url: URL?
         switch track.source {
+        case .catalogue:
+            resolveCatalogue(track)
+            system?.updateCommands(model: self)
+            return
         case .local:
             url = library.assetURL(for: track)
+            activeLocalTrackID = track.id
+            activeRecording = track.recording
             artwork = library.artwork(for: track).flatMap { UIImage(data: $0) }
+            if track.id.hasPrefix("download-"), track.integrityChecked != true, let url, let expected = track.duration {
+                let revision = generation
+                isPlaying = true; isBuffering = true
+                resolveTask = Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        _ = try await AudioIntegrity.inspect(url, expected: expected, decode: true)
+                        guard generation == revision, !Task.isCancelled else { return }
+                        resolveTask = nil
+                        reloadLocalLyrics(track); install(url)
+                    } catch {
+                        guard generation == revision, !Task.isCancelled else { return }
+                        resolveTask = nil
+                        fail("這份舊下載無法完整解碼。請從播放清單重新下載。")
+                    }
+                }
+                return
+            }
             reloadLocalLyrics(track)
         case .demo:
             url = Bundle.main.url(forResource: "tide", withExtension: "m4a")
@@ -249,6 +370,11 @@ final class PlaybackModel {
             fail("找不到這首歌的音訊來源。")
             return
         }
+        install(url)
+    }
+
+    private func install(_ url: URL) {
+        statusObservation?.invalidate()
         let item = AVPlayerItem(url: url)
         player.replaceCurrentItem(with: item)
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] observed, _ in
@@ -262,13 +388,123 @@ final class PlaybackModel {
         system?.updateCommands(model: self)
     }
 
+    private func resolveCatalogue(_ track: Track) {
+        guard resolveTask == nil, let song = track.playlistSong else { return }
+        let ticket = UUID(), revision = generation
+        resolveTicket = ticket
+        isPlaying = true; isBuffering = true; lyricClockRunning = false; lyricsLoading = true
+        lyricsTask?.cancel()
+        resolveTask = Task { [weak self] in
+            guard let self else { return }
+            @MainActor func check() throws {
+                try Task.checkCancellation()
+                guard resolveTicket == ticket, generation == revision, !externalPlayback else { throw CancellationError() }
+            }
+            defer { if resolveTicket == ticket { resolveTask = nil } }
+            let service = AudioDownloadService.shared
+            do {
+                try check()
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture"),
+                   let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
+                    if let file = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
+                       let text = try? String(contentsOf: file, encoding: .utf8) { timeline = LyricTimeline(lrc: text) }
+                    audioSource = "示範串流"; lyricsLoading = false
+                    install(url); return
+                }
+                #endif
+                if !triedLocal {
+                    var locals = library.matchingAudio(for: song).sorted(by: DownloadAudioCandidate.preferred)
+                    if let id = track.preferredLocalID, let local = library.availableTrack(id),
+                       let url = library.assetURL(for: local), let length = local.duration {
+                        locals.removeAll { $0.localTrackID == id }
+                        locals.insert(DownloadAudioCandidate(url: url, title: local.title, artist: local.artist ?? "",
+                            duration: length, format: url.pathExtension, bitrate: 0, source: "本機音檔", localTrackID: id,
+                            recording: local.recording), at: 0)
+                    }
+                    candidates += locals
+                    triedLocal = true
+                }
+                var target = song
+                while true {
+                    try check()
+                    if let candidate = candidates.first {
+                        let local = candidate.localTrackID.flatMap(library.availableTrack)
+                        let url = candidate.streamingURL ?? candidate.url
+                        do {
+                            let length = try await AudioIntegrity.inspect(url, expected: candidate.duration,
+                                decode: local?.id.hasPrefix("download-") == true && local?.integrityChecked != true)
+                            try check()
+                            candidates.removeFirst()
+                            duration = length; position = 0; timeline = LyricTimeline(lines: [])
+                            activeRecording = candidate.recording ?? SubtitleSong(id: track.id, source: "catalogue",
+                                title: candidate.title, artist: candidate.artist, durationMs: length * 1000)
+                            activeLocalTrackID = local?.id
+                            audioSource = candidate.quality
+                            loadPlaylistArtwork(song, local: local)
+                            loadLyrics(track: local ?? track, recording: activeRecording,
+                                remoteClient: account.map { NavidromeClient(account: $0) })
+                            install(url)
+                            return
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            try check()
+                            candidates.removeFirst(); sourceFailures.append(candidate.source + "無法完整播放")
+                        }
+                    } else if !searchedCatalogue {
+                        target = await service.withDuration(song)
+                        do {
+                            let found = try await service.candidates(for: target, account: account)
+                            try check(); candidates = found
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            try check()
+                            if let error = error as? SubtitleReadError { sourceFailures.append(error.explanation) }
+                        }
+                        searchedCatalogue = true
+                    } else if !searchedYouTube, YouTubeVideo.validID(song.videoID) {
+                        do {
+                            let found = try await service.youtube(target)
+                            try check(); candidates = found
+                        } catch is CancellationError { throw CancellationError() }
+                        catch {
+                            try check()
+                            sourceFailures.append("YouTube：" + ((error as? SubtitleReadError)?.explanation ??
+                                (error as? PlatformError)?.localizedDescription ?? "暫時無法讀取公開音源。"))
+                        }
+                        searchedYouTube = true
+                    } else {
+                        lyricsLoading = false
+                        fail((sourceFailures.last ?? "目前沒有可播放的同版本音源。") + " 可重試或附加音檔。")
+                        return
+                    }
+                }
+            } catch { /* An interrupted search must not restart the audio. */ }
+        }
+        publishNowPlaying()
+    }
+
+    private func loadPlaylistArtwork(_ song: SyncedYouTubeSong, local: Track?) {
+        artworkTask?.cancel()
+        artwork = local.flatMap(library.artwork).flatMap { UIImage(data: $0) }
+        guard let url = song.avatarURL else { return }
+        let revision = generation
+        artworkTask = Task { [weak self] in
+            let bytes = await AudioDownloadService.shared.portrait(url)
+            guard let self, generation == revision, !Task.isCancelled,
+                  let bytes, let image = UIImage(data: bytes) else { return }
+            artwork = image
+            publishNowPlaying()
+        }
+    }
+
     private func loadRemoteDetails(_ track: Track, client: NavidromeClient) {
         let revision = generation
         lyricsLoading = true
         lyricsTask = Task { [weak self] in
             let timeline = await client.lyrics(for: track)
             guard let self, generation == revision, !Task.isCancelled else { return }
-            self.timeline = timeline ?? LyricTimeline(lines: [])
+            self.timeline = timeline?.prepared(for: duration) ?? LyricTimeline(lines: [])
             lyricsLoading = false
         }
         artworkTask = Task { [weak self] in
@@ -283,6 +519,10 @@ final class PlaybackModel {
         generation = UUID()
         seekGeneration = UUID()
         seeking = false
+        resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
+        streamTimeout?.cancel(); streamTimeout = nil
+        candidates = []; searchedCatalogue = false; searchedYouTube = false; triedLocal = false; sourceFailures = []
+        audioSource = nil; activeRecording = nil; activeLocalTrackID = nil; lyricClockRunning = false
         resumeAfterInterruption = false
         statusObservation?.invalidate()
         statusObservation = nil
@@ -316,7 +556,20 @@ final class PlaybackModel {
     }
 
     private func refreshTransport() {
-        isBuffering = isPlaying && player.timeControlStatus == .waitingToPlayAtSpecifiedRate
+        let status = player.timeControlStatus
+        isBuffering = isPlaying && (status == .waitingToPlayAtSpecifiedRate || player.currentItem == nil)
+        lyricClockRunning = isPlaying && status == .playing && !seeking
+        if !isBuffering || !isPlaying || current?.source != .catalogue || player.currentItem == nil {
+            streamTimeout?.cancel(); streamTimeout = nil
+        } else if streamTimeout == nil {
+            let revision = generation
+            streamTimeout = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(20))
+                guard let self, !Task.isCancelled, generation == revision, isBuffering,
+                      let item = player.currentItem else { return }
+                playbackFailed(item: item)
+            }
+        }
         publishNowPlaying()
     }
 
@@ -328,7 +581,7 @@ final class PlaybackModel {
         var info: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
-            MPNowPlayingInfoPropertyPlaybackRate: isPlaying && !isBuffering ? 1.0 : 0.0,
+            MPNowPlayingInfoPropertyPlaybackRate: lyricClockRunning ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyMediaType: MPNowPlayingInfoMediaType.audio.rawValue
         ]
         info[MPMediaItemPropertyArtist] = track.artist

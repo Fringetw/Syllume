@@ -52,9 +52,8 @@ struct LibraryScreen: View {
                 case .spotify:
                     PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: pauseForPlatform, playYouTube: { _, _ in })
                 case .youtube:
-                    YouTubeMusicScreen(connection: youtube, sync: youtubeSync, library: library, account: navidrome.account) { track, queue in
-                        player.play(queue, from: track); showingPlayer = true
-                    }
+                    YouTubeMusicScreen(connection: youtube, sync: youtubeSync, library: library,
+                        account: navidrome.account, player: player, openPlayer: { showingPlayer = true })
                 }
             }
             .background(FoliaPalette.surface.ignoresSafeArea())
@@ -81,9 +80,9 @@ struct LibraryScreen: View {
         .onChange(of: navidrome.account) { _, _ in
             player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
             youtubeSync.cancel()
-            if source == .youtube { youtubeSync.synchronize(connection: youtube, library: library, account: navidrome.account) }
+            if source == .youtube { youtubeSync.synchronize(connection: youtube) }
         }
-        .onChange(of: subtitleInput, initial: true) { _, next in
+        .onChange(of: player.subtitleInput, initial: true) { _, next in
             subtitles.load(next, timeline: player.timeline)
         }
         .fileImporter(isPresented: $showingImporter,
@@ -140,13 +139,6 @@ struct LibraryScreen: View {
         return text.isEmpty ? library.tracks : library.tracks.filter {
             $0.title.localizedStandardContains(text) || $0.subtitle.localizedStandardContains(text)
         }
-    }
-
-    private var subtitleInput: SubtitleInput? {
-        guard let track = player.current else { return nil }
-        return SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue, title: track.title,
-            artist: track.artist ?? "", durationMs: player.duration * 1000),
-            revision: player.timelineRevision, loading: player.lyricsLoading)
     }
 
     private var localLibrary: some View {

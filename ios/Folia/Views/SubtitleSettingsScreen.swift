@@ -29,7 +29,11 @@ struct FoliaSettingsScreen: View {
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
                 }
-                Section { Text("Folia iOS 0.3.4 · build 10").foregroundStyle(.secondary) }
+                Section {
+                    let info = Bundle.main.infoDictionary
+                    Text("Folia iOS \(info?["CFBundleShortVersionString"] as? String ?? "—") · build \(info?["CFBundleVersion"] as? String ?? "—")")
+                        .foregroundStyle(.secondary)
+                }
             }
             .buttonStyle(FoliaPressStyle())
             .navigationTitle("設定")
@@ -56,6 +60,7 @@ private struct SubtitleSettingsContent: View {
     @State private var exportError: String?
     @State private var exportedReport = Data()
     @State private var neteaseDraft = ""
+    @State private var showingReport = false
     var body: some View {
         Form {
             Section {
@@ -136,18 +141,16 @@ private struct SubtitleSettingsContent: View {
                 Toggle("顯示完整報告", isOn: $subtitles.preferences.reportVisible)
                 if let error = subtitles.engineError { Text(error).foregroundStyle(.orange) }
                 if subtitles.preferences.reportVisible {
-                    ScrollView([.horizontal, .vertical]) {
-                        Text(subtitles.reportText).font(.system(.caption, design: .monospaced))
-                            .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading)
-                            .accessibilityIdentifier("subtitleReport")
-                    }
-                    .frame(minHeight: 140, maxHeight: 300)
+                    Text(subtitles.reportText.split(separator: "\n").prefix(4).joined(separator: "\n"))
+                        .font(.footnote).fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("subtitleReport")
+                    Button("查看完整診斷報告") { showingReport = true }
                 }
-                Button("複製完整診斷報告") {
+                Button("複製診斷報告文字") {
                     UIPasteboard.general.string = subtitles.reportText
-                    subtitles.notice = "已複製完整診斷報告。"
+                    subtitles.notice = "已複製診斷報告文字。"
                 }
-                Button("下載完整診斷報告") {
+                Button("匯出進階診斷（JSON）") {
                     exportedReport = subtitles.reportJSON; exporting = true
                 }
                 Text("查看、複製、匯出不會重新搜尋。報告僅在記憶體保存，不含帳號、憑證或整份歌詞。")
@@ -155,6 +158,16 @@ private struct SubtitleSettingsContent: View {
             }
         }
         .navigationTitle("繁體字幕").navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $showingReport) {
+            NavigationStack {
+                ScrollView {
+                    Text(subtitles.reportText).font(.system(.footnote, design: .monospaced))
+                        .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding(20)
+                }
+                .navigationTitle("完整診斷報告").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showingReport = false } } }
+            }
+        }
         .onAppear { neteaseDraft = subtitles.preferences.neteaseAPI }
         .fileExporter(isPresented: $exporting, document: SubtitleReportDocument(data: exportedReport),
                       contentType: .json, defaultFilename: "Folia-字幕診斷") { result in

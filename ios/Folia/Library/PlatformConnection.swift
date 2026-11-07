@@ -196,6 +196,38 @@ final class PlatformConnection {
         })
     }
 
+    func channelPortraits(_ ids: [String]) async throws -> [String: (name: String, url: URL)] {
+        guard platform == .youtube, !ids.isEmpty, ids.count <= 50,
+              ids.allSatisfy({ $0.range(of: #"^UC[A-Za-z0-9_-]{22}$"#, options: .regularExpression) != nil }) else { return [:] }
+        let revision = sessionID
+        var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/channels")!
+        parts.queryItems = [.init(name: "part", value: "snippet"), .init(name: "id", value: ids.joined(separator: ","))]
+        let (data, response) = try await request(url: parts.url!, token: try await accessToken())
+        guard sessionID == revision, !Task.isCancelled else { throw CancellationError() }
+        guard (200..<300).contains(response.statusCode) else { return [:] }
+        struct Page: Decodable {
+            struct Channel: Decodable {
+                struct Snippet: Decodable {
+                    struct Image: Decodable { let url: String }
+                    let title: String; let thumbnails: [String: Image]
+                }
+                let id: String; let snippet: Snippet
+            }
+            let items: [Channel]?
+        }
+        var result: [String: (name: String, url: URL)] = [:]
+        for channel in try JSONDecoder().decode(Page.self, from: data).items ?? [] where ids.contains(channel.id) {
+            let pictures = channel.snippet.thumbnails
+            if let value = (pictures["medium"] ?? pictures["default"])?.url,
+               let url = DownloadSongMatch.safeAudioURL(value),
+               ["yt3.googleusercontent.com", "yt3.ggpht.com", "yt4.ggpht.com"].contains(url.host ?? ""),
+               url.port == nil || url.port == 443 {
+                result[channel.id] = (channel.snippet.title, url)
+            }
+        }
+        return result
+    }
+
     private func accessToken(refresh: Bool = false) async throws -> String {
         guard let credential else { throw PlatformError.message("請先登入連接曲庫。") }
         if !refresh && credential.expires.timeIntervalSinceNow > 60 { return credential.accessToken }

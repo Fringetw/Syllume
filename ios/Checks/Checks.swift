@@ -10,6 +10,18 @@ struct Checks {
         try SubtitleSourceChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let bundled = ios.appending(path: "Folia/Resources/tide.m4a")
+        let verified = try await AudioIntegrity.inspect(bundled, expected: 30, decode: true)
+        precondition(abs(verified - 30) < 0.3)
+        let truncated = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString + ".m4a")
+        defer { try? FileManager.default.removeItem(at: truncated) }
+        let bytes = try Data(contentsOf: bundled)
+        try bytes.prefix(bytes.count * 3 / 5).write(to: truncated)
+        do {
+            _ = try await AudioIntegrity.inspect(truncated, expected: 30, decode: true)
+            preconditionFailure("Truncated audio was accepted")
+        } catch {}
+        print("PASS: fully decode bundled audio; reject a truncated copy")
         let lrc = LyricTimeline(lrc: """
             [offset:500]
             [00:04.0][00:18.00]Then
@@ -101,9 +113,10 @@ struct Checks {
         let root = objects[project["rootObject"] as! String]!
         let target = objects[(root["targets"] as! [String])[0]]!
         let phases = (target["buildPhases"] as! [String]).map { objects[$0]! }
-        let included = phases.flatMap { phase in
-            (phase["files"] as! [String]).map { buildID in
-                objects[objects[buildID]!["fileRef"] as! String]!["path"] as! String
+        let included: [String] = phases.flatMap { phase in
+            (phase["files"] as! [String]).compactMap { buildID in
+                guard let ref = objects[buildID]?["fileRef"] as? String else { return nil }
+                return objects[ref]!["path"] as! String
             }
         }
         let app = ios.appending(path: "Folia", directoryHint: .isDirectory)

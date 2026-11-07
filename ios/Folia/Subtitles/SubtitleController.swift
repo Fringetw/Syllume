@@ -1,4 +1,6 @@
+import CryptoKit
 import Foundation
+import UniformTypeIdentifiers
 import Observation
 import WebKit
 import SwiftUI
@@ -9,7 +11,10 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         if oldValue.sourceKey != preferences.sourceKey {
             cancelRequests(); accountKey = UUID().uuidString; sourceStatus.removeAll(); sourceDiagnostics.removeAll()
         }
-        save(); configureEngine()
+        save()
+        var previous = oldValue; previous.reportVisible = preferences.reportVisible
+        if previous != preferences { configureEngine() }
+        updateReport()
     } }
     private(set) var timeline = LyricTimeline(lines: [])
     private(set) var revision = UUID()
@@ -18,6 +23,24 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private(set) var sourceStatus: [String: String] = [:]
     private(set) var engineError: String?
     var notice: String?
+    var currentSearchTerms: (String, String)? { input.map { (matchingSong($0.song).title, matchingSong($0.song).artist) } }
+    private(set) var videoProgress: String?
+    private(set) var translationPreview: TranslationPreview?
+    @ObservationIgnored private var videoTask: Task<Void, Never>?
+    @ObservationIgnored private var videoRevision = UUID()
+    @ObservationIgnored private var manual: SavedTranslation?
+    struct TranslationPreview {
+        let lines: [LyricLine]
+        let source: String
+        let aligned: Bool
+    }
+    private struct SavedTranslation: Codable {
+        let source: String
+        let duration: Double
+        let title: String
+        let lines: [LyricLine]
+    }
+    private var base: LyricTimeline { manual.map { LyricTimeline(lines: $0.lines) } ?? raw }
     @ObservationIgnored private var webView: WKWebView?
     private(set) var ready = false
     @ObservationIgnored private var configurationRevision = 0
@@ -81,25 +104,148 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         guard input != next else { return }
         let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
         let previousRaw = raw.lines
-        if input?.song.id != next?.song.id || input?.song.source != next?.song.source { cancelRequests() }
-        if !sameSong { sourceStatus.removeAll(); sourceDiagnostics.removeAll() }
-        input = next; raw = rawTimeline; token = UUID().uuidString
+        cancelRequests()
+        if !sameSong {
+            cancelTranslationRead(); translationPreview = nil; manual = nil
+            sourceStatus.removeAll(); sourceDiagnostics.removeAll()
+        }
+        input = next; token = UUID().uuidString
+        if !sameSong || !rawTimeline.lines.isEmpty || next?.loading != true {
+            raw = rawTimeline.prepared(for: (next?.song.durationMs ?? 0) / 1000)
+        }
         #if DEBUG
         if fixture, next?.song.source == "demo" {
             raw = LyricTimeline(lines: [LyricLine(startTime: 0, endTime: 30, fullText: "头发发现", translation: "风里的回声",
                 words: [LyricWord(text: "头发", startTime: 0, endTime: 15), LyricWord(text: "发现", startTime: 15, endTime: 30)])])
         }
         #endif
-        if !sameSong || previousRaw != raw.lines { apply(raw) }
-        reportText = next == nil ? "目前沒有歌曲。" : next?.loading == true ? "正在載入原字幕。" : "正在準備字幕檢查。"
-        reportJSON = Data("{}".utf8); engineReport = [:]; engineReportText = reportText
-        sendInput()
+        if let song = next?.song, song.durationMs > 0, next?.loading == false {
+            if let manual, !matches(manual, song) { self.manual = nil }
+            if manual == nil, let file = translationFile(song),
+               let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= 2_000_000,
+               let data = try? Data(contentsOf: file), let stored = try? JSONDecoder().decode(SavedTranslation.self, from: data),
+               matches(stored, song) { manual = stored }
+        }
+        if !sameSong || previousRaw != raw.lines || manual != nil { apply(preferences.active ? base : raw) }
+        engineReport = [:]; engineReportText = ""
+        updateReport(); sendInput()
     }
 
     func command(_ name: String) {
         guard ["retry", "restore", "status"].contains(name) else { return }
+        if name == "restore", manual != nil {
+            if let song = input?.song, let file = translationFile(song) { try? FileManager.default.removeItem(at: file) }
+            manual = nil
+            apply(raw)
+            sendInput()
+        }
         guard ready else { notice = "字幕引擎正在準備，請稍後再試。"; return }
         call("window.FoliaSubtitles.command(name)", ["name": name])
+    }
+
+    func readTranslation(videoID: String) {
+        guard preferences.active, YouTubeVideo.validID(videoID) else { return }
+        readTranslation(source: "YouTube 翻譯影片") { progress in
+            do {
+                return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID)
+            } catch is CancellationError { throw CancellationError() }
+            catch {
+                try Task.checkCancellation()
+                await progress(-1)
+                let file: URL
+                do { file = try await AudioDownloadService.shared.translatedVideo(videoID) }
+                catch is CancellationError { throw CancellationError() }
+                catch let error as SubtitleReadError where ["verification-required", "video-too-long", "not-signed-in"].contains(error.code) { throw error }
+                catch { throw SubtitleReadError("video-unavailable") }
+                defer { try? FileManager.default.removeItem(at: file) }
+                return try await YouTubeCaptionOCR.read(file, progress: progress)
+            }
+        }
+    }
+
+    func readTranslation(file: URL) {
+        guard preferences.active else { return }
+        readTranslation(source: "匯入影片字幕") { progress in
+            try await YouTubeCaptionOCR.read(file, progress: progress)
+        }
+    }
+
+    private func readTranslation(source: String, work: @escaping @Sendable (@Sendable (Double) async -> Void) async throws -> [LyricLine]) {
+        guard let song = input?.song, song.durationMs > 0 else { notice = "請等目前音訊載入後再讀取翻譯字幕。"; return }
+        cancelTranslationRead(); translationPreview = nil
+        let ticket = videoRevision
+        videoProgress = "正在讀取字幕軌…"
+        videoTask = Task { [weak self] in
+            do {
+                let lines = try await work { [weak self] amount in
+                    await MainActor.run { [weak self] in
+                        guard let self, videoRevision == ticket else { return }
+                        videoProgress = amount < 0 ? "未讀到字幕軌，正在準備辨識畫面…" : "正在辨識畫面字幕 \(Int(amount * 100))%"
+                    }
+                }
+                guard let self, videoRevision == ticket, input?.song.id == song.id, !Task.isCancelled else { return }
+                let result = Self.alignTranslation(lines, to: raw.lines)
+                let timeline = LyricTimeline(lines: result.lines).prepared(for: song.durationMs / 1000)
+                guard !timeline.lines.isEmpty else { throw SubtitleReadError("empty") }
+                translationPreview = TranslationPreview(lines: timeline.lines, source: source, aligned: result.aligned)
+                sourceStatus["ytm-manual"] = "已讀取 \(lines.count) 行；等待預覽確認。"
+                videoProgress = nil; updateReport()
+            } catch {
+                guard let self, videoRevision == ticket, !Task.isCancelled else { return }
+                videoProgress = nil
+                let message = (error as? SubtitleReadError)?.explanation ?? "無法讀取翻譯影片的字幕。"
+                notice = message; sourceStatus["ytm-manual"] = message; updateReport()
+            }
+        }
+    }
+
+    func cancelTranslationRead() {
+        videoRevision = UUID(); videoTask?.cancel(); videoTask = nil; videoProgress = nil
+    }
+    func discardTranslationPreview() { translationPreview = nil }
+
+    func applyTranslationPreview() {
+        guard let song = input?.song, let preview = translationPreview else { return }
+        let saved = SavedTranslation(source: preview.source, duration: song.durationMs / 1000, title: song.title, lines: preview.lines)
+        do {
+            guard let file = translationFile(song) else { throw CocoaError(.fileWriteUnknown) }
+            let data = try JSONEncoder().encode(saved)
+            guard data.count <= 2_000_000 else { throw CocoaError(.fileWriteOutOfSpace) }
+            try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try data.write(to: file, options: .atomic)
+        } catch { notice = "字幕已套用，但無法保存。請確認可用空間。" }
+        manual = saved; translationPreview = nil
+        cancelRequests(); token = UUID().uuidString
+        apply(base); updateReport(); sendInput()
+    }
+
+    private func translationFile(_ song: SubtitleSong) -> URL? {
+        let key = song.originVideoID ?? (song.source + ":" + song.id)
+        let name = SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
+        return URL.applicationSupportDirectory.appending(path: "Folia/Translations/" + name + ".json")
+    }
+
+    private func matches(_ stored: SavedTranslation, _ song: SubtitleSong) -> Bool {
+        DownloadSongMatch.sameDuration(stored.duration, song.durationMs / 1000)
+            && DownloadSongMatch.normalized(stored.title) == DownloadSongMatch.normalized(song.title)
+    }
+
+    private static func alignTranslation(_ donor: [LyricLine], to original: [LyricLine]) -> (lines: [LyricLine], aligned: Bool) {
+        var matches: [String: [LyricLine]] = [:]
+        for line in donor where line.translation != nil {
+            let key = DownloadSongMatch.normalized(line.fullText)
+            if key.count >= 3 { matches[key, default: []].append(line) }
+        }
+        var last = -1.0, anchors = 0
+        let merged = original.map { line in
+            var line = line
+            if let options = matches[DownloadSongMatch.normalized(line.fullText)], options.count == 1,
+               let candidate = options.first, candidate.startTime > last {
+                last = candidate.startTime; anchors += 1; line.translation = candidate.translation
+            }
+            return line
+        }
+        return anchors >= max(3, donor.count / 3) ? (merged, true) : (donor, false)
     }
 
     // Keep this offline worker attached to the scene even when a full-screen player covers the library.
@@ -115,29 +261,30 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         webView?.removeFromSuperview(); hostLease = nil
     }
     func synchronize() {
-        guard engineError == nil, !probing, let view = webView, !view.isLoading, view.url?.isFileURL == true else { return }
+        guard !ready, engineError == nil, !probing, let view = webView, !view.isLoading, view.url?.isFileURL == true else { return }
         probing = true
         let generation = engineGeneration
         view.evaluateJavaScript("typeof window.FoliaSubtitles?.configure === 'function'") { [weak self] result, _ in
             guard let self, generation == engineGeneration else { return }
             probing = false
             guard result as? Bool == true else { return }
-            markReady(replay: true)
+            markReady()
         }
     }
     func restartEngine(manual: Bool = false) {
         if manual || Date().timeIntervalSince(recoveryWindow) > 60 { recoveries = 0; recoveryWindow = Date() }
         ready = false; probing = false; engineGeneration = UUID()
-        cancelRequests(); apply(raw); token = UUID().uuidString
+        cancelRequests(); apply(preferences.active ? base : raw); token = UUID().uuidString
+        updateReport()
         guard recoveries < 2, let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaSubtitles") else {
-            engineError = "繁體字幕尚未恢復，請按「重新準備字幕」再試。"; return
+            engineError = "繁體字幕尚未恢復，請按「重新準備字幕」再試。"; updateReport(); return
         }
         recoveries += 1; engineError = nil
         webView?.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
     }
     private func markReady(replay: Bool = false) {
         guard replay || !ready else { return }
-        ready = true; engineError = nil; configureEngine(); sendInput()
+        ready = true; engineError = nil; configureEngine(); updateReport(); sendInput()
     }
 
     private func save() {
@@ -167,10 +314,11 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
     private func sendInput() {
         guard ready else { return }
-        guard let input, !input.loading else { call("window.FoliaSubtitles.load(null)", [:]); return }
+        guard let input, !input.loading || !base.lines.isEmpty else { call("window.FoliaSubtitles.load(null)", [:]); return }
         let song = matchingSong(input.song)
         call("window.FoliaSubtitles.load(input)", ["input": ["token": token, "song": object(song) ?? [:],
-            "duration": input.song.durationMs / 1000, "lines": object(raw.lines) ?? []]])
+            "duration": input.song.durationMs / 1000, "lines": object(base.lines) ?? [], "manual": manual != nil,
+            "waitingForAudio": input.loading]])
     }
     private func call(_ script: String, _ args: [String: Any]) {
         let revision = configurationRevision
@@ -196,13 +344,15 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         guard body["token"] as? String == token else { return }
         guard body["configurationRevision"] as? Int == configurationRevision else { return }
         if !preferences.active {
-            apply(raw); reportText = "內建模組已停用；顯示原字幕。"; reportJSON = Data("{}".utf8)
+            apply(raw); updateReport()
             return
         }
         if type == "display", let lines = body["lines"], JSONSerialization.isValidJSONObject(lines),
            let data = try? JSONSerialization.data(withJSONObject: lines), data.count <= 16_000_000,
            let decoded = try? JSONDecoder().decode([LyricLine].self, from: data), decoded.count <= 20_000 {
-            apply(LyricTimeline(lines: decoded))
+            let cleaned = LyricTimeline(lines: decoded).prepared(for: (input?.song.durationMs ?? 0) / 1000)
+            apply(cleaned.lines.isEmpty && !base.lines.isEmpty ? base : cleaned)
+            updateReport()
         } else if type == "report" {
             engineReportText = body["text"] as? String ?? "目前沒有報告。"
             engineReport = body["value"] as? [String: Any] ?? [:]
@@ -215,11 +365,24 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
             artist: song.artist, duration: song.durationMs / 1000) : song
     }
     private func updateReport() {
-        let states = sourceStatus.keys.sorted().map { "\($0)：\(sourceStatus[$0] ?? "")" }
+        let names = ["netease": "網易雲", "qq": "QQ 音樂", "ytm": "YouTube 搜尋", "ytm-manual": "YouTube 翻譯影片",
+            "local": "本機", "navidrome": "Navidrome", "lrclib": "LRCLIB"]
+        let states = sourceStatus.keys.sorted().map { "\(names[$0] ?? $0)：\(sourceStatus[$0] ?? "")" }
         let details = sourceDiagnostics.keys.sorted().map { "\($0)：\(sourceDiagnostics[$0] ?? "")" }
-        reportText = engineReportText + (states.isEmpty ? "" : "\n\n平台讀取狀態\n" + states.joined(separator: "\n"))
-            + (details.isEmpty ? "" : "\n\n回覆結構診斷（不含原始內容）\n" + details.joined(separator: "\n"))
+        let engine = engineError ?? (preferences.active ? (ready ? "已就緒" : "準備中") : "已停用")
+        let song = input.map { "\($0.song.title) · \($0.song.artist)" } ?? "目前沒有歌曲"
+        let translated = timeline.lines.filter { $0.translation?.isEmpty == false || $0.extra["displayTranslation"] != nil }.count
+        let summary = ["繁體字幕：\(engine)", "歌曲：\(song)",
+            "原字幕 \(raw.lines.count) 行 · 顯示 \(timeline.lines.count) 行 · 附譯文 \(translated) 行",
+            manual.map { "已套用：\($0.source)" } ?? (input?.loading == true ? "等待目前音源與原字幕。" : "")]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
+        let readable = engineReportText.components(separatedBy: "── 完整結構化紀錄 ──").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        reportText = summary + (states.isEmpty ? "" : "\n\n來源讀取\n" + states.joined(separator: "\n"))
+            + (readable.isEmpty ? "" : "\n\n" + String(readable.prefix(12_000)))
+            + (details.isEmpty ? "" : "\n\n回覆結構\n" + details.joined(separator: "\n"))
         var report = engineReport
+        report["iosSummary"] = summary
         report["iosSources"] = sourceStatus
         report["iosResponseDiagnostics"] = sourceDiagnostics
         if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]) { reportJSON = data }
@@ -245,7 +408,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
               tasks.count < 4, let method = body["method"] as? String,
               let params = body["params"] as? [String: Any], let provider = params["providerId"] as? String else { return }
         let requestAccount = accountKey
-        let requestSong = input?.song
+        let requestToken = token
         let requestPreferences = preferences
         let currentSong = input.map { matchingSong($0.song) }
         let originalLines = raw.lines
@@ -275,7 +438,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                         songs = records.map { register($0.song, .record($0)) }
                     } else { throw SubtitleReadError("unsupported") }
                     value = ["items": songs]
-                    if input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
+                    if requestToken == token, requestAccount == accountKey {
                         sourceStatus[provider] = "找到 \(songs.count) 個候選；由插件核對歌曲版本。"
                     }
                 } else if method == "lyrics", let ref = params["ref"] as? String, let candidate = candidates[ref] {
@@ -290,7 +453,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                         lines = try await SubtitleNetwork.shared.lyrics(record, netease: requestPreferences.neteaseAPI, original: originalLines, current: currentSong)
                     }
                     value = ["lines": object(lines) ?? []]
-                    if input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
+                    if requestToken == token, requestAccount == accountKey {
                         sourceStatus[provider] = "已讀取 \(lines.count) 行同步字幕；是否套用以插件診斷為準。"
                     }
                 } else { throw SubtitleReadError("invalid-response") }
@@ -303,12 +466,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                     }
                 }
                 failure = ["code": code, "message": code]
-                if !Task.isCancelled, input?.song.id == requestSong?.id && input?.song.source == requestSong?.source, requestAccount == accountKey {
+                if !Task.isCancelled, requestToken == token, requestAccount == accountKey {
                     sourceStatus[provider] = SubtitleReadError(code).explanation
                     if let detail = (error as? SubtitleReadError)?.detail { sourceDiagnostics[provider] = detail }
                 }
             }
-            guard !Task.isCancelled, requestAccount == accountKey, input?.song.id == requestSong?.id && input?.song.source == requestSong?.source else { tasks.removeValue(forKey: id); return }
+            guard !Task.isCancelled, requestAccount == accountKey, requestToken == token else { tasks.removeValue(forKey: id); return }
             tasks.removeValue(forKey: id)
             if failure == nil { sourceDiagnostics.removeValue(forKey: provider) }
             updateReport()

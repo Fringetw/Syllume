@@ -17,6 +17,10 @@ enum YouTubeSyncChecks {
 
         let recording = try DownloadSourceDecoders.search(Data(#"{"code":200,"result":{"songs":[{"id":1,"name":"LOSER","ar":[{"name":"米津玄師"}],"dt":244000},{"id":2,"name":"LOSER (Remix)","ar":[{"name":"米津玄師"}],"dt":244000}]}}"#.utf8), for: song)
         precondition(recording.count == 1 && recording[0].id == 1)
+        let kawaki = SyncedYouTubeSong(LibraryEntry(id: "row-alias", title: "カワキヲアメク", subtitle: "美波 - Topic",
+            url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 252))!
+        precondition(DownloadSongMatch.matches(kawaki, title: "カワキヲアメク (声嘶力竭)", artists: ["美波 (みなみ)"], duration: 251))
+        precondition(!DownloadSongMatch.matches(kawaki, title: "カワキヲアメク (Piano Version)", artists: ["美波"], duration: 251))
         let full = #"{"code":200,"data":[{"id":1,"code":200,"url":"http://m7.music.126.net/song.flac","type":"flac","br":900000,"time":244000,"freeTrialInfo":null}]}"#
         let audio = try DownloadSourceDecoders.audio(Data(full.utf8), recording: recording[0])!
         precondition(audio.lossless && audio.url.scheme == "https")
@@ -32,6 +36,12 @@ enum YouTubeSyncChecks {
         precondition(DownloadAudioCandidate.preferred(audio, mp3))
         precondition(!DownloadAudioCandidate.preferred(mp3, audio))
 
+        let qq = try DownloadSourceDecoders.qqSearch(Data(#"{"code":0,"data":{"song":{"list":[{"songmid":"S1","strMediaMid":"M1","songid":7,"songname":"LOSER","singer":[{"name":"米津玄師"}],"interval":244}]}}}"#.utf8), for: song)
+        precondition(qq.count == 1)
+        let vkeys = #"{"code":0,"req_0":{"code":0,"data":{"sip":["http://dl.stream.qqmusic.qq.com/"],"midurlinfo":[{"songmid":"S1","filename":"F000M1.flac","purl":"F000M1.flac?vkey=public","result":0},{"songmid":"S1","filename":"M800M1.mp3","purl":"M800M1.mp3?vkey=encrypted","result":0,"ekey":"encrypted"},{"songmid":"S1","filename":"M500M1.mp3","purl":"M500other.mp3?vkey=wrong","result":0}]}}}"#
+        let accepted = try DownloadSourceDecoders.qqAudio(Data(vkeys.utf8), recording: qq[0])
+        precondition(accepted.count == 1 && accepted[0].lossless && accepted[0].recording?.id == "7")
+
         var snapshot = YouTubeSyncSnapshot()
         snapshot.choice = .liked; snapshot.songs = [song]
         snapshot.bindings[song.videoID] = YouTubeAudioBinding(trackID: "local-id", quality: "FLAC")
@@ -41,6 +51,11 @@ enum YouTubeSyncChecks {
         precondition(!String(decoding: data, as: UTF8.self).contains("music.126.net"))
         let second = SyncedYouTubeSong(LibraryEntry(id: "row-2", title: "Next", subtitle: "Artist",
             url: URL(string: "https://music.youtube.com/watch?v=abcdefghijk")!, duration: 240))!
+        let added = SyncedYouTubeSong(local: .demo)
+        var edited = decoded
+        edited.edits = ["liked": FoliaPlaylistEdits(name: "本機編輯", added: [added], removed: [song.id], order: [added.id])]
+        edited.songs = [song, second]
+        precondition(edited.playlistTitle == "本機編輯" && edited.playlistSongs.map(\.id) == [added.id, second.id])
         let pending = DownloadSongMatch.downloadOrder([song, second, song], attempts: [song.videoID: Date()])
         precondition(pending.map(\.videoID) == [second.videoID, song.videoID])
         let legacy = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(#"{"choice":{"id":"liked","title":"喜歡的影片"},"songs":[],"bindings":{}}"#.utf8))

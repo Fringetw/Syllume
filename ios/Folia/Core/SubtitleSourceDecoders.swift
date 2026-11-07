@@ -103,22 +103,45 @@ enum SubtitleSourceDecoders {
         return attach(original, translations: translated, romanizations: romanized)
     }
     static func attach(_ original: [LyricLine], translations: [LyricLine], romanizations: [LyricLine] = []) -> [LyricLine] {
-        // Sorted timestamps and binary search avoid quadratic work on hostile / oversized responses.
-        func at(_ lines: [LyricLine], time: Double) -> String? {
+        // A stable offset between a provider's original and translated LRC can be inferred
+        // from repeated timestamp agreement. Ambiguous rows still remain unmerged.
+        func nearest(_ lines: [LyricLine], time: Double, tolerance: Double) -> Int? {
             var low = 0, high = lines.count
             while low < high {
                 let mid = (low + high) / 2
-                if lines[mid].startTime < time - 0.15 { low = mid + 1 } else { high = mid }
+                if lines[mid].startTime < time - tolerance { low = mid + 1 } else { high = mid }
             }
-            let matches = lines.dropFirst(low).prefix(while: { $0.startTime <= time + 0.15 })
-            // Ambiguous overlapping rows are left unmerged.
-            return matches.count == 1 ? matches.first?.fullText : nil
+            guard lines.indices.contains(low), lines[low].startTime <= time + tolerance,
+                  low + 1 == lines.count || lines[low + 1].startTime > time + tolerance else { return nil }
+            return low
         }
-        return original.map { line in
-            var line = line
-            if let text = at(translations, time: line.startTime) { line.translation = text }
-            if let text = at(romanizations, time: line.startTime) { line.romanization = text }
-            return line
+        func offset(_ lines: [LyricLine]) -> Double {
+            guard original.count >= 5, lines.count >= 5 else { return 0 }
+            let sample = original.prefix(200)
+            let zero = sample.filter { nearest(lines, time: $0.startTime, tolerance: 0.15) != nil }.count
+            if zero >= min(sample.count, lines.count) * 3 / 4 { return 0 }
+            var buckets: [Int: [Double]] = [:]
+            for row in sample {
+                if let index = nearest(lines, time: row.startTime, tolerance: 1.1) {
+                    let delta = lines[index].startTime - row.startTime
+                    buckets[Int((delta * 10).rounded()), default: []].append(delta)
+                }
+            }
+            guard let best = buckets.values.max(by: { $0.count < $1.count }), best.count >= 5,
+                  best.count >= min(sample.count, lines.count) / 2,
+                  best.count >= zero + 3 else { return 0 }
+            return best.sorted()[best.count / 2]
+        }
+        let translatedOffset = offset(translations), romanizedOffset = offset(romanizations)
+        return original.map { original in
+            var row = original
+            if let index = nearest(translations, time: row.startTime + translatedOffset, tolerance: 0.15) {
+                row.translation = translations[index].fullText
+            }
+            if let index = nearest(romanizations, time: row.startTime + romanizedOffset, tolerance: 0.15) {
+                row.romanization = romanizations[index].fullText
+            }
+            return row
         }
     }
     static func entities(_ text: String) -> String {

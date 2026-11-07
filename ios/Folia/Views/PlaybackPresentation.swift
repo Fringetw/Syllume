@@ -10,10 +10,16 @@ enum LyricDisplayMode: String, CaseIterable, Identifiable {
 }
 
 struct FoliaPressStyle: ButtonStyle {
+    var luminous = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .background {
+                if luminous {
+                    Capsule().fill(.white.opacity(configuration.isPressed ? 0.18 : 0.06))
+                }
+            }
             .contentShape(Rectangle())
             .scaleEffect(configuration.isPressed && enabled && !reduceMotion ? 0.95 : 1)
             .opacity(configuration.isPressed && enabled ? 0.72 : enabled ? 1 : 0.4)
