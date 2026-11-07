@@ -154,17 +154,17 @@ final class YouTubeSyncController {
         downloadTask = Task { [weak self] in
             guard let self else { return }
             defer { if downloadRevision == ticket { downloading = nil; downloadTask = nil } }
-            func check() throws {
+            @MainActor func check() throws {
                 try Task.checkCancellation()
                 guard downloadRevision == ticket, self.accountID == accountID else { throw CancellationError() }
             }
-            func bind(_ track: Track, _ quality: String) throws {
+            @MainActor func bind(_ track: Track, _ quality: String) throws {
                 try check()
                 var next = snapshot
                 next.bindings[song.videoID] = YouTubeAudioBinding(trackID: track.id, quality: quality)
                 try save(next); statuses[song.videoID] = nil
             }
-            func install(_ candidate: DownloadAudioCandidate) async throws {
+            @MainActor func install(_ candidate: DownloadAudioCandidate) async throws {
                 try check()
                 if let id = candidate.localTrackID, let track = library.availableTrack(id), track.id.hasPrefix("download-") {
                     _ = try await AudioIntegrity.inspect(candidate.url, expected: candidate.duration, decode: track.integrityChecked != true)

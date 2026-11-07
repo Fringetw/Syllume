@@ -396,13 +396,14 @@ final class PlaybackModel {
         lyricsTask?.cancel()
         resolveTask = Task { [weak self] in
             guard let self else { return }
-            func check() throws {
+            @MainActor func check() throws {
                 try Task.checkCancellation()
                 guard resolveTicket == ticket, generation == revision, !externalPlayback else { throw CancellationError() }
             }
             defer { if resolveTicket == ticket { resolveTask = nil } }
             let service = AudioDownloadService.shared
             do {
+                try check()
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture"),
                    let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
