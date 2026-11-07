@@ -36,6 +36,18 @@ final class LocalLibrary {
         return track
     }
 
+    func matchingAudio(for song: SyncedYouTubeSong) -> [DownloadAudioCandidate] {
+        tracks.compactMap { track in
+            guard DownloadSongMatch.matches(song, title: track.title, artists: [track.artist ?? ""], duration: track.duration),
+                  let url = assetURL(for: track), FileManager.default.fileExists(atPath: url.path) else { return nil }
+            let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            var candidate = DownloadAudioCandidate(url: url, title: track.title, artist: track.artist ?? "", duration: track.duration ?? 0,
+                format: url.pathExtension.lowercased(), bitrate: Int(min(100_000_000, Double(bytes) * 8 / max(1, track.duration ?? 1))), source: "本機音檔")
+            candidate.localTrackID = track.id
+            return candidate
+        }
+    }
+
     func importDownload(_ url: URL, candidate: DownloadAudioCandidate) async throws -> Track {
         if storageError != nil { throw CocoaError(.fileWriteUnknown) }
         return try await importAudio(url, sidecars: [], download: candidate).0

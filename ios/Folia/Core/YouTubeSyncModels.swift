@@ -40,8 +40,9 @@ struct DownloadAudioCandidate: Sendable {
     let format: String
     let bitrate: Int
     let source: String
+    var localTrackID: String? = nil
     var lossless: Bool { ["flac", "alac", "wav", "aiff", "aif"].contains(format.lowercased()) }
-    var quality: String { source + " · " + format.uppercased() + (lossless ? " 無損" : bitrate > 0 ? " \(bitrate / 1000) kbps" : " 原始音質") }
+    var quality: String { source + " · " + format.uppercased() + (lossless ? " 無損" : source == "本機音檔" ? "" : bitrate > 0 ? " \(bitrate / 1000) kbps" : " 原始音質") }
     static func preferred(_ lhs: Self, _ rhs: Self) -> Bool {
         if lhs.lossless != rhs.lossless { return lhs.lossless }
         return lhs.bitrate > rhs.bitrate
@@ -49,6 +50,14 @@ struct DownloadAudioCandidate: Sendable {
 }
 
 enum DownloadSongMatch {
+    static func searchTitle(_ title: String) -> String {
+        var title = title
+        for text in ["official music video", "official video", "official audio", "music video", "lyric video", "lyrics video", "official mv", "official", "完整版", "中文字幕", "繁體中文", "中字"] {
+            title = title.replacingOccurrences(of: text, with: "", options: .caseInsensitive)
+        }
+        return title.components(separatedBy: CharacterSet(charactersIn: "()（）[]【】")).joined(separator: " ")
+            .split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
     static func normalized(_ text: String) -> String {
         let folded = text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
         return folded.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(String.init).joined()
@@ -70,10 +79,7 @@ enum DownloadSongMatch {
         let target = normalized(song.title + " " + song.artist)
         let knownArtists = artists.map(normalized).filter { !$0.isEmpty }
         guard knownArtists.contains(where: { target.contains($0) }) else { return false }
-        var cleaned = song.title
-        for text in ["official music video", "official video", "official audio", "music video", "lyric video", "lyrics video", "official mv", "official", "完整版", "中文字幕", "繁體中文", "中字"] {
-            cleaned = cleaned.replacingOccurrences(of: text, with: "", options: .caseInsensitive)
-        }
+        var cleaned = searchTitle(song.title)
         for artist in artists { cleaned = cleaned.replacingOccurrences(of: artist, with: "", options: .caseInsensitive) }
         let key = normalized(title)
         guard !key.isEmpty else { return false }

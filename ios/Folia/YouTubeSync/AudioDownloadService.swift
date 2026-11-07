@@ -21,7 +21,7 @@ actor AudioDownloadService {
         }
         do {
             let data = try await metadata(path: "cloudsearch/pc", parameters: [
-                .init(name: "s", value: song.title + " " + song.artist.replacingOccurrences(of: " - Topic", with: "")),
+                .init(name: "s", value: DownloadSongMatch.searchTitle(song.title) + " " + song.artist.replacingOccurrences(of: " - Topic", with: "")),
                 .init(name: "type", value: "1"), .init(name: "limit", value: "12"), .init(name: "offset", value: "0")
             ])
             for recording in try DownloadSourceDecoders.search(data, for: song).prefix(3) {

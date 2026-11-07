@@ -110,7 +110,7 @@ struct NavidromeClient: Sendable {
 
     func downloadCandidates(for song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
         let response = try await request("search3", parameters: [
-            .init(name: "query", value: song.title), .init(name: "artistCount", value: "0"),
+            .init(name: "query", value: DownloadSongMatch.searchTitle(song.title)), .init(name: "artistCount", value: "0"),
             .init(name: "albumCount", value: "0"), .init(name: "songCount", value: "50")
         ])
         return try (response.searchResult3?.song ?? []).compactMap { recording in

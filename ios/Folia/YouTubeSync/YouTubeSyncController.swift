@@ -32,7 +32,7 @@ final class YouTubeSyncController {
         let file = directory.appending(path: id + ".json")
         if FileManager.default.fileExists(atPath: file.path) {
             do { snapshot = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(contentsOf: file)) }
-            catch { error = "無法讀取已儲存的歌單，請重新選擇。" }
+            catch { self.error = "無法讀取已儲存的歌單，請重新選擇。" }
         }
     }
 
@@ -97,18 +97,20 @@ final class YouTubeSyncController {
                             try save(); statuses[song.videoID] = nil; continue
                         }
                         #endif
-                        if let existing = library.tracks.first(where: {
-                            library.availableTrack($0.id) != nil && DownloadSongMatch.matches(song, title: $0.title, artists: [$0.artist ?? ""], duration: $0.duration)
-                        }) {
-                            snapshot.bindings[song.videoID] = YouTubeAudioBinding(trackID: existing.id, quality: "本機音檔")
-                            try save(); continue
-                        }
                         guard song.duration != nil else { statuses[song.videoID] = "無法確認歌曲長度，請附加音檔。"; continue }
-                        let candidates = try await downloader.candidates(for: song, account: account)
+                        var candidates = library.matchingAudio(for: song)
+                        do { candidates += try await downloader.candidates(for: song, account: account) }
+                        catch is CancellationError { throw CancellationError() }
+                        catch { if candidates.isEmpty { throw error } }
+                        candidates.sort(by: DownloadAudioCandidate.preferred)
                         try ensureCurrent(ticket, session: session, connection: connection)
                         var installed = false
                         for candidate in candidates {
                             do {
+                                if let id = candidate.localTrackID {
+                                    snapshot.bindings[song.videoID] = YouTubeAudioBinding(trackID: id, quality: candidate.quality)
+                                    try save(); installed = true; break
+                                }
                                 statuses[song.videoID] = "下載中 · " + candidate.quality
                                 let file = try await downloader.download(candidate)
                                 defer { try? FileManager.default.removeItem(at: file) }
@@ -118,12 +120,18 @@ final class YouTubeSyncController {
                                 snapshot.bindings[song.videoID] = YouTubeAudioBinding(trackID: track.id, quality: candidate.quality)
                                 try save(); installed = true; break
                             } catch is CancellationError { throw CancellationError() }
-                            catch { statuses[song.videoID] = Self.message(error) }
+                            catch {
+                                try ensureCurrent(ticket, session: session, connection: connection)
+                                statuses[song.videoID] = Self.message(error)
+                            }
                         }
                         if installed { statuses[song.videoID] = nil }
                         else if candidates.isEmpty { statuses[song.videoID] = "找不到同版本的完整音源，可附加音檔。" }
                     } catch is CancellationError { throw CancellationError() }
-                    catch { statuses[song.videoID] = Self.message(error) }
+                    catch {
+                        try ensureCurrent(ticket, session: session, connection: connection)
+                        statuses[song.videoID] = Self.message(error)
+                    }
                 }
             } catch is CancellationError { }
             catch {
@@ -134,6 +142,7 @@ final class YouTubeSyncController {
     }
 
     func attach(_ url: URL, to song: SyncedYouTubeSong, library: LocalLibrary) async throws {
+        guard !library.importInProgress else { throw PlatformError.message("請等目前音檔匯入完成後重試。") }
         cancel()
         let ticket = revision, id = accountID
         // Import the user's file once, retaining the existing local library's validation.

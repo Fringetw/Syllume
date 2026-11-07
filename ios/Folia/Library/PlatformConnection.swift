@@ -176,8 +176,12 @@ final class PlatformConnection {
         let revision = sessionID
         var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/videos")!
         parts.queryItems = [.init(name: "part", value: "contentDetails"), .init(name: "id", value: ids.joined(separator: ","))]
-        var result = try await request(url: parts.url!, token: accessToken())
-        if result.1.statusCode == 401 { result = try await request(url: parts.url!, token: accessToken(refresh: true)) }
+        var token = try await accessToken()
+        var result = try await request(url: parts.url!, token: token)
+        if result.1.statusCode == 401 {
+            token = try await accessToken(refresh: true)
+            result = try await request(url: parts.url!, token: token)
+        }
         try Task.checkCancellation()
         guard sessionID == revision else { throw CancellationError() }
         guard (200..<300).contains(result.1.statusCode) else { throw PlatformError.message("無法取得歌曲長度，請重新同步。") }
