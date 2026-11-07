@@ -182,8 +182,14 @@ final class FoliaUITests: XCTestCase {
         XCTAssertEqual(probeTime(probe), stopped, accuracy: 0.15)
         XCTAssertTrue((probe.value as? String ?? "").hasSuffix("|0.0"))
         toggle.tap()
-        let resumed = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > stopped + 0.25 }, evaluatedWith: probe)
-        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 15), .completed)
+        let resumed = expectation(for: NSPredicate { _, _ in
+            let sample = (probe.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), let rate = Double(sample[1]), rate > 0 else { return false }
+            // Slow simulators can reach the end of the 30-second fixture during the resume query.
+            return time > stopped + 0.25 || (stopped > 15 && time > 0.25 && time < stopped - 0.25)
+        }, evaluatedWith: probe)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 20), .completed,
+                       "Expected the media clock to advance from \(stopped); observed \(String(describing: probe.value))")
         toggle.tap(); capture(app, name: "YouTube-audio-without-video")
         app.buttons["關閉播放畫面"].tap()
         audio.press(forDuration: 1)
