@@ -50,21 +50,16 @@ actor SubtitleNetwork {
                         .init(name: "p", value: "1"), .init(name: "n", value: "8")]), provider: provider)
             return try SubtitleSourceDecoders.qqSearch(data)
         case "ytm":
-            let found = try await youtubeSearch(query, requireCaptions: false)
+            let found = try await rankedYouTubeSearch(query)
             var seen = Set<String>()
             let translated = found.filter(\.translatedVideo)
-            let filtered: [SubtitleRecord]
-            if translated.count < 3 {
-                filtered = (try? await youtubeSearch(query, requireCaptions: true)) ?? []
-            } else { filtered = [] }
-            try Task.checkCancellation()
             let playing: [SubtitleRecord] = current.flatMap { song in
                 let id = song.originVideoID ?? (song.source == "ytm" ? song.id : "")
                 guard YouTubeVideo.validID(id) else { return nil }
                 return [SubtitleRecord(song: SubtitleSong(id: id, source: "ytm", title: song.title,
                     artist: song.artist, durationMs: song.durationMs))]
             } ?? []
-            return Array((translated + filtered + playing + found).filter { seen.insert($0.song.id).inserted }.prefix(8))
+            return Array((translated + playing + found).filter { seen.insert($0.song.id).inserted }.prefix(8))
         case "lrclib":
             let data = try await read(url: url(base: URL(string: "https://lrclib.net/api")!, path: "search",
                 query: [.init(name: "q", value: query)]), provider: provider)
@@ -84,9 +79,25 @@ actor SubtitleNetwork {
         return try YouTubeCaptionDecoders.search(page)
     }
 
+    private func rankedYouTubeSearch(_ query: String) async throws -> [SubtitleRecord] {
+        async let cc = youtubeSearch(query, requireCaptions: true)
+        async let broad = youtubeSearch(query, requireCaptions: false)
+        let withCC: [SubtitleRecord]
+        do {
+            withCC = try await cc
+        } catch {
+            try Task.checkCancellation()
+            return YouTubeCaptionDecoders.rankedSearchResults(withCC: [], broad: try await broad)
+        }
+        let general = (try? await broad) ?? []
+        try Task.checkCancellation()
+        return YouTubeCaptionDecoders.rankedSearchResults(withCC: withCC, broad: general)
+    }
+
     func translationVideos(title: String, artist: String) async throws -> [SubtitleRecord] {
-        let query = String((title + " " + artist).prefix(110))
-        return try await youtubeSearch(query, requireCaptions: false).filter(\.translatedVideo).prefix(8).map { $0 }
+        let performers = DownloadSongMatch.artistNames(artist).joined(separator: " ")
+        let query = String((title + " " + performers).prefix(110))
+        return Array(try await rankedYouTubeSearch(query).filter(\.translatedVideo).prefix(8))
     }
 
     func lyrics(_ record: SubtitleRecord, netease: String, original: [LyricLine], current: SubtitleSong? = nil) async throws -> [LyricLine] {
@@ -142,21 +153,26 @@ actor SubtitleNetwork {
         let originals = tracks.filter { !$0.chinese && !$0.automatic }
         let original = originals.first { $0.original } ?? hint.flatMap { code in originals.first { $0.language == code } }
         async let originalCues: [LyricLine]? = optionalCaption(original)
-        var failure: Error = SubtitleReadError("caption-read-failed")
+        var failures: [SubtitleReadError] = []
         for track in chinese.prefix(3) {
             do {
                 let lines = try await caption(track)
-                guard !lines.isEmpty else { continue }
+                guard !lines.isEmpty else { throw SubtitleReadError("caption-read-failed", detail: "沒有有效時間軸") }
                 return YouTubeCaptionDecoders.bilingual(chinese: lines, original: await originalCues,
                     sameVideoBaseline: sameVideo ? baseline : [])
             } catch is CancellationError { throw CancellationError() }
-            catch { failure = error }
+            catch {
+                let failure = (error as? SubtitleReadError) ?? SubtitleReadError("network")
+                failures.append(SubtitleReadError(failure.code, detail: "\(track.language)：\(failure.detail ?? failure.explanation)"))
+            }
         }
-        throw failure
+        let detail = failures.compactMap(\.detail).joined(separator: "；")
+        let code = failures.contains { $0.code == "caption-read-failed" } ? "caption-read-failed" : failures.first?.code ?? "caption-read-failed"
+        throw SubtitleReadError(code, detail: detail)
     }
     private func caption(_ track: YouTubeCaptionTrack) async throws -> [LyricLine] {
         let data = try await read(url: track.url, provider: "ytm")
-        guard !data.isEmpty else { throw SubtitleReadError("caption-read-failed") }
+        guard !data.isEmpty else { throw SubtitleReadError("caption-read-failed", detail: "YouTube 回傳空白字幕") }
         return try YouTubeCaptionDecoders.cues(data, chinese: track.chinese)
     }
     private func optionalCaption(_ track: YouTubeCaptionTrack?) async -> [LyricLine]? {

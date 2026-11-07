@@ -150,15 +150,20 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                 return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID)
             } catch is CancellationError { throw CancellationError() }
             catch {
+                let ccFailure = (error as? SubtitleReadError) ?? SubtitleReadError("network")
                 try Task.checkCancellation()
                 await progress(-1)
-                let file: URL
-                do { file = try await AudioDownloadService.shared.translatedVideo(videoID) }
-                catch is CancellationError { throw CancellationError() }
-                catch let error as SubtitleReadError where ["verification-required", "video-too-long", "not-signed-in"].contains(error.code) { throw error }
-                catch { throw SubtitleReadError("video-unavailable") }
-                defer { try? FileManager.default.removeItem(at: file) }
-                return try await YouTubeCaptionOCR.read(file, progress: progress)
+                do {
+                    let file = try await AudioDownloadService.shared.translatedVideo(videoID)
+                    defer { try? FileManager.default.removeItem(at: file) }
+                    return try await YouTubeCaptionOCR.read(file, progress: progress)
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    let videoFailure = (error as? SubtitleReadError) ?? SubtitleReadError("video-unavailable")
+                    let code = ccFailure.code == "caption-read-failed" ? ccFailure.code : videoFailure.code
+                    let detail = "CC：\(ccFailure.detail ?? ccFailure.explanation)；影片辨識：\(videoFailure.explanation)"
+                    throw SubtitleReadError(code, detail: detail)
+                }
             }
         }
     }
@@ -173,6 +178,9 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private func readTranslation(source: String, work: @escaping @Sendable (@Sendable (Double) async -> Void) async throws -> [LyricLine]) {
         guard let song = input?.song, song.durationMs > 0 else { notice = "請等目前音訊載入後再讀取翻譯字幕。"; return }
         cancelTranslationRead(); translationPreview = nil
+        sourceStatus.removeValue(forKey: "ytm-manual")
+        sourceDiagnostics.removeValue(forKey: "ytm-manual")
+        updateReport()
         let ticket = videoRevision
         videoProgress = "正在讀取字幕軌…"
         videoTask = Task { [weak self] in
@@ -193,8 +201,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
             } catch {
                 guard let self, videoRevision == ticket, !Task.isCancelled else { return }
                 videoProgress = nil
-                let message = (error as? SubtitleReadError)?.explanation ?? "無法讀取翻譯影片的字幕。"
-                notice = message; sourceStatus["ytm-manual"] = message; updateReport()
+                let failure = error as? SubtitleReadError
+                let message = failure?.explanation ?? "無法讀取翻譯影片的字幕。"
+                notice = message
+                sourceStatus["ytm-manual"] = message
+                sourceDiagnostics["ytm-manual"] = failure?.detail
+                updateReport()
             }
         }
     }

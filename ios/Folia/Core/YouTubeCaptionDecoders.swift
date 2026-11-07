@@ -64,8 +64,9 @@ enum YouTubeCaptionDecoders {
                     let parts = text(video["lengthText"]).split(separator: ":").compactMap { Double($0) }
                     let seconds = parts.reduce(0) { $0 * 60 + $1 }
                     if !title.isEmpty, !artist.isEmpty, seconds > 0, seconds <= 3600 {
+                        let translated = isTranslatedUpload(title)
                         songs.append(SubtitleRecord(song: metadata(id: id, title: title, artist: artist, duration: seconds),
-                            translatedVideo: isTranslatedUpload(title)))
+                            translatedVideo: translated, translatedCCHint: translated && hasCCHint(title)))
                     }
                     return
                 }
@@ -82,8 +83,32 @@ enum YouTubeCaptionDecoders {
                     options: [.regularExpression, .caseInsensitive]) != nil
     }
 
+    private static func hasCCHint(_ title: String) -> Bool {
+        title.range(of: #"CC\s*字幕|(?:中文|繁中|繁體)\s*CC"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    static func rankedSearchResults(withCC: [SubtitleRecord], broad: [SubtitleRecord]) -> [SubtitleRecord] {
+        // The CC filter can surface translated uploads absent from the broad search.
+        // It proves that an upload has a track, while its watch page determines the language.
+        let translatedWithCC = withCC.filter(\.translatedVideo)
+        let ordered = translatedWithCC.filter(\.translatedCCHint) + translatedWithCC + broad.filter(\.translatedVideo) + withCC + broad
+        var seen = Set<String>()
+        return ordered.filter { seen.insert($0.song.id).inserted }
+    }
+
+    private static func parallelArtistCredit(_ text: String) -> String? {
+        guard let latin = text.range(of: #"\p{Latin}"#, options: .regularExpression) else { return nil }
+        let nativeNames = DownloadSongMatch.artistNames(String(text[..<latin.lowerBound]))
+        let latinNames = DownloadSongMatch.artistNames(String(text[latin.lowerBound...]))
+        guard nativeNames.count >= 2, nativeNames.count == latinNames.count,
+              nativeNames.allSatisfy({ $0.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}\p{Hangul}]"#, options: .regularExpression) != nil }),
+              latinNames.allSatisfy({ $0.range(of: #"^[\p{Latin} .'-]+$"#, options: .regularExpression) != nil }) else { return nil }
+        return nativeNames.joined(separator: " / ")
+    }
+
     private static func creditedArtists(_ text: String) -> String {
-        DownloadSongMatch.artistNames(text).map { part in
+        if let parallel = parallelArtistCredit(text) { return parallel }
+        return DownloadSongMatch.artistNames(text).map { part in
             let east = part.replacingOccurrences(of: #"[^\p{Han}\p{Hiragana}\p{Katakana}ー・]"#, with: "", options: .regularExpression)
             return east.count >= 2 && part.range(of: #"\p{Latin}"#, options: .regularExpression) != nil ? east : part
         }.joined(separator: " / ")
@@ -94,11 +119,20 @@ enum YouTubeCaptionDecoders {
         let labels = #"\s*[【\[(（]\s*(?:中[日英韓]?字幕|中[日英韓]雙語字幕|中文字幕|中字|中文翻譯|中文翻译|CC字幕|official(?: music)? (?:video|audio)|lyrics?(?: video)?)\s*[】\])）]\s*"#
         let clean = title.replacingOccurrences(of: labels, with: " ", options: [.regularExpression, .caseInsensitive])
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if DownloadSongMatch.versions(title).isEmpty,
-           let quoted = clean.firstMatch(of: #/[「『]([^」』]+)[」』]/#) {
+        let quotes = clean.matches(of: #/[「『]([^」』]+)[」』]/#)
+        let themeTitle = quotes.first { quote in
+            // Soundtrack uploads often quote the film or anime title before the song.
+            let prefix = clean[..<quote.range.lowerBound].suffix(36)
+            return prefix.range(of: #"(?:片頭曲|片尾曲|插曲|主題曲|主题曲|テーマ曲|(?<![A-Za-z])(?:OP|ED)[0-9]*)\s*[:：]?\s*$"#,
+                                options: [.regularExpression, .caseInsensitive]) != nil
+        }
+        if DownloadSongMatch.versions(title).isEmpty, let quoted = themeTitle ?? quotes.first {
             let extracted = String(quoted.1).trimmingCharacters(in: .whitespacesAndNewlines)
-            let tail = DownloadSongMatch.searchTitle(String(clean[quoted.range.upperBound...]))
-                .trimmingCharacters(in: CharacterSet(charactersIn: " -–—:：|｜"))
+            let tailCredit = clean[quoted.range.upperBound...].split(maxSplits: 1, omittingEmptySubsequences: false) {
+                $0 == "|" || $0 == "｜"
+            }.first ?? ""
+            let tail = DownloadSongMatch.searchTitle(String(tailCredit))
+                .trimmingCharacters(in: CharacterSet(charactersIn: " -–—:："))
             let head = DownloadSongMatch.searchTitle(String(clean[..<quoted.range.lowerBound]))
             let headKey = DownloadSongMatch.normalized(head)
             let uploaderKeys = DownloadSongMatch.artistKeys(artist)
@@ -130,7 +164,8 @@ enum YouTubeCaptionDecoders {
         let creditedArtist = aliasesAgree ? sharedAlias!
             : key(uploader).count >= 3 && key(prefixArtist).contains(key(uploader)) ? uploader : prefixArtist
         let creditedTitle = titleParts.count == 2 && !titleParts[1].isEmpty ? titleParts[1] : clean
-        return SubtitleSong(id: id, source: "ytm", title: creditedTitle, artist: creditedArtist, durationMs: duration * 1000)
+        return SubtitleSong(id: id, source: "ytm", title: creditedTitle,
+            artist: parallelArtistCredit(creditedArtist) ?? creditedArtist, durationMs: duration * 1000)
     }
     static func playerResponse(_ page: String, videoID: String) throws -> [String: Any] {
         let root = try embeddedObject(page, name: "ytInitialPlayerResponse")

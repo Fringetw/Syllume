@@ -21,6 +21,20 @@ enum SubtitleSourceChecks {
         precondition(YouTubeCaptionDecoders.isTranslatedUpload(jane))
         let translated = YouTubeCaptionDecoders.metadata(id: "t8HwSSH5Hes", title: jane, artist: "Mark Chong", duration: 236)
         precondition(translated.title == "JANE DOE" && translated.artist == "米津玄師 / 宇多田ヒカル")
+        let ccTitle = "【鏈鋸人】鏈鋸人劇場版-『鏈鋸人-蕾潔篇』片尾曲ED「JANE DOE」 米津玄師&宇多田光 |完整版|CC字幕|中日字幕 【4K】"
+        let cc = YouTubeCaptionDecoders.metadata(id: "RCXjG2tsojs", title: ccTitle, artist: "真尋醬是全世界最可愛的♡", duration: 236)
+        precondition(cc.title == "JANE DOE" && cc.artist == "米津玄師 / 宇多田光")
+        precondition(YouTubeCaptionDecoders.isTranslatedUpload(ccTitle))
+        let originalSong = YouTubeCaptionDecoders.metadata(id: "sPLqsLsooJY",
+            title: "米津玄師, 宇多田ヒカル Kenshi Yonezu, Hikaru Utada -  JANE DOE",
+            artist: "Kenshi Yonezu  米津玄師和Hikaru Utada", duration: 247)
+        precondition(originalSong.title == "JANE DOE" && originalSong.artist == "米津玄師 / 宇多田ヒカル")
+        let originalRecord = SubtitleRecord(song: originalSong)
+        let ccRecord = SubtitleRecord(song: cc, translatedVideo: true, translatedCCHint: true)
+        let broadRecord = SubtitleRecord(song: translated, translatedVideo: true)
+        let ranked = YouTubeCaptionDecoders.rankedSearchResults(withCC: [broadRecord, originalRecord, ccRecord],
+            broad: [originalRecord, broadRecord])
+        precondition(ranked.map(\.song.id) == ["RCXjG2tsojs", "t8HwSSH5Hes", "sPLqsLsooJY"])
         let timed = (0..<8).map { i in LyricLine(startTime: Double(i) * 2, endTime: Double(i) * 2 + 1.8, fullText: "Line \(i)") }
         let shifted = timed.map { LyricLine(startTime: $0.startTime + 0.55, endTime: $0.endTime + 0.55, fullText: "中文譯文") }
         let paired = SubtitleSourceDecoders.attach(timed, translations: shifted)

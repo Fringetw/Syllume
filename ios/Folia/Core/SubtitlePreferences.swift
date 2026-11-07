@@ -82,4 +82,5 @@ struct SubtitleRecord: Sendable {
     let song: SubtitleSong
     var lines: [LyricLine]? = nil
     var translatedVideo: Bool = false
+    var translatedCCHint: Bool = false
 }
