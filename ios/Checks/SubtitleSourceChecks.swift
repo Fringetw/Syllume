@@ -28,9 +28,18 @@ enum SubtitleSourceChecks {
         let originalSong = YouTubeCaptionDecoders.metadata(id: "sPLqsLsooJY",
             title: "米津玄師, 宇多田ヒカル Kenshi Yonezu, Hikaru Utada -  JANE DOE",
             artist: "Kenshi Yonezu  米津玄師和Hikaru Utada", duration: 247)
-        precondition(originalSong.title == "JANE DOE" && originalSong.artist == "米津玄師 / 宇多田ヒカル")
+        precondition(originalSong.title == "JANE DOE" && originalSong.artist == "米津玄師 / 宇多田ヒカル", "Unexpected original video metadata: \(originalSong.title) / \(originalSong.artist)")
         let originalRecord = SubtitleRecord(song: originalSong)
-        let ccRecord = SubtitleRecord(song: cc, translatedVideo: true, translatedCCHint: true)
+        let ccPage = """
+        var ytInitialData = {"contents":[{"videoRenderer":{
+          "videoId":"RCXjG2tsojs","title":{"simpleText":"\(ccTitle)"},
+          "ownerText":{"simpleText":"真尋醬是全世界最可愛的♡"},"lengthText":{"simpleText":"3:56"}
+        }}]};
+        """
+        let ccRecords = try YouTubeCaptionDecoders.search(ccPage)
+        precondition(ccRecords.count == 1)
+        let ccRecord = ccRecords[0]
+        precondition(ccRecord.song == cc && ccRecord.translatedCCHint && ccRecord.uploader == "真尋醬是全世界最可愛的♡")
         let broadRecord = SubtitleRecord(song: translated, translatedVideo: true)
         let ranked = YouTubeCaptionDecoders.rankedSearchResults(withCC: [broadRecord, originalRecord, ccRecord],
             broad: [originalRecord, broadRecord])

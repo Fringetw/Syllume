@@ -66,7 +66,7 @@ enum YouTubeCaptionDecoders {
                     if !title.isEmpty, !artist.isEmpty, seconds > 0, seconds <= 3600 {
                         let translated = isTranslatedUpload(title)
                         songs.append(SubtitleRecord(song: metadata(id: id, title: title, artist: artist, duration: seconds),
-                            translatedVideo: translated, translatedCCHint: translated && hasCCHint(title)))
+                            translatedVideo: translated, translatedCCHint: translated && hasCCHint(title), uploader: artist))
                     }
                     return
                 }
@@ -142,7 +142,7 @@ enum YouTubeCaptionDecoders {
                 return SubtitleSong(id: id, source: "ytm", title: extracted, artist: creditedArtists(credit), durationMs: duration * 1000)
             }
         }
-        let titleParts = clean.components(separatedBy: " - ")
+        let titleParts = clean.components(separatedBy: " - ").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         // An explicit Artist - Song credit is more useful than a translation channel's name.
         let prefixArtist = titleParts.count == 2 && !titleParts[0].isEmpty ? titleParts[0] : artist
         let uploader = artist.replacingOccurrences(of: #"\s*-\s*Topic\s*$"#, with: "", options: [.regularExpression, .caseInsensitive])

@@ -148,9 +148,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         readTranslation(source: "YouTube 翻譯影片") { progress in
             do {
                 return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID)
-            } catch is CancellationError { throw CancellationError() }
-            catch {
-                let ccFailure = (error as? SubtitleReadError) ?? SubtitleReadError("network")
+            } catch let ccFailure as SubtitleReadError where ccFailure.code == "captions-unavailable" {
                 try Task.checkCancellation()
                 await progress(-1)
                 do {
@@ -160,9 +158,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                 } catch is CancellationError { throw CancellationError() }
                 catch {
                     let videoFailure = (error as? SubtitleReadError) ?? SubtitleReadError("video-unavailable")
-                    let code = ccFailure.code == "caption-read-failed" ? ccFailure.code : videoFailure.code
-                    let detail = "CC：\(ccFailure.detail ?? ccFailure.explanation)；影片辨識：\(videoFailure.explanation)"
-                    throw SubtitleReadError(code, detail: detail)
+                    let detail = "CC：未列出人工中文字幕軌；影片辨識：\(videoFailure.explanation)"
+                    throw SubtitleReadError(videoFailure.code, detail: detail)
                 }
             }
         }
@@ -380,7 +377,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         let names = ["netease": "網易雲", "qq": "QQ 音樂", "ytm": "YouTube 搜尋", "ytm-manual": "YouTube 翻譯影片",
             "local": "本機", "navidrome": "Navidrome", "lrclib": "LRCLIB"]
         let states = sourceStatus.keys.sorted().map { "\(names[$0] ?? $0)：\(sourceStatus[$0] ?? "")" }
-        let details = sourceDiagnostics.keys.sorted().map { "\($0)：\(sourceDiagnostics[$0] ?? "")" }
+        let details = sourceDiagnostics.keys.sorted().map { "\(names[$0] ?? $0)：\(sourceDiagnostics[$0] ?? "")" }
         let engine = engineError ?? (preferences.active ? (ready ? "已就緒" : "準備中") : "已停用")
         let song = input.map { "\($0.song.title) · \($0.song.artist)" } ?? "目前沒有歌曲"
         let translated = timeline.lines.filter { $0.translation?.isEmpty == false || $0.extra["displayTranslation"] != nil }.count
