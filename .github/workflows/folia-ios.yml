@@ -76,21 +76,40 @@ jobs:
             ${{ runner.temp }}/FoliaPackage/Folia-iOS-unsigned.ipa
             ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
           if-no-files-found: error
-      - name: Exercise playback and platform setup on iPhone Simulator
+      - name: Exercise YouTube playlist selection and audio playback on iPhone Simulator
+        timeout-minutes: 14
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          echo "FOLIA_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
             -destination "platform=iOS Simulator,id=$simulator_id" \
             -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \
+            -resultBundlePath "$RUNNER_TEMP/FoliaPlaylistUI.xcresult" \
+            -only-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
+            -only-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+      - name: Exercise remaining playback and platform setup on iPhone Simulator
+        timeout-minutes: 26
+        run: |
+          xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
+            -destination "platform=iOS Simulator,id=$FOLIA_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \
             -resultBundlePath "$RUNNER_TEMP/FoliaUI.xcresult" \
+            -skip-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
+            -skip-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
             -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator screenshots
         if: always()
         run: |
-          if [ -d "$RUNNER_TEMP/FoliaUI.xcresult" ]; then
-            xcrun xcresulttool export attachments --path "$RUNNER_TEMP/FoliaUI.xcresult" \
-              --output-path "$RUNNER_TEMP/FoliaUIScreenshots"
-          fi
+          mkdir -p "$RUNNER_TEMP/FoliaUIScreenshots"
+          for result in FoliaPlaylistUI FoliaUI; do
+            if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
+              if ! xcrun xcresulttool export attachments --path "$RUNNER_TEMP/$result.xcresult" \
+                --output-path "$RUNNER_TEMP/FoliaUIScreenshots/$result"; then
+                echo "::warning::Could not export attachments from $result"
+              fi
+            fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:

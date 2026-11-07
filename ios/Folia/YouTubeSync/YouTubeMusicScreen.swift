@@ -77,6 +77,8 @@ struct YouTubeMusicScreen: View {
                                     }
                                 }.padding(.vertical, 5)
                             }
+                            .accessibilityIdentifier("youtubeSong-" + song.id)
+                            .accessibilityValue(status(song))
                             .contextMenu {
                                 Button("附加音檔", systemImage: "folder.badge.plus") { attachment = song; importing = true }
                             }
@@ -95,7 +97,7 @@ struct YouTubeMusicScreen: View {
                 .refreshable { refresh() }
             }
         }
-        .sheet(isPresented: $showingAccount) { PlatformAccountSettings(connection: connection) }
+        .sheet(isPresented: $showingAccount, onDismiss: offerPlaylistPicker) { PlatformAccountSettings(connection: connection) }
         .sheet(isPresented: $showingPicker) {
             YouTubePlaylistPicker(connection: connection, current: sync.snapshot.choice) { choice in
                 sync.choose(choice, connection: connection, library: library, account: account)
@@ -105,12 +107,11 @@ struct YouTubeMusicScreen: View {
         .task(id: connection.sessionID) {
             sync.activate(connection)
             if connection.connected {
-                if sync.snapshot.choice == nil { showingPicker = true }
+                if sync.snapshot.choice == nil { offerPlaylistPicker() }
                 else { refresh() }
             } else { showingPicker = false }
         }
         .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
-        .onChange(of: account) { _, _ in sync.cancel(); refresh() }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
             let song = attachment; attachment = nil
             guard let song else { return }
@@ -128,6 +129,11 @@ struct YouTubeMusicScreen: View {
 
     private var readyCount: Int { sync.snapshot.songs.filter { sync.localTrack(for: $0, library: library) != nil }.count }
     private func refresh() { sync.synchronize(connection: connection, library: library, account: account) }
+    private func offerPlaylistPicker() {
+        guard !showingAccount, connection.connected else { return }
+        sync.activate(connection)
+        if sync.snapshot.choice == nil { showingPicker = true }
+    }
     private func status(_ song: SyncedYouTubeSong) -> String {
         if sync.localTrack(for: song, library: library) != nil { return sync.snapshot.bindings[song.videoID]?.quality ?? "已就緒" }
         return sync.statuses[song.videoID] ?? "尚未下載 · 點一下附加音檔"

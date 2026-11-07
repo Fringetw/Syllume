@@ -5,14 +5,14 @@ final class FoliaUITests: XCTestCase {
     func testBuiltInTraditionalSubtitles() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--subtitle-fixture", "--subtitle-reset"]
+        // Exercise subtitle rendering in the lyric list; the graphics runtime has its own test.
+        app.launchArguments = ["--subtitle-fixture", "--subtitle-reset", "-Folia.LyricDisplayMode", "lyrics"]
         app.launch()
         XCTAssertTrue(app.buttons["demoTrack"].waitForExistence(timeout: 15))
         app.buttons["demoTrack"].tap()
         let transport = app.buttons["playerToggle"]
         XCTAssertTrue(transport.waitForExistence(timeout: 10))
         if transport.label == "暫停" { transport.tap() }
-        app.segmentedControls.buttons["歌詞"].tap()
         assertLyric("頭髮發現", in: app)
         capture(app, name: "Built-in-subtitles-converted")
         openSubtitlePreferences(in: app)
@@ -25,12 +25,11 @@ final class FoliaUITests: XCTestCase {
         assertLyric("头发发现", in: app)
 
         app.terminate()
-        app.launchArguments = ["--subtitle-fixture"]
+        app.launchArguments = ["--subtitle-fixture", "-Folia.LyricDisplayMode", "lyrics"]
         app.launch()
         app.buttons["demoTrack"].tap()
         XCTAssertTrue(transport.waitForExistence(timeout: 10))
         if transport.label == "暫停" { transport.tap() }
-        app.segmentedControls.buttons["歌詞"].tap()
         assertLyric("头发发现", in: app)
         openSubtitlePreferences(in: app)
         setSwitch("subtitleConversion", to: true, in: app)
@@ -155,14 +154,19 @@ final class FoliaUITests: XCTestCase {
     func testYouTubeSyncedAudioPausesWithoutVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--playback-probe", "--presentation-reset"]
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
         app.launch(); app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
-        let audio = app.buttons.matching(NSPredicate(format: "label CONTAINS %@", "Debug 本機夾具")).firstMatch
-        XCTAssertTrue(audio.waitForExistence(timeout: 30)); audio.tap()
+        let audio = app.buttons["youtubeSong-fixture-row"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 15))
+        let ready = expectation(for: NSPredicate(format: "value CONTAINS %@", "Debug 本機夾具"), evaluatedWith: audio)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 20), .completed)
+        audio.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
+        app.buttons["循環佇列"].tap()
+        if toggle.label == "播放" { toggle.tap() }
         XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
         let probe = app.staticTexts["localTransportProbe"]
         XCTAssertTrue(probe.waitForExistence(timeout: 5))

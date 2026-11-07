@@ -80,6 +80,8 @@ struct LibraryScreen: View {
         .onChange(of: youtube.sessionID, initial: true) { _, _ in youtubeSync.activate(youtube) }
         .onChange(of: navidrome.account) { _, _ in
             player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
+            youtubeSync.cancel()
+            if source == .youtube { youtubeSync.synchronize(connection: youtube, library: library, account: navidrome.account) }
         }
         .onChange(of: subtitleInput, initial: true) { _, next in
             subtitles.load(next, timeline: player.timeline)

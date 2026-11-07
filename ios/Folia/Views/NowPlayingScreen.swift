@@ -76,8 +76,7 @@ struct NowPlayingScreen: View {
                 TransportControls(player: player).id(track.id)
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
-                    Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
-                        .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+                    LocalTransportProbe(player: player)
                 }
                 #endif
               }
@@ -139,6 +138,16 @@ struct NowPlayingScreen: View {
         }
     }
 }
+
+#if DEBUG
+private struct LocalTransportProbe: View {
+    let player: PlaybackModel
+    var body: some View {
+        Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
+            .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+    }
+}
+#endif
 
 private struct TransportControls: View {
     let player: PlaybackModel
