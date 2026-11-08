@@ -176,7 +176,7 @@ final class FoliaUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-slow-source-fixture",
-                               "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
+                               "--subtitle-fixture", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
         app.launch(); app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()

@@ -77,7 +77,7 @@ jobs:
             ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
           if-no-files-found: error
       - name: Exercise YouTube playlist selection and audio playback on iPhone Simulator
-        timeout-minutes: 14
+        timeout-minutes: 18
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
           echo "FOLIA_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"

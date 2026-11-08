@@ -337,7 +337,6 @@ final class PlaybackModel {
         switch track.source {
         case .catalogue:
             resolveCatalogue(track)
-            system?.updateCommands(model: self)
             return
         case .local:
             url = library.assetURL(for: track)
@@ -512,7 +511,6 @@ final class PlaybackModel {
                 }
             } catch { /* An interrupted search must not restart the audio. */ }
         }
-        publishNowPlaying()
     }
 
     private func startCatalogueDeadline() {
@@ -592,8 +590,10 @@ final class PlaybackModel {
         resumeAfterInterruption = false
         statusObservation?.invalidate()
         statusObservation = nil
-        player.pause()
-        player.replaceCurrentItem(with: nil)
+        if player.currentItem != nil {
+            player.pause()
+            player.replaceCurrentItem(with: nil)
+        }
         lyricsTask?.cancel()
         artworkTask?.cancel()
         lyricsLoading = false

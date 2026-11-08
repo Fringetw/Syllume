@@ -205,6 +205,7 @@ struct YouTubeMusicScreen: View {
     }
 
     private func play(_ song: SyncedYouTubeSong, _ queue: [SyncedYouTubeSong]) {
+        sync.cancel()
         player.playPlaylist(queue, from: song, bindings: sync.snapshot.bindings, account: account, connection: connection)
         openPlayer()
     }

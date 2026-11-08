@@ -68,7 +68,9 @@ struct LibraryScreen: View {
             SubtitleEngineAnchor(controller: subtitles).frame(width: 1, height: 1)
                 .allowsHitTesting(false).accessibilityHidden(true)
         }
-        .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player, subtitles: subtitles) }
+        .fullScreenCover(isPresented: $showingPlayer, onDismiss: {
+            if source == .youtube { youtubeSync.synchronize(connection: youtube) }
+        }) { NowPlayingScreen(player: player, subtitles: subtitles) }
         .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
         .onAppear { subtitles.sources(library: library, account: navidrome.account) }
