@@ -105,7 +105,9 @@ struct LyricSearchScreen: View {
                 Text("讀到 \(preview.lines.count) 行 · " + (preview.aligned ? "已對齊原詞" : "採影片時間，可能需要校正"))
                     .font(.caption).foregroundStyle(.secondary)
                 ForEach(Array(preview.displayLines.prefix(4).enumerated()), id: \.offset) { _, line in
-                    LabeledContent(playbackTime(line.startTime), value: line.translation ?? line.fullText)
+                    LabeledContent(playbackTime(line.startTime)) {
+                        Text(line.translationText ?? line.fullText).font(FoliaLyricFont.text(.callout, size: 16))
+                    }
                 }
                 Button("套用這份字幕") { subtitles.applyTranslationPreview() }
                 Button("取消預覽", role: .cancel) { subtitles.discardTranslationPreview() }
@@ -148,7 +150,7 @@ struct LyricSearchScreen: View {
                         Text("\(record.artistName) · \(record.albumName) · \(playbackTime(record.duration))")
                             .font(.caption).foregroundStyle(.secondary)
                         Text(record.syncedLyrics?.split(separator: "\n").prefix(2).joined(separator: "\n") ?? "")
-                            .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                            .font(FoliaLyricFont.text(.caption, size: 12)).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
             }

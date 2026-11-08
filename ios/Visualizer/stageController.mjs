@@ -1,3 +1,20 @@
+// Canvas needs the actual face before measuring lyrics and building text textures.
+export async function loadLyricFont(fonts, timeoutMs = 8000) {
+    const family = 'GenSenRounded2JP-M';
+    let timer;
+    try {
+        const faces = await Promise.race([
+            fonts.load(`500 28px "${family}"`, '繁體かなABC'),
+            new Promise(resolve => { timer = setTimeout(() => resolve([]), timeoutMs); }),
+        ]);
+        return faces.some(face => face.status === 'loaded') ? family : undefined;
+    } catch {
+        return undefined;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 // Keep the native media clock authoritative and stop GPU work when nothing changes.
 export function createStageController({ createRuntime, host, notify, now = () => performance.now(), visible = () => !document.hidden }) {
     let runtime = null, runtimeKey = '', generation = 0, controller;

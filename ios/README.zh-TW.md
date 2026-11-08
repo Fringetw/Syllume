@@ -1,4 +1,4 @@
-# Folia iOS 0.3.7 · build 15
+# Folia iOS 0.3.9 · build 17
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 會解析固定版本的 YouTubeKit 套件；Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
@@ -11,6 +11,10 @@
 - 內建 30 秒「潮汐之間」示範音軌與歌詞，可離線試用。
 
 0.1.0 採用原生歌詞清單；0.3.0 開始直接使用桌面版 Sonnet 引擎。0.3.1 內建 OpenCC 繁體字幕；0.3.4 加入繪光；其餘桌面動畫樣式與通用 Folium 插件系統尚未移植。
+
+## 0.3.9 源泉圓體 JP 字幕
+
+歌詞清單、商籟、繪光及譯文預覽使用源泉圓體 JP Medium。建置會校驗原作者 v2.100 的完整 JP 字型並打包到 App，手機播放時可離線顯示。原字型及授權來自 [ButTaiwan/gensen-font](https://github.com/ButTaiwan/gensen-font/releases/tag/v2.100)，[SIL OFL 1.1 授權全文](Folia/Resources/FoliaStage/LICENSE.GenSenRoundedJP.txt)隨 App 附帶。
 
 ## 0.3.8 弱網路播放與離線繁體字幕
 
@@ -121,7 +125,7 @@ Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/docume
 
 ## 在 Mac 建置並裝到 iPhone
 
-1. 使用 Xcode 16 或更新版本開啟 `ios/Folia.xcodeproj`。
+1. 從專案根目錄執行 `python3 ios/Tools/prepare_lyric_font.py` 準備一次字型，再用 Xcode 16 或更新版本開啟 `ios/Folia.xcodeproj`。
 2. 選 `Folia` target → **Signing & Capabilities**，啟用 **Automatically manage signing** 並選擇自己的 Team。若 Bundle Identifier 已被使用，改為自己的唯一識別碼。
 3. 連接 iPhone，在 Xcode 選該 iPhone 為執行目的地。若手機提示，前往「設定 → 隱私權與安全性 → 開發者模式」完成設定。
 4. 按 **Run**，安裝後點「潮汐之間」驗證播放。也可先選擇 iPhone 模擬器確認 App 啟動。

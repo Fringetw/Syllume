@@ -68,6 +68,7 @@ final class FoliaUITests: XCTestCase {
         if transport.label == "暫停" { transport.tap() }
         assertLyric("頭髮發現", in: app)
         assertLyric("風裡的回聲", in: app)
+        XCTAssertEqual(app.buttons["lyricLine-0"].value as? String, "GenSenRounded2JP-M")
     }
 
     func testSubtitleSourceSettingsPersist() {
@@ -109,7 +110,7 @@ final class FoliaUITests: XCTestCase {
         if toggle.label == "播放" { toggle.tap() }
         let stage = app.descendants(matching: .any)["foliaSonnetStage"].firstMatch
         XCTAssertTrue(stage.waitForExistence(timeout: 30))
-        let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: stage)
+        let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒 · GenSenRounded2JP-M"), evaluatedWith: stage)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 90), .completed, "Sonnet: \(String(describing: stage.value))")
         if toggle.label == "播放" { toggle.tap() }
         XCTAssertEqual(toggle.label, "暫停")
@@ -130,7 +131,7 @@ final class FoliaUITests: XCTestCase {
         app.segmentedControls.buttons["繪光"].tap()
         let lumiere = app.descendants(matching: .any)["foliaLumiereStage"].firstMatch
         XCTAssertTrue(lumiere.waitForExistence(timeout: 20))
-        let lumiereReady = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: lumiere)
+        let lumiereReady = expectation(for: NSPredicate(format: "value == %@", "已就緒 · GenSenRounded2JP-M"), evaluatedWith: lumiere)
         XCTAssertEqual(XCTWaiter.wait(for: [lumiereReady], timeout: 120), .completed, "Lumiere: \(String(describing: lumiere.value))")
         XCTAssertGreaterThan(lumiere.frame.height, app.frame.height * 0.8)
         capture(app, name: "Lumiere-paused")

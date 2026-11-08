@@ -1,3 +1,5 @@
+import CoreGraphics
+import CoreText
 import Foundation
 
 // Cross-platform checks run without an iPhone or a server account.
@@ -10,6 +12,16 @@ struct Checks {
         try SubtitleSourceChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let fontName = "GenSenRounded2JP-M"
+        let fontURL = ios.appending(path: "Folia/Resources/FoliaStage/" + fontName + ".otf")
+        _ = CTFontManagerRegisterFontsForURL(fontURL as CFURL, .process, nil)
+        let font = CTFontCreateWithName(fontName as CFString, 28, nil)
+        precondition(CTFontCopyPostScriptName(font) as String == fontName)
+        let characters = Array("頭髮發現風裡回聲あいうABC".utf16)
+        var glyphs = Array(repeating: CGGlyph(0), count: characters.count)
+        precondition(CTFontGetGlyphsForCharacters(font, characters, &glyphs, characters.count))
+        precondition(glyphs.allSatisfy { $0 != 0 })
+        print("PASS: bundled GenSenRounded JP Medium registers with Traditional Chinese, Japanese and Latin glyphs")
         let converter = NativeSubtitleConverter(bundleURL: ios.appending(path: "Folia/Resources/FoliaSubtitles/subtitles.js"))
         let line = LyricLine(startTime: 1, endTime: 3, fullText: "头发发现", translation: "风里的回声",
             words: [LyricWord(text: "头发", startTime: 1, endTime: 2), LyricWord(text: "发现", startTime: 2, endTime: 3)],

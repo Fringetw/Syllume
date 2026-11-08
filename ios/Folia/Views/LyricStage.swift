@@ -1,4 +1,22 @@
+import CoreText
 import SwiftUI
+import UIKit
+
+@MainActor
+enum FoliaLyricFont {
+    private static let name = "GenSenRounded2JP-M"
+    static let registeredName: String? = {
+        if UIFont(name: name, size: 16) != nil { return name }
+        guard let url = Bundle.main.url(forResource: name, withExtension: "otf", subdirectory: "FoliaStage") else { return nil }
+        _ = CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+        return UIFont(name: name, size: 16)?.fontName
+    }()
+
+    static func text(_ style: Font.TextStyle, size: CGFloat) -> Font {
+        guard let registeredName else { return .system(style) }
+        return .custom(registeredName, size: size, relativeTo: style)
+    }
+}
 
 // Native Folia-inspired stage with line transitions and word highlighting.
 enum FoliaPalette {
@@ -92,6 +110,10 @@ struct LyricStage: View {
                             .accessibilityHint("跳到這句歌詞")
                             .accessibilityAddTraits(active ? .isSelected : [])
                             .accessibilityIdentifier("lyricLine-\(row)")
+                            #if DEBUG
+                            .accessibilityValue(ProcessInfo.processInfo.arguments.contains("--subtitle-fixture")
+                                ? FoliaLyricFont.registeredName ?? "system" : "")
+                            #endif
                             .id(row)
                         }
                     }
@@ -147,20 +169,20 @@ struct LyricRow: View {
                     }
                     .shadow(color: FoliaPalette.accent.opacity(active ? 0.26 : 0), radius: active ? 10 : 0)
             }
-            .font(.system(.title, design: .serif, weight: .semibold))
+            .font(FoliaLyricFont.text(.title, size: 28))
             .fixedSize(horizontal: false, vertical: true)
             if let romanization = line.romanizationText, !romanization.isEmpty {
-                Text(romanization).font(.footnote).foregroundStyle(.secondary)
+                Text(romanization).font(FoliaLyricFont.text(.footnote, size: 13)).foregroundStyle(.secondary)
             }
             if let translation = line.translationText, !translation.isEmpty {
-                Text(translation).font(.callout).foregroundStyle(active ? FoliaPalette.accent : .secondary)
+                Text(translation).font(FoliaLyricFont.text(.callout, size: 16)).foregroundStyle(active ? FoliaPalette.accent : .secondary)
             }
             if case .array(let vocals)? = line.extra["backgroundVocals"] {
                 ForEach(vocals.indices, id: \.self) { index in
                     if case .object(let vocal) = vocals[index], let text = vocal["text"]?.text {
-                        Text(text).font(.callout).foregroundStyle(.secondary)
+                        Text(text).font(FoliaLyricFont.text(.callout, size: 16)).foregroundStyle(.secondary)
                         if let translation = vocal["translation"]?.text {
-                            Text(translation).font(.caption).foregroundStyle(.secondary)
+                            Text(translation).font(FoliaLyricFont.text(.caption, size: 12)).foregroundStyle(.secondary)
                         }
                     }
                 }
