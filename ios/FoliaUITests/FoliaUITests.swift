@@ -55,6 +55,21 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(report.label.contains("完整結構化紀錄"))
     }
 
+    func testOfflineTraditionalSubtitlesWhileSearchUnavailable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--subtitle-offline-only", "--subtitle-fixture", "--subtitle-reset",
+                               "-Folia.LyricDisplayMode", "lyrics"]
+        app.launch()
+        XCTAssertTrue(app.buttons["demoTrack"].waitForExistence(timeout: 15))
+        app.buttons["demoTrack"].tap()
+        let transport = app.buttons["playerToggle"]
+        XCTAssertTrue(transport.waitForExistence(timeout: 10))
+        if transport.label == "暫停" { transport.tap() }
+        assertLyric("頭髮發現", in: app)
+        assertLyric("風裡的回聲", in: app)
+    }
+
     func testSubtitleSourceSettingsPersist() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -160,13 +175,15 @@ final class FoliaUITests: XCTestCase {
     func testYouTubeSyncedAudioPausesWithoutVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-slow-source-fixture",
+                               "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
         app.launch(); app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let audio = app.buttons["youtubeSong-fixture-row"]
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
         XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
+        XCTAssertTrue(app.staticTexts["正在載入其餘歌曲…"].exists)
         audio.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))

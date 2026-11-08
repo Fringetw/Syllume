@@ -37,6 +37,7 @@ struct SubtitlePreferences: Codable, Equatable, Sendable {
         searchYouTube = try c.decodeIfPresent(Bool.self, forKey: .searchYouTube) ?? searchYouTube
     }
 
+    var conversionKey: String { "\(active)|\(enabled)|\(target)|\(convertOriginal)|\(convertTranslation)|\(protectJapanese)" }
     var sourceKey: String { "\(searchNetease)|\(searchQQ)|\(searchYouTube)|\(neteaseAPI)" }
 }
 

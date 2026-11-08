@@ -46,6 +46,11 @@ enum YouTubeSyncChecks {
             format: "mp3", bitrate: 320000, source: "測試")
         precondition(DownloadAudioCandidate.preferred(audio, mp3))
         precondition(!DownloadAudioCandidate.preferred(mp3, audio))
+        let compact = DownloadAudioCandidate(url: audio.url, title: "LOSER", artist: "米津玄師", duration: 244,
+            format: "m4a", bitrate: 128_000, source: "測試")
+        precondition(DownloadAudioCandidate.preferred(mp3, compact))
+        precondition([audio, mp3, compact].sorted(by: DownloadAudioCandidate.preferredForStreaming).map(\.bitrate)
+            == [128_000, 320_000, 900_000])
 
         let qq = try DownloadSourceDecoders.qqSearch(Data(#"{"code":0,"data":{"song":{"list":[{"songmid":"S1","strMediaMid":"M1","songid":7,"songname":"LOSER","singer":[{"name":"米津玄師"}],"interval":244}]}}}"#.utf8), for: song)
         precondition(qq.count == 1)

@@ -133,6 +133,9 @@ struct NowPlayingScreen: View {
                     .id(track.id)
             }
             .onChange(of: track.id) { _, _ in showingSearch = false }
+            .onChange(of: player.subtitleInput, initial: true) { _, input in
+                subtitles.load(input, timeline: player.timeline)
+            }
         } else {
             Color.clear.onAppear { dismiss() }
         }

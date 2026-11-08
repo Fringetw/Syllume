@@ -91,6 +91,35 @@ struct DownloadAudioCandidate: Sendable {
         }
         return lhs.bitrate > rhs.bitrate
     }
+
+    static func preferredForStreaming(_ lhs: Self, _ rhs: Self) -> Bool {
+        func tier(_ candidate: Self) -> Int {
+            if candidate.lossless { return 3 }
+            if candidate.bitrate <= 0 { return 2 }
+            return candidate.bitrate <= 192_000 ? 0 : 1
+        }
+        let a = tier(lhs), b = tier(rhs)
+        if a != b { return a < b }
+        return a == 1 ? lhs.bitrate < rhs.bitrate : preferred(lhs, rhs)
+    }
+
+}
+
+enum PlaybackLookup {
+    static func within<Value: Sendable>(_ duration: Duration,
+                                       operation: @escaping @Sendable () async throws -> Value) async throws -> Value {
+        try await withThrowingTaskGroup(of: Value.self) { group in
+            defer { group.cancelAll() }
+            group.addTask(operation: operation)
+            group.addTask {
+                try await Task.sleep(for: duration)
+                throw PlatformError.message("音源連線逾時。")
+            }
+            guard let value = try await group.next() else { throw CancellationError() }
+            try Task.checkCancellation()
+            return value
+        }
+    }
 }
 
 enum DownloadSongMatch {

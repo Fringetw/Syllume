@@ -80,60 +80,42 @@ final class YouTubeSyncController {
         do { try save(next); error = nil } catch { self.error = "無法儲存歌單編輯。" }
     }
 
-    func synchronize(connection: PlatformConnection) {
+    func synchronize(connection: PlatformConnection, force: Bool = false) {
         guard !busy, connection.connected, connection.libraryID == accountID,
               let choice = snapshot.choice, !choice.isLocal else { return }
+        if !force, let updated = snapshot.lastSync, Date().timeIntervalSince(updated) < 300 { return }
         let ticket = UUID(), session = connection.sessionID
         revision = ticket; busy = true; phase = "正在同步歌單…"; error = nil
-        task = Task { [weak self] in
+        task = Task(priority: .utility) { [weak self] in
             guard let self else { return }
             defer { if revision == ticket { busy = false; phase = ""; task = nil } }
             do {
-                var entries: [LibraryEntry] = [], cursor: String?, seenCursors = Set<String>()
+                let cached = Dictionary(snapshot.songs.map { ($0.videoID, $0) }, uniquingKeysWith: { first, _ in first })
+                var songs: [SyncedYouTubeSong] = [], cursor: String?, seenCursors = Set<String>()
                 repeat {
+                    guard seenCursors.count < 200 else { throw PlatformError.message("歌單超過同步上限，已保留已載入的歌曲。") }
                     let page = try await connection.page(choice.collection, cursor: cursor)
                     try ensureCurrent(ticket, session: session, connection: connection)
-                    entries += page.entries; cursor = page.next
-                    if entries.count > 10_000 || (cursor.map { !seenCursors.insert($0).inserted } ?? false) {
-                        throw PlatformError.message("歌單太長或分頁回應重複，已保留上次同步的內容。")
+                    cursor = page.next
+                    songs += page.entries.compactMap { entry -> SyncedYouTubeSong? in
+                        guard var song = SyncedYouTubeSong(entry) else { return nil }
+                        if let old = cached[song.videoID], old.title == song.title, old.artist == song.artist {
+                            song.duration = song.duration ?? old.duration
+                            if old.channelID == song.channelID { song.avatarURL = old.avatarURL }
+                        }
+                        return song
+                    }
+                    if songs.count > 10_000 || (cursor.map { !seenCursors.insert($0).inserted } ?? false) {
+                        throw PlatformError.message("歌單太長或分頁回應重複，已保留已載入的歌曲。")
+                    }
+                    if cursor != nil {
+                        if snapshot.songs.isEmpty, !songs.isEmpty {
+                            var firstPage = snapshot; firstPage.songs = songs
+                            try save(firstPage)
+                        }
+                        phase = "正在載入其餘歌曲…"
                     }
                 } while cursor != nil
-                var songs = entries.compactMap(SyncedYouTubeSong.init)
-                var durations: [String: Double] = [:]
-                var portraits: [String: (name: String, url: URL)] = [:]
-                for song in snapshot.songs {
-                    if let duration = song.duration { durations[song.videoID] = duration }
-                    if let channel = song.channelID, let image = song.avatarURL { portraits[channel] = (song.artist, image) }
-                }
-                let missing = Array(Set(songs.filter { $0.duration == nil && durations[$0.videoID] == nil }.map(\.videoID))).sorted()
-                for start in stride(from: 0, to: missing.count, by: 50) {
-                    let batch = Array(missing[start..<min(start + 50, missing.count)])
-                    if let result = try? await connection.videoDurations(batch) { durations.merge(result, uniquingKeysWith: { _, new in new }) }
-                    try ensureCurrent(ticket, session: session, connection: connection)
-                }
-                let channels = Array(Set(songs.compactMap(\.channelID).filter {
-                    portraits[$0] == nil && $0.range(of: #"^UC[A-Za-z0-9_-]{22}$"#, options: .regularExpression) != nil
-                })).sorted()
-                for start in stride(from: 0, to: channels.count, by: 50) {
-                    if let result = try? await connection.channelPortraits(Array(channels[start..<min(start + 50, channels.count)])) {
-                        portraits.merge(result, uniquingKeysWith: { _, new in new })
-                    }
-                    try ensureCurrent(ticket, session: session, connection: connection)
-                }
-                for index in songs.indices {
-                    var song = songs[index]
-                    song.duration = song.duration ?? durations[song.videoID]
-                    if let channel = song.channelID, let portrait = portraits[channel],
-                       !YouTubeCaptionDecoders.isTranslatedUpload(song.title),
-                       DownloadSongMatch.versions(song.title).isEmpty {
-                        let metadata = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title,
-                            artist: song.artist, duration: song.duration ?? 0)
-                        if !DownloadSongMatch.artistKeys(metadata.artist).isDisjoint(with: DownloadSongMatch.artistKeys(portrait.name)) {
-                            song.avatarURL = portrait.url
-                        }
-                    }
-                    songs[index] = song
-                }
                 var next = snapshot; next.songs = songs; next.lastSync = Date(); next.attempts = nil
                 try save(next)
             } catch is CancellationError { }
@@ -147,7 +129,7 @@ final class YouTubeSyncController {
         downloading = nil
     }
 
-    func download(_ song: SyncedYouTubeSong, library: LocalLibrary, account: NavidromeAccount?) {
+    func download(_ song: SyncedYouTubeSong, library: LocalLibrary, account: NavidromeAccount?, connection: PlatformConnection) {
         guard downloading == nil, let accountID, YouTubeVideo.validID(song.videoID) else { return }
         let ticket = UUID()
         downloadRevision = ticket; downloading = song.videoID; statuses[song.videoID] = "正在搜尋最高可用音質…"
@@ -194,7 +176,9 @@ final class YouTubeSyncController {
                     return
                 }
                 #endif
-                let target = await downloader.withDuration(song)
+                let identified = await connection.playlistSongWithDuration(song)
+                let target = await downloader.withDuration(identified)
+                try check()
                 var candidates = library.matchingAudio(for: target)
                 var failures: [String] = []
                 do { candidates += try await downloader.candidates(for: target, account: account) }

@@ -104,7 +104,7 @@ struct LyricSearchScreen: View {
             if let preview = subtitles.translationPreview {
                 Text("讀到 \(preview.lines.count) 行 · " + (preview.aligned ? "已對齊原詞" : "採影片時間，可能需要校正"))
                     .font(.caption).foregroundStyle(.secondary)
-                ForEach(Array(preview.lines.prefix(4).enumerated()), id: \.offset) { _, line in
+                ForEach(Array(preview.displayLines.prefix(4).enumerated()), id: \.offset) { _, line in
                     LabeledContent(playbackTime(line.startTime), value: line.translation ?? line.fullText)
                 }
                 Button("套用這份字幕") { subtitles.applyTranslationPreview() }

@@ -6,6 +6,33 @@ export const defaults = Object.freeze({ active: true, enabled: true, target: 'tw
     convertTranslation: true, protectJapanese: true, autoSelectChinese: true, fallbackOnFailure: true,
     searchDepth: 'standard', reportVisible: true });
 
+// FIA can carry a previously rendered translation. Recompute it from the converted
+// fields so the native lyric list and visualizers never prefer an old simplified copy.
+export function displayLines(lines, settings) {
+    if (!settings.active) return lines;
+    const canonicalize = getConverter();
+    return lines.map(line => {
+        const [converted] = transformLines([line], settings);
+        const displayTranslation = chineseTranslation(converted, canonicalize).text || converted.translation
+            || transformLines([{ translation: converted.displayTranslation }], settings)[0].translation;
+        return displayTranslation && (converted.displayTranslation || displayTranslation !== converted.translation)
+            ? { ...converted, displayTranslation } : converted;
+    });
+}
+
+export function cleanAnnotations(lines) {
+    return lines.map(line => {
+        let next = line;
+        for (const key of ['alternateTexts', 'backgroundVocals']) {
+            const list = line[key];
+            if (list == null) continue;
+            const items = Array.isArray(list) ? list.filter(item => item && typeof item.text === 'string') : [];
+            if (items.length !== list.length || !Array.isArray(list)) next = { ...next, [key]: items };
+        }
+        return next;
+    });
+}
+
 // Only the platform boundary changes. The pinned plugin owns conversion, matching, budgets and reports.
 export function createSubtitleEngine({ request, publish: sendDisplay, report: sendReport, toast = () => {} }) {
     let settings = { ...defaults }, providers = [], input = null, selector = null, account = '';
@@ -45,13 +72,9 @@ export function createSubtitleEngine({ request, publish: sendDisplay, report: se
     }
     function refresh() {
         if (!input) return;
-        let lines = !settings.active ? input.lines
-            : transformLines(input.manual || !selector ? input.lines :
-                selector.transform(input.song, input.lines), settings);
-        if (settings.active) lines = lines.map(line => {
-            const displayTranslation = chineseTranslation(line, getConverter()).text || line.translation;
-            return displayTranslation && displayTranslation !== line.translation ? { ...line, displayTranslation } : line;
-        });
+        const selected = settings.active && !input.manual && selector
+            ? selector.transform(input.song, input.lines) : input.lines;
+        const lines = displayLines(selected, settings);
         publish({ token: input.token, lines });
         scheduleReport();
     }
@@ -81,9 +104,9 @@ export function createSubtitleEngine({ request, publish: sendDisplay, report: se
             refresh();
         },
         load(next) {
-            input = next;
+            input = next && { ...next, lines: cleanAnnotations(next.lines) };
             if (selector) selector.songChanged(searchReady() ? next.song : null);
-            if (next) { refresh(); if (searchReady()) selector?.loaded(next.song, next.lines); }
+            if (next) { refresh(); if (searchReady()) selector?.loaded(input.song, input.lines); }
             else { clearTimeout(reportTimer); publish({ token: null, lines: [] }); report({ token: null, text: '目前沒有歌曲。', value: null }); }
         },
         command(name) {

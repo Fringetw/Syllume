@@ -10,6 +10,27 @@ struct Checks {
         try SubtitleSourceChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let converter = NativeSubtitleConverter(bundleURL: ios.appending(path: "Folia/Resources/FoliaSubtitles/subtitles.js"))
+        let line = LyricLine(startTime: 1, endTime: 3, fullText: "头发发现", translation: "风里的回声",
+            words: [LyricWord(text: "头发", startTime: 1, endTime: 2), LyricWord(text: "发现", startTime: 2, endTime: 3)],
+            extra: ["displayTranslation": .string("风里的回声"), "backgroundVocals": .array([.null])])
+        var preferences = SubtitlePreferences()
+        let converted = try await converter.convert([line], preferences: preferences)
+        precondition(converted[0].fullText == "頭髮發現" && converted[0].translationText == "風裡的回聲")
+        precondition(converted[0].words.map(\.text) == ["頭髮", "發現"] && converted[0].words.map(\.startTime) == [1, 2])
+        preferences.enabled = false
+        let raw = try await converter.convert([line], preferences: preferences)
+        precondition(raw[0].fullText == line.fullText && raw[0].translationText == line.translationText)
+        let immediate = try await PlaybackLookup.within(.seconds(1)) { 42 }
+        precondition(immediate == 42)
+        do {
+            _ = try await PlaybackLookup.within(.milliseconds(30)) {
+                try await Task.sleep(for: .seconds(10))
+                return 42
+            }
+            preconditionFailure("A slow provider kept the playback search open")
+        } catch let error as PlatformError { precondition(error.localizedDescription == "音源連線逾時。") }
+        print("PASS: OpenCC without WebKit, legacy translation display, timed words, and bounded playback lookup")
         let bundled = ios.appending(path: "Folia/Resources/tide.m4a")
         let verified = try await AudioIntegrity.inspect(bundled, expected: 30, decode: true)
         precondition(abs(verified - 30) < 0.3)

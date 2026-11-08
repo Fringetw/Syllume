@@ -48,7 +48,8 @@ final class PlatformConnection {
         clientID = platform == .youtube ? embeddedGoogle.clientID
             : UserDefaults.standard.string(forKey: "Folia.ClientID." + platform.rawValue) ?? ""
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 25
+        configuration.timeoutIntervalForRequest = platform == .youtube ? 10 : 25
+        if platform == .youtube { configuration.timeoutIntervalForResource = 18 }
         session = URLSession(configuration: configuration)
         do {
             if let data = try readCredential() {
@@ -141,8 +142,13 @@ final class PlatformConnection {
             if collection == .playlists {
                 return LibraryPage(entries: [LibraryEntry(id: "fixture-list", title: "測試歌單", subtitle: "", url: URL(string: "https://music.youtube.com/playlist?list=fixture-list")!)], next: nil)
             }
+            let slow = ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture")
+            if slow, cursor != nil {
+                try await Task.sleep(for: .seconds(90))
+                return LibraryPage(entries: [], next: nil)
+            }
             return LibraryPage(entries: [LibraryEntry(id: "fixture-row", title: "潮汐之間", subtitle: "Folia 示範音軌",
-                url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 30)], next: nil)
+                url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 30)], next: slow ? "fixture-next" : nil)
         }
         #endif
         let revision = sessionID
@@ -171,11 +177,24 @@ final class PlatformConnection {
         }
     }
 
+    // Fetch only the selected video's missing duration. The playlist stays usable
+    // while the remaining pages are syncing.
+    func playlistSongWithDuration(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
+        guard connected, song.duration == nil, YouTubeVideo.validID(song.videoID) else { return song }
+        let id = song.videoID
+        guard let seconds = try? await PlaybackLookup.within(.seconds(3), operation: {
+            try await self.videoDurations([id])[id]
+        }) else { return song }
+        var result = song; result.duration = seconds
+        return result
+    }
+
     func videoDurations(_ ids: [String]) async throws -> [String: Double] {
         guard platform == .youtube, !ids.isEmpty, ids.count <= 50, ids.allSatisfy(YouTubeVideo.validID) else { return [:] }
         let revision = sessionID
         var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/videos")!
-        parts.queryItems = [.init(name: "part", value: "contentDetails"), .init(name: "id", value: ids.joined(separator: ","))]
+        parts.queryItems = [.init(name: "part", value: "contentDetails"), .init(name: "id", value: ids.joined(separator: ",")),
+            .init(name: "fields", value: "items(id,contentDetails(duration))")]
         var token = try await accessToken()
         var result = try await request(url: parts.url!, token: token)
         if result.1.statusCode == 401 {
@@ -201,7 +220,8 @@ final class PlatformConnection {
               ids.allSatisfy({ $0.range(of: #"^UC[A-Za-z0-9_-]{22}$"#, options: .regularExpression) != nil }) else { return [:] }
         let revision = sessionID
         var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/channels")!
-        parts.queryItems = [.init(name: "part", value: "snippet"), .init(name: "id", value: ids.joined(separator: ","))]
+        parts.queryItems = [.init(name: "part", value: "snippet"), .init(name: "id", value: ids.joined(separator: ",")),
+            .init(name: "fields", value: "items(id,snippet(title,thumbnails(default,medium)))")]
         let (data, response) = try await request(url: parts.url!, token: try await accessToken())
         guard sessionID == revision, !Task.isCancelled else { throw CancellationError() }
         guard (200..<300).contains(response.statusCode) else { return [:] }
