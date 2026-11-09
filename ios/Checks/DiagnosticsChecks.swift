@@ -43,7 +43,7 @@ enum DiagnosticsChecks {
         ]
         let result = DiagnosticResult(area: .google, checks: checks, since: now)
         precondition(result.state == .partial)
-        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.11", build: "20",
+        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.11", build: "21",
             operatingSystem: "CI", deviceModel: "CI", environment: .ciFixture, startedAt: now, endedAt: Date(),
             connection: .unknown, stopReason: nil, requestedAreas: [.google, .device], results: [result], events: [],
             systemTraces: [DiagnosticSystemTrace(kind: .crash, foliaOffsets: offsets)],

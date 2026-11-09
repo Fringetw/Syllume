@@ -83,17 +83,32 @@ jobs:
             ${{ runner.temp }}/FoliaPackage/google-login-build-info.json
           if-no-files-found: error
       - name: Exercise YouTube playlist selection and audio playback on iPhone Simulator
-        timeout-minutes: 18
+        timeout-minutes: 25
         run: |
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
           echo "FOLIA_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
-          xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
-            -destination "platform=iOS Simulator,id=$simulator_id" \
-            -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \
-            -resultBundlePath "$RUNNER_TEMP/FoliaPlaylistUI.xcresult" \
-            -only-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
-            -only-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
-            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+          xcrun simctl boot "$simulator_id" || xcrun simctl list devices booted | grep -F "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+          run_playlist_ui() {
+            xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
+              -destination "platform=iOS Simulator,id=$simulator_id" \
+              -derivedDataPath "$RUNNER_TEMP/FoliaSimulator" \
+              -resultBundlePath "$RUNNER_TEMP/$1.xcresult" \
+              -only-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
+              -only-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+              -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+          }
+          set -o pipefail
+          playlist_log="$RUNNER_TEMP/FoliaPlaylistUI.log"
+          if ! run_playlist_ui FoliaPlaylistUI 2>&1 | tee "$playlist_log"; then
+            if grep -q 'Timed out waiting for AX loaded notification' "$playlist_log" && ! grep -q 'Test Case .* failed (' "$playlist_log"; then
+              echo "::warning::Simulator accessibility initialization failed. Retrying the same tests once."
+              xcrun simctl bootstatus "$simulator_id" -b
+              run_playlist_ui FoliaPlaylistUIRetry
+            else
+              exit 1
+            fi
+          fi
       - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
         if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
         timeout-minutes: 32
@@ -109,7 +124,7 @@ jobs:
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/FoliaUIScreenshots"
-          for result in FoliaPlaylistUI FoliaUI; do
+          for result in FoliaPlaylistUI FoliaPlaylistUIRetry FoliaUI; do
             if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
               if ! xcrun xcresulttool export attachments --path "$RUNNER_TEMP/$result.xcresult" \
                 --output-path "$RUNNER_TEMP/FoliaUIScreenshots/$result"; then

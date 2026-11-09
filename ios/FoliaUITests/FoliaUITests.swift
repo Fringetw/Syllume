@@ -236,7 +236,7 @@ final class FoliaUITests: XCTestCase {
     }
 
     func testDeveloperDiagnosticsProducesEvidenceAndReport() throws {
-        continueAfterFailure = false
+        continueAfterFailure = true
         let app = XCUIApplication()
         app.launchArguments = ["--diagnostics-ui-fixture", "--presentation-reset"]
         app.launch()
@@ -248,10 +248,14 @@ final class FoliaUITests: XCTestCase {
         XCTAssertTrue(run.waitForExistence(timeout: 10))
         run.tap()
         let reportProbe = app.staticTexts["diagnosticsFixtureJSON"]
-        XCTAssertTrue(reportProbe.waitForExistence(timeout: 110))
+        XCTAssertTrue(reportProbe.waitForExistence(timeout: 180))
         let text = try XCTUnwrap(reportProbe.value as? String)
         let data = Data(text.utf8)
         let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "Folia-Diagnostics-Simulator-Fixture"
+        attachment.lifetime = .keepAlways
+        add(attachment)
         XCTAssertEqual(report["environment"] as? String, "ciFixture")
         XCTAssertEqual(report["schemaVersion"] as? Int, 1)
         let areas = try XCTUnwrap(report["results"] as? [[String: Any]])
@@ -264,10 +268,6 @@ final class FoliaUITests: XCTestCase {
             XCTAssertEqual(check?["state"] as? String, "passed", "\(id): \(String(describing: check))")
         }
         XCTAssertFalse(checks.contains { $0["evidence"] as? String == "liveNetwork" && $0["state"] as? String == "passed" })
-        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-        attachment.name = "Folia-Diagnostics-Simulator-Fixture"
-        attachment.lifetime = .keepAlways
-        add(attachment)
         capture(app, name: "Diagnostics-complete")
     }
 

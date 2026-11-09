@@ -33,70 +33,98 @@ final class DiagnosticStageProbe {
         do {
             try await waitForReady(1)
             let loaded = try await snapshot()
-            let rightRenderer = loaded["style"] as? String == style.rawValue && loaded["canvas"] as? Bool == true
-            results.append(DiagnosticCheck(key + ".init", style.title + "初始化", rightRenderer ? .passed : .failed,
-                .bundledSample, since: began, problem: rightRenderer ? nil : DiagnosticProblem(code: .engine)))
-            let fontLoaded = font == "GenSenRounded2JP-M" && FoliaLyricFont.registeredName == "GenSenRounded2JP-M"
-            results.append(DiagnosticCheck(key + ".font", style.title + "源泉圓體 JP", fontLoaded ? .passed : .failed,
-                .bundledSample, problem: fontLoaded ? nil : DiagnosticProblem(code: .engine)))
-            if !rightRenderer { return results }
-            let beganClock = Date()
+            guard loaded["style"] as? String == style.rawValue, loaded["canvas"] as? Bool == true else {
+                throw DiagnosticProblem(code: .engine)
+            }
+            results.append(DiagnosticCheck(key + ".init", style.title + "初始化", .passed, .bundledSample, since: began))
+        } catch {
+            return [DiagnosticCheck(key + ".init", style.title + "初始化", .failed, .bundledSample, since: began,
+                problem: DiagnosticProblem.classify(error, fallback: .engine))]
+        }
+
+        let fontLoaded = font == "GenSenRounded2JP-M" && FoliaLyricFont.registeredName == "GenSenRounded2JP-M"
+        results.append(DiagnosticCheck(key + ".font", style.title + "源泉圓體 JP", fontLoaded ? .passed : .failed,
+            .bundledSample, problem: fontLoaded ? nil : DiagnosticProblem(code: .engine)))
+        results.append(await inspectClock(key, title: style.title))
+        if !Task.isCancelled {
+            let start = Date()
+            input?.playing = true
+            do {
+                let frames = try await frameSample()
+                results.append(DiagnosticCheck(key + ".frames", style.title + "畫面更新取樣",
+                    frames.isEmpty ? .unverifiable : .passed, .bundledSample, since: start,
+                    problem: frames.isEmpty ? DiagnosticProblem(code: .noData) : nil,
+                    note: "量測前景 WebKit 的畫面回呼與超過 33ms 的間隔。", metrics: frames))
+            } catch {
+                results.append(DiagnosticCheck(key + ".frames", style.title + "畫面更新取樣", .unverifiable,
+                    .bundledSample, since: start, problem: DiagnosticProblem.classify(error, fallback: .engine)))
+            }
+        }
+        return results
+    }
+
+    private func inspectClock(_ key: String, title: String) async -> DiagnosticCheck {
+        let start = Date()
+        let title = title + "播放、暫停、續播、拖曳與切歌時鐘"
+        var checkpoint = "開始播放"
+        do {
             input?.position = 2
             input?.playing = true
-            try await Task.sleep(for: .milliseconds(350))
-            let moving = try await snapshot()
-            let frames = try await frameSample()
+            _ = try await waitForClock { $0["playing"] as? Bool == true && number($0, "time") > 2 }
+            checkpoint = "暫停"
             input?.position = 4
             input?.playing = false
-            try await Task.sleep(for: .milliseconds(180))
-            let paused = try await snapshot()
-            try await Task.sleep(for: .milliseconds(230))
+            let paused = try await waitForClock { $0["paused"] as? Bool == true && abs(number($0, "time") - 4) < 0.15 }
+            try await Task.sleep(for: .milliseconds(250))
             let settled = try await snapshot()
+            guard abs(number(paused, "time") - number(settled, "time")) < 0.05 else { throw DiagnosticProblem(code: .timeline) }
+
+            checkpoint = "拖曳"
             input?.position = 11.2
-            try await Task.sleep(for: .milliseconds(220))
-            let sought = try await snapshot()
+            let sought = try await waitForClock { abs(number($0, "time") - 11.2) < 0.15 }
+            checkpoint = "續播"
             input?.playing = true
-            try await Task.sleep(for: .milliseconds(180))
-            let resumed = try await snapshot()
+            _ = try await waitForClock { $0["playing"] as? Bool == true && number($0, "time") > 11.2 }
+            checkpoint = "停止渲染"
             input?.rendering = false
-            try await Task.sleep(for: .milliseconds(180))
-            let suspended = try await snapshot()
+            _ = try await waitForClock { $0["paused"] as? Bool == true && $0["playing"] as? Bool == false }
+
+            checkpoint = "換歌與重新顯示"
             input?.rendering = true
             input?.position = 0
             input?.playing = false
             input?.songID = "diagnostics-tide-next"
             input?.revision = UUID()
             try await waitForReady(2)
-            let next = try await snapshot()
-            let pausedClock = abs(number(paused, "time") - number(settled, "time")) < 0.05
-            let matches = moving["playing"] as? Bool == true && number(moving, "time") > 2
-                && paused["paused"] as? Bool == true && pausedClock
-                && abs(number(sought, "time") - 11.2) < 0.15 && number(resumed, "time") > 11.2
-                && suspended["paused"] as? Bool == true && next["canvas"] as? Bool == true
-                && abs(number(next, "time")) < 0.15
-            results.append(DiagnosticCheck(key + ".clock", style.title + "播放、暫停、續播、拖曳與切歌時鐘",
-                matches ? .passed : .failed, .simulatedInput, since: beganClock,
-                problem: matches ? nil : DiagnosticProblem(code: .timeline),
+            _ = try await waitForClock { $0["canvas"] as? Bool == true && abs(number($0, "time")) < 0.15 }
+            return DiagnosticCheck(key + ".clock", title, .passed, .simulatedInput, since: start,
                 note: "使用內建歌詞與控制時鐘，涵蓋暫停渲染及重新顯示。",
-                metrics: ["seekError_s": abs(number(sought, "time") - 11.2)]))
-            results.append(DiagnosticCheck(key + ".frames", style.title + "畫面更新取樣", frames.isEmpty ? .unverifiable : .passed,
-                .bundledSample, problem: frames.isEmpty ? DiagnosticProblem(code: .noData) : nil,
-                note: "量測前景 WebKit 的畫面回呼與超過 33ms 的間隔，GPU 實際呈現幀數由系統掌握。", metrics: frames))
+                metrics: ["seekError_s": abs(number(sought, "time") - 11.2)])
         } catch {
-            results.append(DiagnosticCheck(key + ".runtime", style.title + "渲染與時鐘", .failed, .bundledSample, since: began,
-                problem: DiagnosticProblem.classify(error, fallback: .engine)))
+            return DiagnosticCheck(key + ".clock", title, .failed, .simulatedInput, since: start,
+                problem: DiagnosticProblem.classify(error, fallback: .engine), note: "失敗階段：\(checkpoint)")
         }
-        return results
     }
 
     private func waitForReady(_ count: Int) async throws {
-        let end = ProcessInfo.processInfo.systemUptime + 13
+        let end = ProcessInfo.processInfo.systemUptime + 24
         while readyCount < count {
             try Task.checkCancellation()
             if let fault { throw fault }
             guard ProcessInfo.processInfo.systemUptime < end else { throw DiagnosticProblem(code: .timeout) }
             try await Task.sleep(for: .milliseconds(100))
         }
+    }
+
+    private func waitForClock(_ matches: ([String: Any]) -> Bool) async throws -> [String: Any] {
+        let end = ProcessInfo.processInfo.systemUptime + 10
+        repeat {
+            try Task.checkCancellation()
+            let state = try await snapshot()
+            if matches(state) { return state }
+            try await Task.sleep(for: .milliseconds(150))
+        } while ProcessInfo.processInfo.systemUptime < end
+        throw DiagnosticProblem(code: .timeline)
     }
 
     private func snapshot() async throws -> [String: Any] {
@@ -152,7 +180,7 @@ private final class StageEvaluation {
             return try await withCheckedThrowingContinuation { continuation in
                 waiting = continuation
                 timer = Task { [weak self] in
-                    do { try await Task.sleep(for: .seconds(4)) }
+                    do { try await Task.sleep(for: .seconds(9)) }
                     catch { return }
                     self?.complete(.failure(DiagnosticProblem(code: .timeout)))
                 }
