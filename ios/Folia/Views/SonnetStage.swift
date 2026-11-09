@@ -72,9 +72,7 @@ private struct SonnetWebView: UIViewRepresentable {
         view.accessibilityValue = "載入中"
         context.coordinator.view = view
         diagnosticProbe?.webView = view
-        if let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaStage") {
-            view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
-        } else { DispatchQueue.main.async { failed = true } }
+        if !context.coordinator.loadStage() { DispatchQueue.main.async { failed = true } }
         return view
     }
     func updateUIView(_ view: WKWebView, context: Context) {
@@ -99,8 +97,10 @@ private struct SonnetWebView: UIViewRepresentable {
     @MainActor final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var parent: SonnetWebView
         weak var view: WKWebView?
-        let loadStarted = Date()
+        var loadStarted = Date()
         var loaded = false
+        var hasRendered = false
+        var attemptedRecoveryKey: String?
         var failureDetail = ""
         var lyricFont = ""
         var sentSong = ""
@@ -124,7 +124,8 @@ private struct SonnetWebView: UIViewRepresentable {
             let wasSuspended = !lastRendering
             lastRendering = true
             let key = [parent.songID, parent.revision.uuidString, parent.style, String(parent.energySaving), String(parent.reduceMotion), parent.title, parent.artist].joined(separator: "|")
-            if sentSong != key {
+            let songChanged = sentSong != key
+            if songChanged {
                 sentSong = key; failureDetail = ""
                 DispatchQueue.main.async { self.parent.ready = false; self.parent.failed = false }
                 let data = try? JSONEncoder().encode(parent.lines)
@@ -137,7 +138,7 @@ private struct SonnetWebView: UIViewRepresentable {
             let elapsed = Date().timeIntervalSince(lastStamp)
             let expected = lastTime + (lastPlaying ? elapsed : 0)
             let needsTime = parent.playing ? elapsed >= 0.2 || abs(expected - parent.time) > 0.25 : abs(lastTime - parent.time) > 0.001
-            if wasSuspended || needsTime || lastPlaying != parent.playing {
+            if songChanged || wasSuspended || needsTime || lastPlaying != parent.playing {
                 lastTime = parent.time; lastPlaying = parent.playing; lastStamp = Date()
                 view.callAsyncJavaScript("window.FoliaStage.setClock(snapshot)", arguments: ["snapshot":
                     ["time": parent.time, "playing": parent.playing, "reduceMotion": parent.reduceMotion]],
@@ -151,14 +152,23 @@ private struct SonnetWebView: UIViewRepresentable {
                 lyricFont = body["detail"] as? String ?? ""
                 if let probe = currentProbe { probe.font = lyricFont }
             } else if type == "ready" {
+                hasRendered = true
                 parent.ready = true; parent.failed = false
                 if let probe = currentProbe { probe.readyCount += 1 }
                 else if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageReady, source: stageSource, since: loadStarted) }
             } else if type == "error" {
                 failureDetail = body["detail"] as? String ?? ""
-                markFailure()
+                markFailure(canReload: true)
             }
         }
+
+        func loadStage() -> Bool {
+            guard let view, let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaStage") else { return false }
+            loadStarted = Date()
+            view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
+            return true
+        }
+
         private func markLoaded() {
             guard !loaded else { return }
             loaded = true; update()
@@ -168,13 +178,24 @@ private struct SonnetWebView: UIViewRepresentable {
             guard let probe = parent.diagnosticProbe, let view, probe.webView === view else { return nil }
             return probe
         }
-        private func markFailure() {
-            parent.failed = true
+        private func markFailure(canReload: Bool = false) {
             let problem = DiagnosticProblem(code: .engine)
-            if let probe = currentProbe { probe.fault = problem }
-            else if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageError, source: stageSource, problem: problem) }
+            if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageError, source: stageSource, problem: problem) }
+            if canReload, hasRendered, loaded, !sentSong.isEmpty, attemptedRecoveryKey != sentSong {
+                // A failed renderer swap can leave the page in a partial state. Rebuild once
+                // from the latest song and clock, then surface any repeat failure.
+                attemptedRecoveryKey = sentSong
+                loaded = false; sentSong = ""; lastStamp = .distantPast; lastRendering = true
+                parent.ready = false
+                if loadStage() {
+                    currentProbe?.recoveries += 1
+                    return
+                }
+            }
+            parent.failed = true
+            currentProbe?.fault = problem
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { markFailure() }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { markFailure(canReload: true) }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             webView.evaluateJavaScript("typeof window.FoliaStage") { [weak self] result, _ in
                 guard let self else { return }

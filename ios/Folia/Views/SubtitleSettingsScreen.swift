@@ -55,12 +55,21 @@ struct FoliaSettingsScreen: View {
 
 struct SubtitleSettingsScreen: View {
     let subtitles: SubtitleController
+    var embeddedInNavigation = false
     @Environment(\.dismiss) private var dismiss
     var body: some View {
-        NavigationStack {
-            SubtitleSettingsContent(subtitles: subtitles)
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() }.accessibilityIdentifier("closeSubtitleSettings") } }
-        }
+        if embeddedInNavigation { settings }
+        else { NavigationStack { settings } }
+    }
+
+    private var settings: some View {
+        SubtitleSettingsContent(subtitles: subtitles)
+            .navigationBarBackButtonHidden()
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("關閉") { dismiss() }.accessibilityIdentifier("closeSubtitleSettings")
+                }
+            }
     }
 }
 

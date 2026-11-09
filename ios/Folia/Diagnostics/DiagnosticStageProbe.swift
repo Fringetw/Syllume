@@ -18,9 +18,10 @@ final class DiagnosticStageProbe {
     @ObservationIgnored var fault: DiagnosticProblem?
     @ObservationIgnored var font: String?
     @ObservationIgnored var readyCount = 0
+    @ObservationIgnored var recoveries = 0
 
     func reset() {
-        input = nil; webView = nil; font = nil; fault = nil; readyCount = 0
+        input = nil; webView = nil; font = nil; fault = nil; readyCount = 0; recoveries = 0
     }
 
     func inspect(_ style: DiagnosticSource, timeline: LyricTimeline) async -> [DiagnosticCheck] {
@@ -99,7 +100,7 @@ final class DiagnosticStageProbe {
             _ = try await waitForClock { $0["canvas"] as? Bool == true && abs(number($0, "time")) < 0.15 }
             return DiagnosticCheck(key + ".clock", title, .passed, .simulatedInput, since: start,
                 note: "使用內建歌詞與控制時鐘，涵蓋暫停渲染及重新顯示。",
-                metrics: ["seekError_s": abs(number(sought, "time") - 11.2)])
+                metrics: ["seekError_s": abs(number(sought, "time") - 11.2), "rendererRecoveries": Double(recoveries)])
         } catch {
             return DiagnosticCheck(key + ".clock", title, .failed, .simulatedInput, since: start,
                 problem: DiagnosticProblem.classify(error, fallback: .engine), note: "失敗階段：\(checkpoint)")

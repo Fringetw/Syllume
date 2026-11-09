@@ -1,4 +1,4 @@
-# Folia iOS 0.3.11 · build 21
+# Folia iOS 0.3.11 · build 22
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 會解析固定版本的 YouTubeKit 套件；Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
@@ -15,6 +15,8 @@
 ## 0.3.11 開發者診斷與音源載入
 
 在 **設定 → 開發者診斷** 可執行完整或單項檢查。報告含版本、裝置、時程、來源、分類錯誤、效能取樣與未涵蓋項目。最近 5 次報告保留在本機，可複製或匯出 JSON／純文字。停用診斷會中止目前測試。關閉播放事件紀錄會清空暫存事件。
+
+商籟或繪光切歌時若渲染器失敗，會以當前歌曲和播放時間重載一次。播放頁的繁體字幕設定沿用尋找歌詞的導覽，離開設定後返回原頁面。
 
 ### 用 iPhone 重現後交給 ChatGPT Work
 
