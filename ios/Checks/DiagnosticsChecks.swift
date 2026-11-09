@@ -59,7 +59,7 @@ enum DiagnosticsChecks {
                 problem: DiagnosticProblem(code: .permission, httpStatus: 403, nativeCode: -11828,
                                            mediaIssue: .durationUnavailable))
         ]
-        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.13", build: "24",
+        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.14", build: "25",
             operatingSystem: "CI", deviceModel: "CI", environment: .ciFixture, startedAt: now, endedAt: Date(),
             connection: .unknown, stopReason: nil, requestedAreas: [.google, .device], results: [result], events: events,
             systemTraces: [DiagnosticSystemTrace(kind: .crash, foliaOffsets: offsets)],

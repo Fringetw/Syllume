@@ -135,7 +135,25 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [lumiereReady], timeout: 120), .completed, "Lumiere: \(String(describing: lumiere.value))")
         XCTAssertGreaterThan(lumiere.frame.height, app.frame.height * 0.8)
         capture(app, name: "Lumiere-paused")
-        toggle.tap(); wait(2); capture(app, name: "Lumiere-playing"); toggle.tap()
+        // The animated WebKit background can delay an accessibility hit-test on a busy runner.
+        // Tap the visible control at its measured center, then verify the native playback clock stopped.
+        let frame = toggle.frame
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        XCTAssertTrue(app.frame.contains(center))
+        let pausePoint = app.coordinate(withNormalizedOffset: .zero).withOffset(
+            CGVector(dx: center.x - app.frame.minX, dy: center.y - app.frame.minY))
+        toggle.tap()
+        let resumed = expectation(for: NSPredicate(format: "label == %@", "暫停"), evaluatedWith: toggle)
+        wait(for: [resumed], timeout: 10)
+        wait(2)
+        capture(app, name: "Lumiere-playing")
+        pausePoint.tap()
+        let lumierePaused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
+        wait(for: [lumierePaused], timeout: 10)
+        XCTAssertTrue((mediaProbe.value as? String ?? "").hasSuffix("|0.0"))
+        let lumierePausedTime = probeTime(mediaProbe)
+        wait(2)
+        XCTAssertEqual(probeTime(mediaProbe), lumierePausedTime, accuracy: 0.15)
         app.buttons["尋找歌詞"].tap()
         XCTAssertTrue(app.buttons["findChineseLyrics"].waitForExistence(timeout: 10))
         capture(app, name: "Unified-lyric-search")
@@ -193,11 +211,14 @@ final class SyllumeUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-artwork-offline", "--youtube-unavailable-audio-fixture",
                                "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
-        app.launch()
-        app.segmentedControls.buttons["YouTube"].tap()
-        XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
-        XCTAssertTrue(artwork.waitForExistence(timeout: 10))
-        capture(app, name: "Syllume-cover-cached-after-relaunch")
+        for attempt in 1...2 {
+            app.launch()
+            app.segmentedControls.buttons["YouTube"].tap()
+            XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
+            XCTAssertTrue(artwork.waitForExistence(timeout: 10), "Cached cover after offline launch \(attempt)")
+            capture(app, name: "Syllume-cover-cached-after-relaunch-\(attempt)")
+            app.terminate()
+        }
     }
 
     func testYouTubeSyncedAudioPausesWithoutVideo() {
