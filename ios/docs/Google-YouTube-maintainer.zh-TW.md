@@ -1,6 +1,6 @@
 # Google／YouTube：維護者設定與發布教學
 
-適用 Folia iOS 0.3.0。目標是由維護者設定一次 Google 應用程式，安裝者只需按「連接 Google 帳號」、登入及授權，不建立 Google Cloud 專案，也不填 Client ID。
+適用 Syllume。目標是由維護者設定一次 Google 應用程式，安裝者只需按「連接 Google 帳號」、登入及授權，不建立 Google Cloud 專案，也不填 Client ID。
 
 ## 你的專案目前到哪裡
 
@@ -16,7 +16,7 @@ Google 的 iOS OAuth 用戶端必須登記實際安裝的 App 識別碼。原始
 org.folia.community.ios
 ```
 
-若目前用 Sideloadly 安裝 0.2.0，請在手機開啟 Folia → YouTube →「設定並登入」，抄下頁面顯示的 Bundle ID。0.2.1 若顯示設定不相符，可在「連線說明 → 提供給 App 提供者的版本資訊」取得實際識別碼。
+若目前用 Sideloadly 安裝 0.2.0，請在手機開啟 Syllume → YouTube →「設定並登入」，抄下頁面顯示的 Bundle ID。0.2.1 若顯示設定不相符，可在「連線說明 → 提供給 App 提供者的版本資訊」取得實際識別碼。
 
 如果看到的值與上面不同，先使用實際值規劃測試版本，不要把專案預設值當成手機的值。Google Cloud 登記的值、GitHub 的 `GOOGLE_IOS_BUNDLE_ID` 及簽署安裝後的值，必須一致。編譯前的識別碼則由 `FOLIA_BUILD_BUNDLE_ID` 控制；側載工具會改寫它時，這個值可以不同。更改 Bundle ID 也可能讓 iPhone 將它視為另一個 App，原本的本機曲庫不會自動移過去。
 
@@ -34,12 +34,12 @@ org.folia.community.ios
 
 ## 2. 檢查品牌與 API
 
-1. 開啟 [Google Auth Platform](https://console.cloud.google.com/auth/overview?project=folia-ios)，確認上方專案為 `Folia-ios`。
+1. 開啟 [Google Auth Platform](https://console.cloud.google.com/auth/overview?project=folia-ios)，確認已選取原本的 `folia-ios` 專案。
 2. 左側點「品牌」，核對下面三項。你目前已填的值不用重新輸入。
 
 | 欄位 | 要填的內容 |
 |---|---|
-| 應用程式名稱 | `Folia-ios`，或你打算正式顯示的名稱 |
+| 應用程式名稱 | `Syllume` |
 | 使用者支援電子郵件 | 你實際會收信、能提供支援的信箱 |
 | 開發人員聯絡資訊 | 你會接收 Google 通知的信箱 |
 
@@ -79,7 +79,7 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 
 | 欄位 | 測試階段要填的內容 |
 |---|---|
-| 名稱 | `Folia iOS testing`，便於你辨識用途 |
+| 名稱 | `Syllume iOS testing`，便於你辨識用途 |
 | Bundle ID／套件 ID | 第 1 步確認的實際 App 識別碼，大小寫及每個字元均須一致 |
 | App Store ID | 尚未上架就先留空；若日後上架再依實際資料處理 |
 | Team ID | 依你的 Apple 分發設定填寫；沒有就不要編造 |
@@ -98,7 +98,7 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 
 ## 6. 由維護者在 GitHub 設定一次
 
-1. 開啟 [Fringetw/folia-ios](https://github.com/Fringetw/folia-ios)。
+1. 開啟 [Fringetw/Syllume](https://github.com/Fringetw/Syllume)。
 2. 點「Settings」→ 左側「Secrets and variables」→「Actions」。
 3. 選 **Variables** 分頁，按 **New repository variable**。
 4. 新增以下兩個變數，名稱必須完全一致：
@@ -116,15 +116,15 @@ Google 同意畫面的說明可能是「查看你的 YouTube 帳戶」。此版�
 ## 7. 建置與安裝測試
 
 1. 確認這份 0.3.0 工作流程已在你要建置的分支。
-2. 開啟 GitHub「Actions」→「Folia native iOS」→「Run workflow」。
+2. 開啟 GitHub「Actions」→「Syllume native iOS」→「Run workflow」。
 3. 選取包含 0.3.0 更新的分支。更新尚在 PR 時，不要選仍是舊版本的 `main`。
 4. 勾選 **Require the maintainer Google login configuration**，再按「Run workflow」。如果缺少兩個變數或值不合法，這次工作會直接失敗，避免把未設定的版本當成可登入版本。
 5. 建置摘要應顯示 `Google login configured: true`，並分別列出 `Build Bundle ID (before signing)` 與 `Google registered Bundle ID (after signing)`。前者是編譯前的值，後者才是 Google 登記且手機安裝後必須符合的值。
 6. 等歌詞／曲庫檢查、iPhone 與模擬器編譯、介面測試全部成功。
-7. 從 Artifacts 下載 `Folia-iOS-unsigned`，解壓後保留 `.ipa`。同包的 `google-login-build-info.json` 中，`google_configured` 應為 `true`。
+7. 從 Artifacts 下載 `Syllume-iOS-unsigned`，解壓後保留 `.ipa`。同包的 `google-login-build-info.json` 中，`google_configured` 應為 `true`。
 8. 沿用你的簽署方式安裝。若想覆蓋舊 App 並沿用本機曲庫，必須保留相同 App 識別碼與簽署身分；不要先刪除舊 App。
-9. 手機開 Folia → YouTube →「連接 Google 帳號」→ 選第 4 步的測試帳號 → 核對應用程式名稱與要求的唯讀權限 → 授權。
-10. 確認能讀到自己的歌單與喜歡的影片，點一支允許嵌入的影片，在 Folia 內測試播放與歌詞動畫。找不到歌詞時，從播放選項搜尋或附加 LRC／FIA。結束 App 後重開確認登入狀態，最後測試「帳號設定 → 中斷連線」。
+9. 手機開 Syllume → YouTube →「連接 Google 帳號」→ 選第 4 步的測試帳號 → 核對應用程式名稱與要求的唯讀權限 → 授權。
+10. 確認能讀到自己的歌單與喜歡的影片，點一支允許嵌入的影片，在 Syllume 內測試播放與歌詞動畫。找不到歌詞時，從播放選項搜尋或附加 LRC／FIA。結束 App 後重開確認登入狀態，最後測試「帳號設定 → 中斷連線」。
 
 未設定變數的程式碼檢查仍可以成功，並產出明確標示尚未啟用 Google 登入的測試版本；這種結果不代表真實帳號登入已驗證。
 

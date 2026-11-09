@@ -101,6 +101,7 @@ final class YouTubeSyncController {
                         guard var song = SyncedYouTubeSong(entry) else { return nil }
                         if let old = cached[song.videoID], old.title == song.title, old.artist == song.artist {
                             song.duration = song.duration ?? old.duration
+                            song.thumbnailURL = song.thumbnailURL ?? old.thumbnailURL
                             if old.channelID == song.channelID { song.avatarURL = old.avatarURL }
                         }
                         return song

@@ -2,7 +2,7 @@ import SwiftUI
 
 // Creates one native playback session for the app.
 @main @MainActor
-struct FoliaApp: App {
+struct SyllumeApp: App {
     @State private var library: LocalLibrary
     @State private var player: PlaybackModel
     @State private var navidrome = NavidromeConnection()

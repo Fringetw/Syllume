@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>zh-Hant</string>
 	<key>CFBundleDisplayName</key>
-	<string>Folia</string>
+	<string>Syllume</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -27,7 +27,7 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Folia 用於連接你在區域網路上的 Navidrome 音樂伺服器。</string>
+	<string>Syllume 用於連接你在區域網路上的 Navidrome 音樂伺服器。</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -86,7 +86,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>Folia Spotify Login</string>
+			<string>Syllume Spotify Login</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>folia-spotify</string>

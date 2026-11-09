@@ -1,7 +1,7 @@
 import XCTest
 
 @MainActor
-final class FoliaUITests: XCTestCase {
+final class SyllumeUITests: XCTestCase {
     func testBuiltInTraditionalSubtitles() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -43,7 +43,7 @@ final class FoliaUITests: XCTestCase {
         app.buttons["closeLyricSearch"].tap()
         assertLyric("頭髮發現", in: app)
         app.buttons["關閉播放畫面"].tap()
-        app.buttons["Folia 設定"].tap()
+        app.buttons["Syllume 設定"].tap()
         XCTAssertTrue(app.buttons["builtInTraditionalLyrics"].waitForExistence(timeout: 10))
         app.buttons["builtInTraditionalLyrics"].tap()
         XCTAssertTrue(app.switches["subtitleActive"].waitForExistence(timeout: 5))
@@ -76,7 +76,7 @@ final class FoliaUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--subtitle-reset", "--subtitle-fixture"]
         app.launch()
-        app.buttons["Folia 設定"].tap()
+        app.buttons["Syllume 設定"].tap()
         app.buttons["builtInTraditionalLyrics"].tap()
         let qq = app.switches["subtitleQQSource"]
         for _ in 0..<5 { if qq.isHittable { break }; app.swipeUp() }
@@ -88,7 +88,7 @@ final class FoliaUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--subtitle-fixture"]
         app.launch()
-        app.buttons["Folia 設定"].tap()
+        app.buttons["Syllume 設定"].tap()
         app.buttons["builtInTraditionalLyrics"].tap()
         for _ in 0..<5 { if qq.isHittable { break }; app.swipeUp() }
         XCTAssertEqual(qq.value as? String, "0")
@@ -173,6 +173,24 @@ final class FoliaUITests: XCTestCase {
         capture(app, name: "YouTube-selected-playlist-restored")
     }
 
+    func testYouTubeCoverLoadsWhenAudioUnavailable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-unavailable-audio-fixture",
+                               "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Syllume"].waitForExistence(timeout: 10))
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let song = app.buttons["youtubeSong-fixture-row"]
+        XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
+        XCTAssertTrue(app.staticTexts["測試音源目前無法播放。"].waitForExistence(timeout: 10))
+        let artwork = app.descendants(matching: .any)["playerArtwork"].firstMatch
+        XCTAssertTrue(artwork.waitForExistence(timeout: 10))
+        capture(app, name: "Syllume-cover-with-unavailable-audio")
+    }
+
     func testYouTubeSyncedAudioPausesWithoutVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -240,7 +258,7 @@ final class FoliaUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--diagnostics-ui-fixture", "--presentation-reset"]
         app.launch()
-        app.buttons["Folia 設定"].tap()
+        app.buttons["Syllume 設定"].tap()
         let entry = app.buttons["developerDiagnostics"]
         XCTAssertTrue(entry.waitForExistence(timeout: 10))
         entry.tap()
@@ -253,7 +271,7 @@ final class FoliaUITests: XCTestCase {
         let data = Data(text.utf8)
         let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
-        attachment.name = "Folia-Diagnostics-Simulator-Fixture"
+        attachment.name = "Syllume-Diagnostics-Simulator-Fixture"
         attachment.lifetime = .keepAlways
         add(attachment)
         XCTAssertEqual(report["environment"] as? String, "ciFixture")

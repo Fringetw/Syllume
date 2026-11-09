@@ -259,7 +259,7 @@ actor SubtitleNetwork {
         try Task.checkCancellation()
         guard Date() >= (blockedUntil[provider] ?? .distantPast) else { throw SubtitleReadError("rate-limited") }
         var request = URLRequest(url: url, timeoutInterval: 7)
-        request.setValue(provider == "ytm" ? "Mozilla/5.0 Folia-iOS/0.3.3" : "Folia-iOS/0.3.3", forHTTPHeaderField: "User-Agent")
+        request.setValue(provider == "ytm" ? "Mozilla/5.0 Syllume-iOS/0.3.12" : "Syllume-iOS/0.3.12", forHTTPHeaderField: "User-Agent")
         if provider == "netease" { request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer") }
         if provider == "qq" {
             request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer")

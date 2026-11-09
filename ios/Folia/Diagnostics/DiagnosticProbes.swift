@@ -185,7 +185,7 @@ struct DiagnosticProbes {
             let comparable = DownloadSongMatch.sameDuration(song.duration, metadata.duration)
             checks.append(DiagnosticCheck("audio.youtube", "YouTube 影片的公開播放資料", comparable ? .passed : .partial, .liveNetwork,
                 since: began, problem: comparable ? nil : DiagnosticProblem(code: .missingDuration),
-                note: "這項驗證公開 metadata 與時長。實際 Folia 開播結果可由播放事件紀錄驗證。",
+                note: "這項驗證公開 metadata 與時長。實際 Syllume 開播結果可由播放事件紀錄驗證。",
                 metrics: ["sourceDuration_s": metadata.duration]))
         } catch { checks.append(externalFailure("audio.youtube", "YouTube 影片的公開播放資料", error, since: began)) }
         if song.duration == nil { song = await inputs.youtube.playlistSongWithDuration(song) }
@@ -352,7 +352,7 @@ struct DiagnosticProbes {
         let system = DiagnosticsSystemMetrics.shared.metrics
         checks.append(DiagnosticCheck("device.metricKit", "MetricKit 系統效能與異常報告", system.isEmpty ? .unverifiable : .partial, .operatingSystem,
             problem: system.isEmpty ? DiagnosticProblem(code: .systemUnavailable) : nil,
-            note: "需先開啟播放事件紀錄，系統提供資料後才可讀取。僅保留 Folia 的堆疊位移。", metrics: system))
+            note: "需先開啟播放事件紀錄，系統提供資料後才可讀取。僅保留 Syllume 的堆疊位移。", metrics: system))
         let playing = DiagnosticsEvents.shared.observedPlaybackSeconds
         checks.append(DiagnosticCheck("device.longRun", "長時間播放觀測", playing >= 600 ? .partial : .unverifiable, .observedPlayback,
             problem: playing >= 600 ? nil : DiagnosticProblem(code: .noData),

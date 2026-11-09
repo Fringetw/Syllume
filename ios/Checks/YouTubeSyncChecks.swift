@@ -76,10 +76,38 @@ enum YouTubeSyncChecks {
         precondition(pending.map(\.videoID) == [second.videoID, song.videoID])
         let legacy = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(#"{"choice":{"id":"liked","title":"喜歡的影片"},"songs":[],"bindings":{}}"#.utf8))
         precondition(legacy.attempts == nil && legacy.choice == .liked)
+        let legacySong = try JSONDecoder().decode(SyncedYouTubeSong.self, from: Data(
+            #"{"id":"old-row","videoID":"z2tDtdHHAHg","title":"HELP!!","artist":"Kobo Kanaeru - Topic"}"#.utf8))
+        precondition(legacySong.artworkURLs.first?.absoluteString == "https://i.ytimg.com/vi/z2tDtdHHAHg/mqdefault.jpg")
+        precondition(added.artworkURLs.isEmpty)
+        let thumbnail = "https://i.ytimg.com/vi/z2tDtdHHAHg/hqdefault.jpg"
+        let playlistData = Data("""
+            {"items":[{"id":"row","snippet":{"title":"HELP!!","resourceId":{"videoId":"z2tDtdHHAHg"},
+            "videoOwnerChannelTitle":"Kobo Kanaeru - Topic","thumbnails":{
+                "medium":{"url":"https://i.ytimg.com.example.org/wrong.jpg"},"high":{"url":"\(thumbnail)"}
+            }}}]}
+            """.utf8)
+        let page = try PlatformLibrary.decode(playlistData, platform: .youtube, collection: .playlist("test"))
+        let covered = page.entries.first.flatMap(SyncedYouTubeSong.init)
+        precondition(covered?.thumbnailURL?.absoluteString == thumbnail)
+        precondition(covered?.artworkURLs.first?.absoluteString == thumbnail && covered?.artworkURLs.count == 2)
+        let liked = try PlatformLibrary.decode(Data("""
+            {"items":[{"id":"z2tDtdHHAHg","snippet":{"title":"HELP!!","thumbnails":{"medium":{"url":"\(thumbnail)"}}},
+            "contentDetails":{"duration":"PT3M8S"}}]}
+            """.utf8), platform: .youtube, collection: .liked)
+        precondition(liked.entries.first?.thumbnailURL?.absoluteString == thumbnail)
+        precondition(liked.entries.first?.duration == 188)
+        for collection in [LibraryCollection.liked, .playlist("test")] {
+            let endpoint = try PlatformLibrary.endpoint(platform: .youtube, collection: collection, cursor: nil)
+            precondition(URLComponents(url: endpoint, resolvingAgainstBaseURL: false)?.queryItems?
+                .first(where: { $0.name == "fields" })?.value?.contains("thumbnails(medium,high,default)") == true)
+        }
+        precondition(YouTubeArtwork.thumbnailURL("https://user@i.ytimg.com/f.jpg") == nil)
+        precondition(YouTubeArtwork.thumbnailURL("http://i.ytimg.com/f.jpg") == nil)
         precondition(AudioRetryPolicy.delay(status: 429, retryAfter: "120") == 120)
         precondition(AudioRetryPolicy.delay(status: 503, retryAfter: "999999") == 3600)
         precondition(AudioRetryPolicy.delay(status: 429, retryAfter: "NaN") == 60)
         precondition(AudioRetryPolicy.delay(status: 200, retryAfter: "120") == nil)
-        print("PASS: playlist persistence, version/artist/duration matching, lossless priority, preview and CDN rejection")
+        print("PASS: playlist persistence and artwork, version/artist/duration matching, lossless priority, preview and CDN rejection")
     }
 }

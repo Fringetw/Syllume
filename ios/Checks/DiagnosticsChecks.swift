@@ -10,6 +10,16 @@ enum DiagnosticsChecks {
         precondition(DiagnosticProblem.googleHTTP(400, body: expiry).code == .reauthorize)
         precondition(DiagnosticProblem.classify(URLError(.notConnectedToInternet)).code == .offline)
         precondition(DiagnosticProblem.classify(URLError(.timedOut)).code == .timeout)
+        let media = DiagnosticProblem.mediaHTTP(403)
+        precondition(media.code == .permission && media.httpStatus == 403)
+        precondition(DiagnosticProblem.mediaHTTP(416).code == .invalidResponse)
+        precondition(DiagnosticProblem.mediaHTTP(503).code == .transport)
+        let native = NSError(domain: "AVFoundationErrorDomain", code: -11828,
+                             userInfo: [NSLocalizedDescriptionKey: "secret-server"])
+        precondition(DiagnosticProblem.classify(native, fallback: .invalidMedia).nativeCode == -11828)
+        let nested = NSError(domain: "AVFoundationErrorDomain", code: -11800,
+                             userInfo: [NSUnderlyingErrorKey: URLError(.timedOut)])
+        precondition(DiagnosticProblem.classify(nested, fallback: .invalidMedia).code == .timeout)
         precondition(DiagnosticProblem.classify(SubtitleReadError("region-restricted")).code == .region)
         precondition(DiagnosticProblem.classify(SubtitleReadError("verification-required")).code == .verification)
 
@@ -32,9 +42,9 @@ enum DiagnosticsChecks {
             preconditionFailure("A regional restriction was treated as a valid player")
         } catch { precondition(DiagnosticProblem.classify(error).code == .region) }
 
-        let frame = #"{"callStacks":[{"callStackRootFrames":[{"binaryName":"Folia","offsetIntoBinaryTextSegment":4022,"address":948838,"path":"secret-server"},{"binaryName":"secret-cookie","offsetIntoBinaryTextSegment":42}]}]}"#
+        let frame = #"{"callStacks":[{"callStackRootFrames":[{"binaryName":"Syllume","offsetIntoBinaryTextSegment":4022,"address":948838,"path":"secret-server"},{"binaryName":"Folia","offsetIntoBinaryTextSegment":1024},{"binaryName":"secret-cookie","offsetIntoBinaryTextSegment":42}]}]}"#
         let offsets = DiagnosticSystemTrace.foliaOffsets(Data(frame.utf8))
-        precondition(offsets == [4022])
+        precondition(offsets == [4022, 1024])
         let now = Date()
         let checks = [
             DiagnosticCheck("google.fixture", "OAuth 回應解析", .passed, .simulatedInput, since: now, metrics: ["omitted": .infinity]),
@@ -43,9 +53,15 @@ enum DiagnosticsChecks {
         ]
         let result = DiagnosticResult(area: .google, checks: checks, since: now)
         precondition(result.state == .partial)
-        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.11", build: "22",
+        let events = [
+            DiagnosticEvent(at: now, kind: .artworkLoaded, source: .youtube),
+            DiagnosticEvent(at: now, kind: .assetRejected, source: .youtube,
+                problem: DiagnosticProblem(code: .permission, httpStatus: 403, nativeCode: -11828,
+                                           mediaIssue: .durationUnavailable))
+        ]
+        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.12", build: "23",
             operatingSystem: "CI", deviceModel: "CI", environment: .ciFixture, startedAt: now, endedAt: Date(),
-            connection: .unknown, stopReason: nil, requestedAreas: [.google, .device], results: [result], events: [],
+            connection: .unknown, stopReason: nil, requestedAreas: [.google, .device], results: [result], events: events,
             systemTraces: [DiagnosticSystemTrace(kind: .crash, foliaOffsets: offsets)],
             reproduction: ["使用模擬 HTTP 403"], notCovered: ["真實歌單"])
         precondition(report.retryAreas == [.google, .device])
@@ -59,6 +75,9 @@ enum DiagnosticsChecks {
         let roundTrip = try decoder.decode(DiagnosticReport.self, from: json)
         precondition(roundTrip.environment == .ciFixture && roundTrip.results.first?.checks.last?.problem?.httpStatus == 403)
         precondition(roundTrip.results.first?.checks.last?.checkpoints == ["Folia.Diagnostics", "google.api"])
+        precondition(roundTrip.events.map(\.kind) == [.artworkLoaded, .assetRejected])
+        precondition(roundTrip.events.last?.problem == events.last?.problem)
+        precondition(report.text.contains("Syllume Diagnostics") && report.text.contains("durationUnavailable · HTTP 403 · native -11828"))
         if let path = ProcessInfo.processInfo.environment["FOLIA_DIAGNOSTICS_FIXTURE_REPORT"] {
             try json.write(to: URL(fileURLWithPath: path), options: .atomic)
         }

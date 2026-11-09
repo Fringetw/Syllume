@@ -71,6 +71,7 @@ final class PlaybackModel {
     @ObservationIgnored private var startupTimeout: Task<Void, Never>?
     @ObservationIgnored private var youtubeConnection: PlatformConnection?
     @ObservationIgnored private var catalogueTarget: SyncedYouTubeSong?
+    @ObservationIgnored private var activeCatalogueSource: DiagnosticSource?
     private var catalogueHasStarted = false
     @ObservationIgnored private var resolveTicket = UUID()
     private var activeRecording: SubtitleSong?
@@ -315,11 +316,16 @@ final class PlaybackModel {
     func playbackFailed(item: AVPlayerItem) {
         guard player.currentItem === item else { return }
         if let track = current, track.source == .catalogue {
-            sourceFailures.append((audioSource ?? "音源") + "無法持續播放")
-            DiagnosticsEvents.shared.record(.playbackStalled)
+            let status = item.errorLog()?.events.last?.errorStatusCode
+            let problem: DiagnosticProblem
+            if let status, (400...599).contains(status) { problem = DiagnosticProblem.mediaHTTP(status) }
+            else if let error = item.error { problem = DiagnosticProblem.classify(error, fallback: .invalidMedia) }
+            else { problem = DiagnosticProblem(code: .timeout) }
+            sourceFailures.append((audioSource ?? "音源") + "：" + problem.code.title)
+            DiagnosticsEvents.shared.record(.playbackStalled, source: activeCatalogueSource, problem: problem)
             streamTimeout?.cancel(); streamTimeout = nil
             player.replaceCurrentItem(with: nil)
-            lyricsTask?.cancel(); artworkTask?.cancel()
+            lyricsTask?.cancel()
             catalogueHasStarted = false; lyricClockRunning = false
             if isPlaying { resolveCatalogue(track) }
             return
@@ -353,6 +359,7 @@ final class PlaybackModel {
         let url: URL?
         switch track.source {
         case .catalogue:
+            if let song = track.playlistSong { loadCatalogueArtwork(song, localID: track.preferredLocalID) }
             resolveCatalogue(track)
             return
         case .local:
@@ -438,6 +445,10 @@ final class PlaybackModel {
             do {
                 try check()
                 #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
+                    fail("測試音源目前無法播放。")
+                    return
+                }
                 if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
                    let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
@@ -465,8 +476,9 @@ final class PlaybackModel {
                     if let candidate = candidates.first {
                         let local = candidate.localTrackID.flatMap(library.availableTrack)
                         let url = candidate.streamingURL ?? candidate.url
+                        let started = Date()
                         do {
-                            let asset = AVURLAsset(url: url)
+                            let asset = AudioIntegrity.streamingAsset(for: candidate)
                             let length = try await AudioIntegrity.inspect(asset, expected: candidate.duration,
                                 decode: local?.id.hasPrefix("download-") == true && local?.integrityChecked != true,
                                 deadline: url.isFileURL ? nil : .seconds(5))
@@ -476,14 +488,25 @@ final class PlaybackModel {
                             activeRecording = candidate.recording ?? SubtitleSong(id: track.id, source: "catalogue",
                                 title: candidate.title, artist: candidate.artist, durationMs: length * 1000)
                             activeLocalTrackID = local?.id
+                            activeCatalogueSource = candidate.diagnosticSource
                             audioSource = candidate.quality
                             install(asset)
                             return
                         } catch {
                             try check()
-                            candidates.removeFirst(); sourceFailures.append(candidate.source + "無法完整播放")
+                            var problem = DiagnosticProblem.classify(error, fallback: .invalidMedia)
+                            if DiagnosticsEvents.shared.capturing, problem.code == .invalidMedia, candidate.diagnosticSource == .youtube,
+                               let http = try? await PlaybackLookup.within(.seconds(2), operation: {
+                                   try await service.streamingHTTPProblem(at: url)
+                               }) {
+                                problem = DiagnosticProblem(code: http.code, httpStatus: http.httpStatus,
+                                    nativeCode: problem.nativeCode, mediaIssue: problem.mediaIssue)
+                            }
+                            try check()
+                            candidates.removeFirst()
+                            sourceFailures.append(candidate.source + "：" + problem.code.title)
                             DiagnosticsEvents.shared.record(.assetRejected, source: candidate.diagnosticSource,
-                                problem: DiagnosticProblem.classify(error, fallback: .invalidMedia))
+                                problem: problem, since: started)
                         }
                     } else if !searchedCatalogue {
                         if target.duration == nil, catalogueTarget == nil, YouTubeVideo.validID(song.videoID) {
@@ -576,35 +599,55 @@ final class PlaybackModel {
         }
     }
 
-    private func loadCatalogueDetails(_ track: Track, song: SyncedYouTubeSong, recording: SubtitleSong) {
+    private func loadCatalogueDetails(_ track: Track, recording: SubtitleSong) {
+        let local = activeLocalTrackID.flatMap(library.availableTrack)
+        if let image = local.flatMap(library.artwork).flatMap(UIImage.init(data:)) {
+            artworkTask?.cancel()
+            artwork = image
+        }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {
             lyricsLoading = false
             return
         }
         #endif
-        let local = activeLocalTrackID.flatMap(library.availableTrack)
         loadLyrics(track: local ?? track, recording: recording,
                    remoteClient: account.map { NavidromeClient(account: $0) })
-        artworkTask?.cancel()
-        artwork = local.flatMap(library.artwork).flatMap { UIImage(data: $0) }
+    }
+
+    private func loadCatalogueArtwork(_ song: SyncedYouTubeSong, localID: String?) {
+        if let image = localID.flatMap(library.availableTrack).flatMap(library.artwork).flatMap(UIImage.init(data:)) {
+            artwork = image
+            return
+        }
+        let urls = song.artworkURLs
+        guard !urls.isEmpty || song.channelID != nil else { return }
         let revision = generation
         let connection = youtubeConnection
         artworkTask = Task(priority: .utility) { [weak self] in
-            var url = song.avatarURL
-            if url == nil, let connection, connection.connected, let channel = song.channelID,
-               !YouTubeCaptionDecoders.isTranslatedUpload(song.title), DownloadSongMatch.versions(song.title).isEmpty,
-               let portrait = try? await connection.channelPortraits([channel])[channel] {
-                let performer = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title,
-                    artist: song.artist, duration: song.duration ?? 0).artist
-                if !DownloadSongMatch.artistKeys(performer).isDisjoint(with: DownloadSongMatch.artistKeys(portrait.name)) {
-                    url = portrait.url
+            let started = Date()
+            var image: UIImage?
+            for url in urls {
+                if Task.isCancelled { return }
+                if let bytes = await AudioDownloadService.shared.artwork(at: url), let decoded = UIImage(data: bytes) {
+                    image = decoded
+                    break
                 }
             }
-            guard !Task.isCancelled, let url else { return }
-            let bytes = await AudioDownloadService.shared.portrait(url)
-            guard let self, generation == revision, !Task.isCancelled,
-                  let bytes, let image = UIImage(data: bytes) else { return }
+            if image == nil, !Task.isCancelled, let connection, connection.connected, let channel = song.channelID,
+               !YouTubeCaptionDecoders.isTranslatedUpload(song.title), DownloadSongMatch.versions(song.title).isEmpty,
+               let portrait = try? await connection.channelPortraits([channel])[channel], !urls.contains(portrait.url) {
+                let performer = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title,
+                    artist: song.artist, duration: song.duration ?? 0).artist
+                if !DownloadSongMatch.artistKeys(performer).isDisjoint(with: DownloadSongMatch.artistKeys(portrait.name)),
+                   let bytes = await AudioDownloadService.shared.artwork(at: portrait.url) {
+                    image = UIImage(data: bytes)
+                }
+            }
+            guard let self, generation == revision, !Task.isCancelled else { return }
+            DiagnosticsEvents.shared.record(image == nil ? .artworkUnavailable : .artworkLoaded,
+                source: .youtube, problem: image == nil ? DiagnosticProblem(code: .unavailable) : nil, since: started)
+            guard let image else { return }
             artwork = image
             publishNowPlaying()
         }
@@ -636,6 +679,7 @@ final class PlaybackModel {
         streamTimeout?.cancel(); streamTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         catalogueTarget = nil; catalogueHasStarted = false
+        activeCatalogueSource = nil
         candidates = []; searchedCatalogue = false; attemptedCatalogueSources = []
         searchedYouTube = false; triedLocal = false; sourceFailures = []
         audioSource = nil; activeRecording = nil; activeLocalTrackID = nil; lyricClockRunning = false
@@ -683,9 +727,9 @@ final class PlaybackModel {
         if lyricClockRunning && !wasRunning { DiagnosticsEvents.shared.record(.playbackStarted) }
         if lyricClockRunning {
             startupTimeout?.cancel(); startupTimeout = nil
-            if !catalogueHasStarted, let track = current, let song = track.playlistSong {
+            if !catalogueHasStarted, let track = current, track.playlistSong != nil {
                 catalogueHasStarted = true
-                if let recording = activeRecording { loadCatalogueDetails(track, song: song, recording: recording) }
+                if let recording = activeRecording { loadCatalogueDetails(track, recording: recording) }
             }
         }
         let remote = (player.currentItem?.asset as? AVURLAsset)?.url.isFileURL == false

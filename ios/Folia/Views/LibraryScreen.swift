@@ -114,7 +114,7 @@ struct LibraryScreen: View {
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: lyricTarget == nil ? [.audio] + Self.lyricTypes : Self.lyricTypes,
                       allowsMultipleSelection: lyricTarget == nil, onCompletion: handleImport)
-        .alert("Folia", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
+        .alert("Syllume", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好", role: .cancel) { message = nil }
         } message: { Text(message ?? "") }
         .confirmationDialog("從本機曲庫移除歌曲？",
@@ -145,7 +145,7 @@ struct LibraryScreen: View {
                     .font(.system(size: 9, weight: .semibold, design: .monospaced))
                     .foregroundStyle(FoliaPalette.accent)
                     .accessibilityHidden(true)
-                Text("Folia").font(.system(.largeTitle, design: .serif, weight: .semibold))
+                Text("Syllume").font(.system(.largeTitle, design: .serif, weight: .semibold))
                     .accessibilityAddTraits(.isHeader)
             }
             Spacer()
@@ -154,7 +154,7 @@ struct LibraryScreen: View {
                     .font(.title3).frame(width: 44, height: 44)
                     .background(.white.opacity(0.06), in: Circle())
             }
-            .accessibilityLabel("Folia 設定")
+            .accessibilityLabel("Syllume 設定")
             Button {
                 lyricTarget = nil
                 showingImporter = true

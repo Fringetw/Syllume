@@ -30,7 +30,7 @@ struct NavidromeAccount: Codable, Equatable, Sendable {
         var parts = URLComponents(url: server.appending(path: "rest").appending(path: name), resolvingAgainstBaseURL: false)
         parts?.queryItems = [
             .init(name: "u", value: username), .init(name: "t", value: token), .init(name: "s", value: salt),
-            .init(name: "v", value: "1.16.1"), .init(name: "c", value: "Folia iOS"), .init(name: "f", value: "json")
+            .init(name: "v", value: "1.16.1"), .init(name: "c", value: "Syllume"), .init(name: "f", value: "json")
         ] + parameters
         if let query = parts?.percentEncodedQuery {
             parts?.percentEncodedQuery = query.replacingOccurrences(of: "+", with: "%2B")

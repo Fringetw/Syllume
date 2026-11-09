@@ -147,7 +147,7 @@ final class PlatformConnection {
                 try await Task.sleep(for: .seconds(90))
                 return LibraryPage(entries: [], next: nil)
             }
-            return LibraryPage(entries: [LibraryEntry(id: "fixture-row", title: "潮汐之間", subtitle: "Folia 示範音軌",
+            return LibraryPage(entries: [LibraryEntry(id: "fixture-row", title: "潮汐之間", subtitle: "Syllume 示範音軌",
                 url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 30)], next: slow ? "fixture-next" : nil)
         }
         #endif
@@ -241,10 +241,7 @@ final class PlatformConnection {
         var result: [String: (name: String, url: URL)] = [:]
         for channel in try JSONDecoder().decode(Page.self, from: data).items ?? [] where ids.contains(channel.id) {
             let pictures = channel.snippet.thumbnails
-            if let value = (pictures["medium"] ?? pictures["default"])?.url,
-               let url = DownloadSongMatch.safeAudioURL(value),
-               ["yt3.googleusercontent.com", "yt3.ggpht.com", "yt4.ggpht.com"].contains(url.host ?? ""),
-               url.port == nil || url.port == 443 {
+            if let url = ["medium", "default"].lazy.compactMap({ pictures[$0]?.url }).compactMap(YouTubeArtwork.portraitURL).first {
                 result[channel.id] = (channel.snippet.title, url)
             }
         }

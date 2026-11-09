@@ -78,11 +78,16 @@ enum DiagnosticCode: String, Codable, Sendable {
     }
 }
 
+enum DiagnosticMediaIssue: String, Codable, Sendable {
+    case missingAudioTrack, unexpectedVideoTrack, notPlayable, durationUnavailable, durationMismatch
+}
+
 // Store a bounded classification instead of NSError.userInfo or the server response.
 struct DiagnosticProblem: Error, LocalizedError, Codable, Equatable, Sendable {
     let code: DiagnosticCode
     var httpStatus: Int? = nil
     var nativeCode: Int? = nil
+    var mediaIssue: DiagnosticMediaIssue? = nil
 
     var errorDescription: String? { code.title }
 
@@ -103,7 +108,10 @@ struct DiagnosticProblem: Error, LocalizedError, Codable, Equatable, Sendable {
             }
             return Self(code: code)
         }
-        let native = error as NSError
+        return classifyNative(error as NSError, fallback: fallback, depth: 0)
+    }
+
+    private static func classifyNative(_ native: NSError, fallback: DiagnosticCode, depth: Int) -> Self {
         if native.domain == NSURLErrorDomain {
             let code: DiagnosticCode
             switch native.code {
@@ -114,7 +122,26 @@ struct DiagnosticProblem: Error, LocalizedError, Codable, Equatable, Sendable {
             }
             return Self(code: code, nativeCode: native.code)
         }
+        if ["AVFoundationErrorDomain", "CoreMediaErrorDomain", "NSOSStatusErrorDomain"].contains(native.domain) {
+            if depth < 3, let underlying = native.userInfo[NSUnderlyingErrorKey] as? Error {
+                let cause = classifyNative(underlying as NSError, fallback: fallback, depth: depth + 1)
+                if cause.code != fallback { return cause }
+            }
+            return Self(code: fallback, nativeCode: native.code)
+        }
         return Self(code: fallback)
+    }
+
+    static func mediaHTTP(_ status: Int) -> Self {
+        let code: DiagnosticCode = switch status {
+        case 401, 403: .permission
+        case 416: .invalidResponse
+        case 429: .rateLimit
+        case 451: .region
+        case 500...599: .transport
+        default: .unavailable
+        }
+        return Self(code: code, httpStatus: status)
     }
 
     static func googleHTTP(_ status: Int, body: Data) -> Self {
@@ -177,6 +204,7 @@ struct DiagnosticResult: Codable, Equatable, Identifiable, Sendable {
 enum DiagnosticEventKind: String, Codable, Sendable {
     case lookupStarted, durationRead, durationUnavailable, providerMatched, providerUnavailable
     case assetRejected, playbackStarted, playbackPaused, playbackStalled, seek, audioInterruption
+    case artworkLoaded, artworkUnavailable
     case foreground, background, playerOpened, playerClosed, immersiveOn, immersiveOff, stageReady, stageError
 }
 
@@ -217,7 +245,7 @@ struct DiagnosticSystemTrace: Codable, Sendable {
         var offsets: [UInt64] = []
         func visit(_ value: [String: Any], depth: Int) {
             guard depth < 32, offsets.count < 24 else { return }
-            if value["binaryName"] as? String == "Folia", let offset = value["offsetIntoBinaryTextSegment"] as? UInt64,
+            if let binary = value["binaryName"] as? String, ["Syllume", "Folia"].contains(binary), let offset = value["offsetIntoBinaryTextSegment"] as? UInt64,
                offset < (1 << 34) {
                 offsets.append(offset)
             }
@@ -262,7 +290,7 @@ struct DiagnosticReport: Codable, Identifiable, Sendable {
 
     var text: String {
         let date = ISO8601DateFormatter()
-        let header = ["Folia Diagnostics · \(appVersion)（build \(build)）", "\(deviceModel) · iOS \(operatingSystem) · \(environment.rawValue)",
+        let header = ["Syllume Diagnostics · \(appVersion)（build \(build)）", "\(deviceModel) · iOS \(operatingSystem) · \(environment.rawValue)",
                       "\(date.string(from: startedAt)) → \(date.string(from: endedAt)) · \(connection.rawValue)"]
         let sections = results.flatMap { result in
             ["", "\(result.area.title)　\(result.state.title)"] + result.checks.flatMap { check in
@@ -275,9 +303,11 @@ struct DiagnosticReport: Codable, Identifiable, Sendable {
         }
         let trace = events.map { event in
             [date.string(from: event.at), event.kind.rawValue, event.source?.rawValue, event.problem?.code.rawValue,
+             event.problem?.mediaIssue?.rawValue, event.problem?.httpStatus.map { "HTTP \($0)" },
+             event.problem?.nativeCode.map { "native \($0)" },
              event.elapsedMs.map { "\($0)ms" }].compactMap { $0 }.joined(separator: " · ")
         }
-        let stacks = systemTraces.map { "\($0.kind.rawValue) · Folia offsets " + $0.foliaOffsets.map(String.init).joined(separator: ", ") }
+        let stacks = systemTraces.map { "\($0.kind.rawValue) · Syllume offsets " + $0.foliaOffsets.map(String.init).joined(separator: ", ") }
         var lines = header
         if let stopReason { lines.append("中止原因　\(stopReason.title)") }
         lines += sections

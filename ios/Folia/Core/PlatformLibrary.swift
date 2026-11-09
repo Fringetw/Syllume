@@ -87,11 +87,35 @@ struct LibraryEntry: Identifiable, Equatable, Sendable {
     let url: URL
     var duration: Double? = nil
     var channelID: String? = nil
+    var thumbnailURL: URL? = nil
 }
 
 struct LibraryPage: Sendable {
     let entries: [LibraryEntry]
     let next: String?
+}
+
+enum YouTubeArtwork {
+    private static let thumbnailHosts: Set<String> = [
+        "i.ytimg.com", "i1.ytimg.com", "i2.ytimg.com", "i3.ytimg.com", "i4.ytimg.com", "img.youtube.com"
+    ]
+    private static let portraitHosts: Set<String> = ["yt3.googleusercontent.com", "yt3.ggpht.com", "yt4.ggpht.com"]
+
+    static func thumbnailURL(_ value: String) -> URL? { imageURL(value, hosts: thumbnailHosts) }
+    static func portraitURL(_ value: String) -> URL? { imageURL(value, hosts: portraitHosts) }
+
+    static func defaultThumbnail(for videoID: String) -> URL? {
+        guard YouTubeVideo.validID(videoID) else { return nil }
+        return URL(string: "https://i.ytimg.com/vi/\(videoID)/mqdefault.jpg")
+    }
+
+    private static func imageURL(_ value: String, hosts: Set<String>) -> URL? {
+        guard let parts = URLComponents(string: value), parts.scheme == "https",
+              let host = parts.host?.lowercased(), hosts.contains(host),
+              parts.port == nil || parts.port == 443, parts.user == nil,
+              parts.password == nil, parts.fragment == nil else { return nil }
+        return parts.url
+    }
 }
 
 // Only API metadata is read. Links retain the source platform's playback destination.
@@ -113,6 +137,7 @@ enum PlatformLibrary {
         } else {
             let path: String
             var parameters = [URLQueryItem(name: "maxResults", value: "50")]
+            let thumbnails = "thumbnails(medium,high,default)"
             let fields: String
             switch collection {
             case .playlists:
@@ -121,12 +146,12 @@ enum PlatformLibrary {
                 parameters += [.init(name: "part", value: "snippet"), .init(name: "mine", value: "true")]
             case .liked:
                 path = "videos"
-                fields = "nextPageToken,items(id,snippet(title,channelTitle,channelId),contentDetails(duration))"
+                fields = "nextPageToken,items(id,snippet(title,channelTitle,channelId,\(thumbnails)),contentDetails(duration))"
                 parameters += [.init(name: "part", value: "snippet,contentDetails"), .init(name: "myRating", value: "like")]
             case .playlist(let id):
                 guard validID(id) else { throw PlatformError.message("歌單識別碼無效。") }
                 path = "playlistItems"
-                fields = "nextPageToken,items(id,snippet(title,channelTitle,videoOwnerChannelTitle,videoOwnerChannelId,resourceId(videoId)))"
+                fields = "nextPageToken,items(id,snippet(title,channelTitle,videoOwnerChannelTitle,videoOwnerChannelId,resourceId(videoId),\(thumbnails)))"
                 parameters += [.init(name: "part", value: "snippet"), .init(name: "playlistId", value: id)]
             }
             parameters.append(.init(name: "fields", value: fields))
@@ -168,9 +193,12 @@ enum PlatformLibrary {
                   title != "Private video", title != "Deleted video" else { return nil }
             let path = collection == .playlists ? "playlist?list=\(id)" : "watch?v=\(id)"
             let rowID = collection == .playlists || collection == .liked ? id : item.id ?? id
+            let thumbnail = ["medium", "high", "default"].lazy
+                .compactMap { snippet.thumbnails?[$0]?.url.flatMap(YouTubeArtwork.thumbnailURL) }.first
             return LibraryEntry(id: rowID, title: title, subtitle: snippet.videoOwnerChannelTitle ?? snippet.channelTitle ?? "",
                                 url: URL(string: "https://music.youtube.com/" + path)!, duration: isoDuration(item.contentDetails?.duration),
-                                channelID: snippet.videoOwnerChannelId ?? (collection == .liked ? snippet.channelId : nil))
+                                channelID: snippet.videoOwnerChannelId ?? (collection == .liked ? snippet.channelId : nil),
+                                thumbnailURL: thumbnail)
         }
         return LibraryPage(entries: entries, next: page.nextPageToken)
     }
@@ -215,12 +243,14 @@ enum PlatformLibrary {
         }
         struct Details: Decodable { let duration: String? }
         struct Snippet: Decodable {
+            struct Thumbnail: Decodable { let url: String? }
             let title: String?
             let channelTitle: String?
             let videoOwnerChannelTitle: String?
             let channelId: String?
             let videoOwnerChannelId: String?
             let resourceId: Resource?
+            let thumbnails: [String: Thumbnail]?
         }
         struct Resource: Decodable { let videoId: String? }
     }

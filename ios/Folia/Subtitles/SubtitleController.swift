@@ -317,7 +317,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         if fixture { providers = [] }
         var settings = object(preferences) as? [String: Any] ?? [:]
         settings["nativeRevision"] = configurationRevision
-        settings["hostVersion"] = "Folia-iOS/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")
+        settings["hostVersion"] = "Syllume-iOS/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown")
         call("window.FoliaSubtitles.configure(settings, providers, account)",
              ["settings": settings, "providers": providers, "account": accountKey])
     }

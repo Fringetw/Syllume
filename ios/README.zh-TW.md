@@ -1,8 +1,14 @@
-# Folia iOS 0.3.11 · build 22
+# Syllume 0.3.12 · build 23
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 會解析固定版本的 YouTubeKit 套件；Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
-## 第一版功能
+## 0.3.12 品牌更新、歌單封面與串流診斷
+
+- iPhone 主畫面、App 內、GitHub 建置和診斷報告使用 Syllume。使用相同簽署帳號及安裝識別碼覆蓋升級，可沿用既有歌單、音檔、字幕設定和 Google 授權。
+- YouTube 歌單與喜歡的影片會取得官方縮圖。舊歌單可先用已儲存的影片 ID 載入封面。迷你播放器和播放頁會獨立取圖，讓緩衝或音源失敗時仍可顯示封面。
+- 依音源提供的 M4A 容器初始化 YouTube 串流。開啟播放事件紀錄後，報告會補充封面結果、音軌和時長驗證原因，以及可取得的 HTTP 狀態和原生錯誤碼。
+
+## 基本功能
 
 - 從「檔案」匯入 iOS 可播放的音檔，例如 MP3、AAC、M4A、WAV，儲存於 App 的本機曲庫。
 - 使用播放佇列、上一首、下一首、循環和拖曳進度。音訊工作階段配置背景播放，並接上鎖定畫面和控制中心的播放指令。
@@ -57,9 +63,9 @@
 
 ## 0.3.6：歌單串流、翻譯影片字幕、整頁繪光
 
-1. 點「YouTube」選擇歌單或「喜歡的影片」，Folia 會記住最後選擇。可播放整份、隨機、搜尋、重新排序、更名、加入本機歌曲。長按歌曲可安排下一首、移除、附加音檔。編輯只保存在 Folia，YouTube 原歌單維持唯讀。
+1. 點「YouTube」選擇歌單或「喜歡的影片」，Syllume 會記住最後選擇。可播放整份、隨機、搜尋、重新排序、更名、加入本機歌曲。長按歌曲可安排下一首、移除、附加音檔。編輯只保存在 Syllume，YouTube 原歌單維持唯讀。
 2. 點歌先試可播放的本機檔與比對到的 Navidrome、網易雲、QQ 音樂音源，必要時試原 YouTube 影片公開音訊。以原生音訊播放，不開影片視窗。Spotify 可瀏覽曲庫，但未作為完整音源。
-3. 長按 →「下載音樂」→ 確認，才會尋找可下載音檔。優先無損，其次比較可取得的音質資訊；其他來源都失敗再嘗試 YouTube。驗證檔案大小、時長與整段解碼才放入「檔案 → 我的 iPhone → Folia → YouTube Music」。受地區、登入、驗證或平台回覆限制的音源可能無法取得。
+3. 長按 →「下載音樂」→ 確認，才會尋找可下載音檔。優先無損，其次比較可取得的音質資訊；其他來源都失敗再嘗試 YouTube。驗證檔案大小、時長與整段解碼才放入「檔案 → 我的 iPhone → Syllume → YouTube Music」。受地區、登入、驗證或平台回覆限制的音源可能無法取得。
 4. 播放頁「尋找歌詞」→「依目前歌曲找翻譯影片」，也可貼已有人工字幕的 YouTube 影片。先讀獨立字幕軌；字幕印在畫面上時會嘗試辨識公開影片，或讓你匯入已有的影片。檢查預覽再套用。無法證明與目前原詞對齊時，預覽會標示使用影片時間；可校正字幕時間。辨識不會自動翻譯。
 5. 選「繪光」後，動畫與控制按鈕套用整頁樣式。歌詞按實際播放時鐘前進，緩衝、暫停和拖曳時不會繼續自行跑。原字幕會保留；繁體字幕設定可查看或複製文字診斷，JSON 可另行匯出。
 
@@ -105,7 +111,7 @@ build 10 補上字幕運算頁的視窗生命週期與啟動確認、程序中�
 ## 0.3.0：商籟與 App 內播放
 
 - 播放頁預設使用真正的電腦版 Sonnet 引擎，包括文字拆分、構圖、鏡頭移動與轉場；不是原先只有捲動的歌詞清單。可切換「商籟／歌詞／封面」，按取景框進入沉浸模式。
-- YouTube 歌單、喜歡影片的播放按鈕改為 Folia 內的官方播放器。也能在 YouTube 頁直接貼上單支 YouTube／YouTube Music 連結，無須先登入即可播放允許嵌入的公開影片。
+- YouTube 歌單、喜歡影片的播放按鈕改為 App 內的官方播放器。也能在 YouTube 頁直接貼上單支 YouTube／YouTube Music 連結，無須先登入即可播放允許嵌入的公開影片。
 - 播放器的實際時間驅動 Sonnet；處理暫停、緩衝、拖曳、舊頁面回應與切歌，切換本機播放時停止 YouTube，避免同時出聲。
 - 依歌曲名稱、歌手與時長向 LRCLIB 自動匹配同步歌詞。不相符時不套用；可從播放選項手動搜尋版本或附加 LRC／FIA。手動附加的歌詞按影片 ID 保存在裝置上，來源標記為 LRCLIB 或手動附加。
 - YouTube 官方影片區保持可見且至少 200 × 200；不提供分離音訊、隱藏影片或鎖定螢幕的 YouTube 背景播放。離開畫面、開啟歌詞選擇器或 App 切到背景時暫停。本機與 Navidrome 的背景音訊功能仍可使用。
@@ -135,33 +141,33 @@ build 10 補上字幕運算頁的視窗生命週期與啟動確認、程序中�
 
 1. 在 [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) 建立自己的應用程式，選擇 iOS / Web API，Redirect URI 登記 `folia-spotify://callback`。
 2. 開發模式的應用程式擁有者需有 Spotify Premium。將實際登入的 Spotify 帳號加入應用程式的測試使用者名單。
-3. 在 Folia 的 Spotify 頁按「設定並登入」，填入 **Client ID**，按「登入並讀取曲庫」，在 Spotify 官方驗證視窗授權。
+3. 在 Syllume 的 Spotify 頁按「設定並登入」，填入 **Client ID**，按「登入並讀取曲庫」，在 Spotify 官方驗證視窗授權。
 4. 可瀏覽帳號歌單、喜歡的歌曲，或開啟原平台。依 2026 年開發模式規則，只有自己擁有或協作歌單能讀取內容，其他歌單可能回覆 403。
 
 ### Google／YouTube 維護者統一設定
 
 請閱讀 [Google／YouTube：維護者設定與發布教學](docs/Google-YouTube-maintainer.zh-TW.md)。維護者建立 iOS OAuth 用戶端後，在 GitHub 的 **Settings → Secrets and variables → Actions → Variables** 設定 `GOOGLE_IOS_CLIENT_ID` 與 `GOOGLE_IOS_BUNDLE_ID`，重新建置後發給使用者。兩者為公開應用程式識別資料，App 不內建 Client Secret 或任何使用者帳號憑證。
 
-使用者在 Folia 的 YouTube 頁直接按「連接 Google 帳號」並授權即可。測試階段的登入帳號仍需由維護者加入 Google Cloud 測試使用者名單。
+使用者在 Syllume 的 YouTube 頁直接按「連接 Google 帳號」並授權即可。測試階段的登入帳號仍需由維護者加入 Google Cloud 測試使用者名單。
 
 Google iOS 用戶端登記的 Bundle ID 必須與實際安裝版本一致；側載前的建置識別碼是獨立的 `FOLIA_BUILD_BUNDLE_ID`，預設保持專案原始值。側載工具若改寫它，Google 登入會顯示版本不相符；由每位安裝者各自重簽的 IPA 不保證能共用相同用戶端。正式分發需規劃維護者統一簽署與固定識別碼。
 
-Spotify 仍使用原平台播放；YouTube 只同步歌單，配對的獨立音檔在 App 內播放並搭配 Folia 歌詞動畫。Google 入口讀取官方 YouTube API 提供的帳號歌單與喜歡影片，可取得範圍與 YouTube Music 完整曲庫可能不同。
+Spotify 仍使用原平台播放；YouTube 只同步歌單，配對的獨立音檔在 App 內播放並搭配商籟和繪光歌詞動畫。Google 入口讀取官方 YouTube API 提供的帳號歌單與喜歡影片，可取得範圍與 YouTube Music 完整曲庫可能不同。
 
 Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/documentation/design)，僅用於平台內容歸屬標示。
 
 ## 在 Mac 建置並裝到 iPhone
 
-1. 從專案根目錄執行 `python3 ios/Tools/prepare_lyric_font.py` 準備一次字型，再用 Xcode 16 或更新版本開啟 `ios/Folia.xcodeproj`。
-2. 選 `Folia` target → **Signing & Capabilities**，啟用 **Automatically manage signing** 並選擇自己的 Team。若 Bundle Identifier 已被使用，改為自己的唯一識別碼。
+1. 從專案根目錄執行 `python3 ios/Tools/prepare_lyric_font.py` 準備一次字型，再用 Xcode 16 或更新版本開啟 `ios/Syllume.xcodeproj`。
+2. 選 `Syllume` target → **Signing & Capabilities**，啟用 **Automatically manage signing** 並選擇自己的 Team。若 Bundle Identifier 已被使用，改為自己的唯一識別碼。
 3. 連接 iPhone，在 Xcode 選該 iPhone 為執行目的地。若手機提示，前往「設定 → 隱私權與安全性 → 開發者模式」完成設定。
 4. 按 **Run**，安裝後點「潮汐之間」驗證播放。也可先選擇 iPhone 模擬器確認 App 啟動。
 
 ## 在 Windows 觸發 GitHub 建置
 
-將 ZIP 內的 `ios/` 與 `.github/workflows/folia-ios.yml` 一起放進自己有寫入權限的 GitHub 儲存庫根目錄。用 Git 推送變更後，在該儲存庫的 **Actions → Folia native iOS** 看結果。若工作流程已在預設分支，也可用 **Run workflow** 手動執行。
+將 ZIP 內的 `ios/` 與 `.github/workflows/folia-ios.yml` 一起放進自己有寫入權限的 GitHub 儲存庫根目錄。用 Git 推送變更後，在該儲存庫的 **Actions → Syllume native iOS** 看結果。若工作流程已在預設分支，也可用 **Run workflow** 手動執行。
 
-工作流程會檢查歌詞及曲庫邏輯、編譯模擬器與 iPhone 版本，並在 iPhone 模擬器執行播放與平台設定介面測試，最後上傳 `Folia-iOS-unsigned.ipa`。該 IPA 必須用適用於裝置的憑證及佈建描述檔簽署後才能安裝。若用自己的 Mac 和 iPhone，直接從 Xcode 按 **Run** 即可由 Xcode 處理開發簽署。
+工作流程會檢查歌詞及曲庫邏輯、編譯模擬器與 iPhone 版本，並在 iPhone 模擬器執行播放與平台設定介面測試，最後上傳 `Syllume-iOS-unsigned.ipa`。該 IPA 必須用適用於裝置的憑證及佈建描述檔簽署後才能安裝。若用自己的 Mac 和 iPhone，直接從 Xcode 按 **Run** 即可由 Xcode 處理開發簽署。
 
 ## 驗證
 

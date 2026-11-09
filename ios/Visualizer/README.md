@@ -1,4 +1,4 @@
-# Folia Sonnet and Lumiere for iOS
+# Sonnet and Lumiere in Syllume
 
 This directory contains the desktop Sonnet (商籟) and Lumiere (繪光) program compilers and Pixi renderers from [Folia](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8), pinned to revision `3125d376557182e25a12c915e39099db13ba63c8`, under AGPL-3.0. Original comments and credits are preserved. `provenance.json` records original SHA-256 hashes plus documented iOS patch hashes.
 

@@ -173,6 +173,8 @@ struct NowPlayingScreen: View {
             Group {
                 if let image = player.artwork {
                     Image(uiImage: image).resizable().scaledToFit()
+                        .accessibilityLabel("歌曲封面")
+                        .accessibilityIdentifier("playerArtwork")
                 } else {
                     ZStack {
                         FoliaAtmosphere()
@@ -180,13 +182,13 @@ struct NowPlayingScreen: View {
                             .font(.system(size: 54, weight: .ultraLight))
                             .foregroundStyle(FoliaPalette.accent)
                     }
+                    .accessibilityHidden(true)
                 }
             }
             .frame(width: size, height: size)
             .clipShape(.rect(cornerRadius: 24))
             .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.13)) }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .accessibilityHidden(true)
         }
     }
 }

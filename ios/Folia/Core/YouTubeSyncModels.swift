@@ -17,7 +17,19 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
     var duration: Double?
     var channelID: String? = nil
     var avatarURL: URL? = nil
+    var thumbnailURL: URL? = nil
     var localTrackID: String? = nil
+
+    var artworkURLs: [URL] {
+        let urls = [
+            thumbnailURL.flatMap { YouTubeArtwork.thumbnailURL($0.absoluteString) },
+            YouTubeArtwork.defaultThumbnail(for: videoID),
+            avatarURL.flatMap { YouTubeArtwork.portraitURL($0.absoluteString) }
+        ]
+        var seen = Set<URL>()
+        return urls.compactMap { $0 }.filter { seen.insert($0).inserted }
+    }
+
     init(local track: Track) {
         id = "file-" + UUID().uuidString; videoID = id; title = track.title
         artist = track.artist ?? ""; duration = track.duration; localTrackID = track.id
@@ -25,6 +37,7 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
     init?(_ entry: LibraryEntry) {
         guard let videoID = YouTubeVideo.identifier(from: entry.url.absoluteString) else { return nil }
         id = entry.id; self.videoID = videoID; title = entry.title; artist = entry.subtitle; duration = entry.duration; channelID = entry.channelID
+        thumbnailURL = entry.thumbnailURL
     }
 }
 
@@ -63,7 +76,7 @@ struct YouTubeSyncSnapshot: Codable, Equatable {
     var edits: [String: FoliaPlaylistEdits]? = nil
     var saved: [String: FoliaSavedPlaylist]? = nil
     var currentEdits: FoliaPlaylistEdits { choice.flatMap { edits?[$0.id] } ?? FoliaPlaylistEdits() }
-    var playlistTitle: String { currentEdits.name ?? choice?.title ?? "Folia 播放清單" }
+    var playlistTitle: String { currentEdits.name ?? choice?.title ?? "Syllume 播放清單" }
     var playlistSongs: [SyncedYouTubeSong] { currentEdits.applying(to: songs) }
 }
 

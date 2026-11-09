@@ -1,5 +1,5 @@
-Folia iOS embeds the Folia Sonnet renderer under AGPL-3.0. See LICENSE.desktop.txt.
-Source: https://github.com/Fringetw/folia-ios/tree/feat/ios-0.2.0-motion-libraries/ios/Visualizer
+Syllume embeds the Folia Sonnet renderer under AGPL-3.0. See LICENSE.desktop.txt.
+Source: https://github.com/Fringetw/Syllume/tree/feat/ios-0.2.0-motion-libraries/ios/Visualizer
 
 
 === lucide-react 1.48.0 ===

@@ -213,7 +213,7 @@ struct DiagnosticStagePreview: View {
 
     var body: some View {
         if let sample = probe.input {
-            SonnetStage(songID: sample.songID, title: "潮汐之間", artist: "Folia",
+            SonnetStage(songID: sample.songID, title: "潮汐之間", artist: "Syllume",
                         timeline: sample.timeline, revision: sample.revision, position: sample.position,
                         playing: sample.playing, style: sample.style.rawValue, rendering: sample.rendering,
                         showsTranslation: false, diagnosticProbe: probe)
