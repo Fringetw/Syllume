@@ -1,4 +1,4 @@
-# Folia iOS 0.3.11 · build 19
+# Folia iOS 0.3.11 · build 20
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 會解析固定版本的 YouTubeKit 套件；Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
@@ -31,7 +31,7 @@
 - MetricKit 的系統報告等 iOS 提供後才會出現。畫面回呼、App 進程 CPU 和記憶體是前景取樣。系統全域 CPU、精確 GPU 幀數和長期穩定性需額外實機觀測。
 - GitHub Actions 的模擬器產物可檢查介面與引擎。另有 CI 網路的公開字幕探查紀錄。帳號和 iPhone 上的可用性須以手機報告為準。
 
-歌單會在閒置時補查最多一批歌曲長度。點播放後並行查缺少的時長，並記錄各音源的個別結果。YouTube 最優先的串流版本若仍在等待，可先使用已可讀的版本。
+歌單會在閒置時補查最多一批歌曲長度。點播放後並行查缺少的時長，並記錄各音源的個別結果。音源搜尋給兩段式請求較充足的時間，先有候選的來源會優先接受解碼驗證。若候選無法播放，仍會檢查其他來源。YouTube 最優先的串流版本若仍在等待，可先使用已可讀的版本。
 
 ## 0.3.10 播放時暫停歌單同步
 

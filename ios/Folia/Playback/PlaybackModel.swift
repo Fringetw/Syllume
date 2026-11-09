@@ -77,6 +77,7 @@ final class PlaybackModel {
     @ObservationIgnored private var account: NavidromeAccount?
     @ObservationIgnored private var candidates: [DownloadAudioCandidate] = []
     @ObservationIgnored private var searchedCatalogue = false
+    @ObservationIgnored private var attemptedCatalogueSources: Set<DiagnosticSource> = []
     @ObservationIgnored private var searchedYouTube = false
     @ObservationIgnored private var triedLocal = false
     @ObservationIgnored private var sourceFailures: [String] = []
@@ -488,18 +489,19 @@ final class PlaybackModel {
                         if target.duration == nil, catalogueTarget == nil, YouTubeVideo.validID(song.videoID) {
                             let connection = youtubeConnection
                             let started = Date()
+                            let probes: [@Sendable () async -> SyncedYouTubeSong?] = [
+                                { @Sendable in
+                                    guard let connection else { return nil }
+                                    let result = await connection.playlistSongWithDuration(song)
+                                    return result.duration == nil ? nil : result
+                                },
+                                { @Sendable in
+                                    let result = await service.withDuration(song)
+                                    return result.duration == nil ? nil : result
+                                }
+                            ]
                             let resolved = try? await PlaybackLookup.within(.seconds(4)) {
-                                try await PlaybackLookup.firstAvailable([
-                                    { @Sendable in
-                                        guard let connection else { return nil }
-                                        let result = await connection.playlistSongWithDuration(song)
-                                        return result.duration == nil ? nil : result
-                                    },
-                                    { @Sendable in
-                                        let result = await service.withDuration(song)
-                                        return result.duration == nil ? nil : result
-                                    }
-                                ])
+                                try await PlaybackLookup.firstAvailable(probes)
                             }
                             try check()
                             target = resolved ?? song
@@ -513,8 +515,10 @@ final class PlaybackModel {
                                 if !candidates.isEmpty { continue }
                             }
                         }
-                        let attempts = try await service.streamingSearch(for: target, account: account)
+                        let attempts = try await service.streamingSearch(for: target, account: account,
+                            excluding: attemptedCatalogueSources)
                         try check()
+                        attemptedCatalogueSources.formUnion(attempts.map(\.source))
                         var seen = Set<URL>()
                         candidates = attempts.flatMap(\.candidates).sorted(by: DownloadAudioCandidate.preferredForStreaming)
                             .filter { seen.insert($0.url).inserted }
@@ -525,12 +529,12 @@ final class PlaybackModel {
                                 sourceFailures.append(attempt.source.title + "：" + problem.code.title)
                             }
                         }
-                        searchedCatalogue = true
+                        searchedCatalogue = attempts.isEmpty || candidates.isEmpty
                     } else if !searchedYouTube, YouTubeVideo.validID(song.videoID) {
                         let started = Date()
                         do {
                             let selected = target
-                            let found = try await PlaybackLookup.within(.seconds(11)) {
+                            let found = try await PlaybackLookup.within(.seconds(13)) {
                                 try await service.youtube(selected, streaming: true)
                             }
                             try check(); candidates = found
@@ -562,7 +566,7 @@ final class PlaybackModel {
         guard startupTimeout == nil else { return }
         let revision = generation
         startupTimeout = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(26))
+            try? await Task.sleep(for: .seconds(34))
             guard let self, !Task.isCancelled, generation == revision, isPlaying, !lyricClockRunning else { return }
             DiagnosticsEvents.shared.record(.providerUnavailable, problem: DiagnosticProblem(code: .timeout))
             statusObservation?.invalidate(); statusObservation = nil
@@ -632,7 +636,8 @@ final class PlaybackModel {
         streamTimeout?.cancel(); streamTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         catalogueTarget = nil; catalogueHasStarted = false
-        candidates = []; searchedCatalogue = false; searchedYouTube = false; triedLocal = false; sourceFailures = []
+        candidates = []; searchedCatalogue = false; attemptedCatalogueSources = []
+        searchedYouTube = false; triedLocal = false; sourceFailures = []
         audioSource = nil; activeRecording = nil; activeLocalTrackID = nil; lyricClockRunning = false
         resumeAfterInterruption = false
         statusObservation?.invalidate()

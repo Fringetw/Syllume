@@ -151,7 +151,7 @@ struct DiagnosticsScreen: View {
             }.tint(FoliaPalette.accent).accessibilityIdentifier("diagnosticsProgress")
             TimelineView(.periodic(from: .now, by: 1)) { timeline in
                 let seconds = max(0, Int(timeline.date.timeIntervalSince(session.startedAt ?? timeline.date)))
-                Text("(session.results.count)／(session.plan.count) · (seconds) 秒").monospacedDigit().font(.footnote)
+                Text("\(session.results.count)／\(session.plan.count) · \(seconds) 秒").monospacedDigit().font(.footnote)
             }
             Button("取消診斷", role: .cancel) { session.stop() }
                 .accessibilityIdentifier("diagnosticsCancel").disabled(session.stopReason != nil)
@@ -162,7 +162,7 @@ struct DiagnosticsScreen: View {
         if let report = session.report {
             Section("本次報告") {
                 if let stopped = report.stopReason { Label(stopped.title, systemImage: "pause.circle") }
-                Text("已記錄 (report.results.count) 個類別").accessibilityIdentifier("diagnosticsCompleted")
+                Text("已記錄 \(report.results.count) 個類別").accessibilityIdentifier("diagnosticsCompleted")
                 reportActions(report)
                 let retry = report.retryAreas
                 Button("重試未通過項目", systemImage: "arrow.clockwise") { run(retry) }.disabled(retry.isEmpty)
@@ -184,7 +184,7 @@ struct DiagnosticsScreen: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(report.startedAt.formatted(date: .abbreviated, time: .shortened))
-                            Text("(report.appVersion) · build (report.build) · (report.results.count) 個類別")
+                            Text("\(report.appVersion) · build \(report.build) · \(report.results.count) 個類別")
                                 .font(.caption).foregroundStyle(.secondary)
                         }
                         Spacer()
@@ -207,7 +207,7 @@ struct DiagnosticsScreen: View {
                     HStack {
                         DiagnosticBadge(state: result.state)
                         Spacer()
-                        Text("(result.elapsedMs) ms").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        Text("\(result.elapsedMs) ms").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                 }
                 .accessibilityIdentifier("diagnosticsResult-" + result.id)
@@ -271,9 +271,9 @@ private struct DiagnosticCheckRow: View {
 
     var body: some View {
         DisclosureGroup {
-            Text("(check.evidence.title) · (check.elapsedMs) ms").foregroundStyle(.secondary)
+            Text("\(check.evidence.title) · \(check.elapsedMs) ms").foregroundStyle(.secondary)
             if let problem = check.problem {
-                Text(problem.code.title + (problem.httpStatus.map { "（HTTP ($0)）" } ?? ""))
+                Text(problem.code.title + (problem.httpStatus.map { "（HTTP \($0)）" } ?? ""))
             }
             if let note = check.note { Text(note).foregroundStyle(.secondary) }
             ForEach(check.metrics.keys.sorted(), id: \.self) { key in

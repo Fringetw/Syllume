@@ -49,25 +49,34 @@ actor AudioDownloadService {
         let elapsedMs: Int
     }
 
-    // Every provider contributes its own outcome, even when another source succeeds.
-    func streamingSearch(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [SourceAttempt] {
-        let sources: [DiagnosticSource] = account == nil ? [.netease, .qq] : [.netease, .qq, .navidrome]
+    // Return as soon as one provider has playable candidates. If all its candidates fail,
+    // the resolver can retry the providers that had not yet responded.
+    func streamingSearch(for song: SyncedYouTubeSong, account: NavidromeAccount?,
+                         excluding searched: Set<DiagnosticSource>) async throws -> [SourceAttempt] {
+        let all: [DiagnosticSource] = account == nil ? [.netease, .qq] : [.netease, .qq, .navidrome]
+        let pending = all.filter { !searched.contains($0) }
+        guard !pending.isEmpty else { return [] }
         return try await withThrowingTaskGroup(of: SourceAttempt?.self) { group in
             defer { group.cancelAll() }
-            for source in sources {
+            for source in pending {
                 group.addTask { await self.streamingSource(source, song: song, account: account) }
             }
-            group.addTask { try await Task.sleep(for: .seconds(5)); return nil }
+            let budget = 14
+            group.addTask { try await Task.sleep(for: .seconds(budget)); return nil }
             var results: [SourceAttempt] = []
-            for _ in sources {
-                guard let reply = try await group.next(), let attempt = reply else { break }
+            for _ in pending {
+                guard let reply = try await group.next(), let attempt = reply else {
+                    let completed = Set(results.map(\.source))
+                    results += pending.filter { !completed.contains($0) }.map {
+                        SourceAttempt(source: $0, candidates: [], problem: DiagnosticProblem(code: .timeout), elapsedMs: budget * 1000)
+                    }
+                    break
+                }
                 results.append(attempt)
+                if !attempt.candidates.isEmpty { break }
             }
             try Task.checkCancellation()
-            let completed = Set(results.map(\.source))
-            return results + sources.filter { !completed.contains($0) }.map {
-                SourceAttempt(source: $0, candidates: [], problem: DiagnosticProblem(code: .timeout), elapsedMs: 5000)
-            }
+            return results
         }
     }
 
@@ -124,7 +133,9 @@ actor AudioDownloadService {
             let ids = recordings.map { String($0.id) }.joined(separator: ",")
             let response = try await metadata(URL(string: "https://music.163.com/api/song/enhance/player/url/v1")!, provider: "netease",
                 form: [.init(name: "ids", value: "[\(ids)]"), .init(name: "level", value: "standard"), .init(name: "encodeType", value: "mp3")])
-            return try recordings.compactMap { try DownloadSourceDecoders.audio(response, recording: $0) }
+            let available = try recordings.compactMap { try DownloadSourceDecoders.audio(response, recording: $0) }
+            guard !available.isEmpty else { throw DiagnosticProblem(code: .unavailable) }
+            return available
         }
         var result: [DownloadAudioCandidate] = []
         for recording in recordings {
@@ -155,8 +166,9 @@ actor AudioDownloadService {
                              .init(name: "p", value: "1"), .init(name: "n", value: "8")]
         search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         let data = try await metadata(search.url!, provider: "qq")
+        let matched = try DownloadSourceDecoders.qqSearch(data, for: song).prefix(2)
         var results: [DownloadAudioCandidate] = []
-        for recording in try DownloadSourceDecoders.qqSearch(data, for: song).prefix(2) {
+        for recording in matched {
             try Task.checkCancellation()
             let names = DownloadSourceDecoders.qqFormats.filter { !streaming || $0.bitrate > 0 }
                 .map { $0.prefix + recording.mediaID + "." + $0.format }
@@ -170,6 +182,7 @@ actor AudioDownloadService {
             let response = try await metadata(endpoint.url!, provider: "qq")
             results += try DownloadSourceDecoders.qqAudio(response, recording: recording)
         }
+        if streaming && !matched.isEmpty && results.isEmpty { throw DiagnosticProblem(code: .unavailable) }
         return results
     }
 
@@ -306,7 +319,7 @@ actor AudioDownloadService {
     private func metadata(_ url: URL, provider: String, form: [URLQueryItem]? = nil, maximum: Int = 2_000_000) async throws -> Data {
         try Task.checkCancellation()
         guard Date() >= (blockedUntil[provider] ?? .distantPast) else { throw SubtitleReadError("rate-limited") }
-        var request = URLRequest(url: url, timeoutInterval: 9)
+        var request = URLRequest(url: url, timeoutInterval: 11)
         request.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
         if provider == "netease" { request.setValue("https://music.163.com/", forHTTPHeaderField: "Referer") }
         if provider == "qq" { request.setValue("https://y.qq.com/", forHTTPHeaderField: "Referer") }

@@ -261,7 +261,7 @@ final class FoliaUITests: XCTestCase {
                    "animation.sonnet.init", "animation.sonnet.font", "animation.sonnet.clock",
                    "animation.lumiere.init", "animation.lumiere.font", "animation.lumiere.clock"] {
             let check = checks.first { $0["id"] as? String == id }
-            XCTAssertEqual(check?["state"] as? String, "passed", "(id): (String(describing: check))")
+            XCTAssertEqual(check?["state"] as? String, "passed", "\(id): \(String(describing: check))")
         }
         XCTAssertFalse(checks.contains { $0["evidence"] as? String == "liveNetwork" && $0["state"] as? String == "passed" })
         let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")

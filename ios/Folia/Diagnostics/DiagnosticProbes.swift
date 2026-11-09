@@ -208,7 +208,7 @@ struct DiagnosticProbes {
         let title = source.title + "同版本配對"
         let account = inputs.navidrome
         do {
-            let attempt = try await PlaybackLookup.within(.seconds(8)) {
+            let attempt = try await PlaybackLookup.within(.seconds(14)) {
                 await AudioDownloadService.shared.streamingSource(source, song: song, account: account)
             }
             if let problem = attempt.problem { return [externalFailure(key, title, problem, since: start)] }
@@ -280,7 +280,7 @@ struct DiagnosticProbes {
             }
             metrics.merge(try await mutedPlayback(asset)) { _, latest in latest }
             let extensionName = url.pathExtension.lowercased()
-            let formatNote = ["m4a", "flac", "mp3", "aac", "wav", "aiff", "aif", "alac"].contains(extensionName) ? "容器副檔名 (extensionName.uppercased())。" : nil
+            let formatNote = ["m4a", "flac", "mp3", "aac", "wav", "aiff", "aif", "alac"].contains(extensionName) ? "容器副檔名 \(extensionName.uppercased())。" : nil
             return DiagnosticCheck(key, title, .passed, evidence, since: start, note: formatNote, metrics: metrics)
         } catch {
             if evidence == .liveNetwork { return externalFailure(key, title, error, since: start, fallback: .invalidMedia) }
