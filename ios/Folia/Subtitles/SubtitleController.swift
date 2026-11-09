@@ -13,6 +13,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         }
         save()
         var previous = oldValue; previous.reportVisible = preferences.reportVisible
+        if oldValue.conversionKey != preferences.conversionKey { displayBase() }
         if previous != preferences { configureEngine() }
         updateReport()
     } }
@@ -22,6 +23,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private(set) var reportJSON = Data("{}".utf8)
     private(set) var sourceStatus: [String: String] = [:]
     private(set) var engineError: String?
+    private var conversionError: String?
+    @ObservationIgnored private var conversionTask: Task<Void, Never>?
     var notice: String?
     var currentSearchTerms: (String, String)? { input.map { (matchingSong($0.song).title, matchingSong($0.song).artist) } }
     private(set) var videoProgress: String?
@@ -33,6 +36,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         let lines: [LyricLine]
         let source: String
         let aligned: Bool
+        let displayLines: [LyricLine]
     }
     private struct SavedTranslation: Codable {
         let source: String
@@ -83,6 +87,13 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         view.navigationDelegate = self
         view.isInspectable = false
         webView = view
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--subtitle-offline-only") {
+            engineError = "字幕搜尋未啟動。"
+            fixture = ProcessInfo.processInfo.arguments.contains("--subtitle-fixture")
+            return
+        }
+        #endif
         if let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaSubtitles") {
             view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
         } else { engineError = "內建字幕引擎遺失，請更新安裝版本。" }
@@ -104,6 +115,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         guard input != next else { return }
         let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
         let previousRaw = raw.lines
+        let previousManual = manual?.lines
         cancelRequests()
         if !sameSong {
             cancelTranslationRead(); translationPreview = nil; manual = nil
@@ -126,7 +138,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                let data = try? Data(contentsOf: file), let stored = try? JSONDecoder().decode(SavedTranslation.self, from: data),
                matches(stored, song) { manual = stored }
         }
-        if !sameSong || previousRaw != raw.lines || manual != nil { apply(preferences.active ? base : raw) }
+        if !sameSong { apply(LyricTimeline(lines: [])) }
+        if !sameSong || previousRaw != raw.lines || previousManual != manual?.lines { displayBase() }
         engineReport = [:]; engineReportText = ""
         updateReport(); sendInput()
     }
@@ -136,7 +149,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         if name == "restore", manual != nil {
             if let song = input?.song, let file = translationFile(song) { try? FileManager.default.removeItem(at: file) }
             manual = nil
-            apply(raw)
+            displayBase()
             sendInput()
         }
         guard ready else { notice = "字幕引擎正在準備，請稍後再試。"; return }
@@ -145,20 +158,23 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
 
     func readTranslation(videoID: String) {
         guard preferences.active, YouTubeVideo.validID(videoID) else { return }
+        let baseline = raw.lines
         readTranslation(source: "YouTube 翻譯影片") { progress in
             do {
-                return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID)
-            } catch is CancellationError { throw CancellationError() }
-            catch {
+                return try await SubtitleNetwork.shared.youtubeLyrics(id: videoID, baseline: baseline)
+            } catch let ccFailure as SubtitleReadError where ccFailure.code == "captions-unavailable" {
                 try Task.checkCancellation()
                 await progress(-1)
-                let file: URL
-                do { file = try await AudioDownloadService.shared.translatedVideo(videoID) }
-                catch is CancellationError { throw CancellationError() }
-                catch let error as SubtitleReadError where ["verification-required", "video-too-long", "not-signed-in"].contains(error.code) { throw error }
-                catch { throw SubtitleReadError("video-unavailable") }
-                defer { try? FileManager.default.removeItem(at: file) }
-                return try await YouTubeCaptionOCR.read(file, progress: progress)
+                do {
+                    let file = try await AudioDownloadService.shared.translatedVideo(videoID)
+                    defer { try? FileManager.default.removeItem(at: file) }
+                    return try await YouTubeCaptionOCR.read(file, progress: progress)
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    let videoFailure = (error as? SubtitleReadError) ?? SubtitleReadError("video-unavailable")
+                    let detail = "CC：未列出人工中文字幕軌；影片辨識：\(videoFailure.explanation)"
+                    throw SubtitleReadError(videoFailure.code, detail: detail)
+                }
             }
         }
     }
@@ -173,6 +189,9 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     private func readTranslation(source: String, work: @escaping @Sendable (@Sendable (Double) async -> Void) async throws -> [LyricLine]) {
         guard let song = input?.song, song.durationMs > 0 else { notice = "請等目前音訊載入後再讀取翻譯字幕。"; return }
         cancelTranslationRead(); translationPreview = nil
+        sourceStatus.removeValue(forKey: "ytm-manual")
+        sourceDiagnostics.removeValue(forKey: "ytm-manual")
+        updateReport()
         let ticket = videoRevision
         videoProgress = "正在讀取字幕軌…"
         videoTask = Task { [weak self] in
@@ -187,14 +206,20 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                 let result = Self.alignTranslation(lines, to: raw.lines)
                 let timeline = LyricTimeline(lines: result.lines).prepared(for: song.durationMs / 1000)
                 guard !timeline.lines.isEmpty else { throw SubtitleReadError("empty") }
-                translationPreview = TranslationPreview(lines: timeline.lines, source: source, aligned: result.aligned)
+                let shown = (try? await NativeSubtitleConverter.shared.convert(timeline.lines, preferences: preferences)) ?? timeline.lines
+                guard videoRevision == ticket, input?.song.id == song.id, !Task.isCancelled else { return }
+                translationPreview = TranslationPreview(lines: timeline.lines, source: source, aligned: result.aligned, displayLines: shown)
                 sourceStatus["ytm-manual"] = "已讀取 \(lines.count) 行；等待預覽確認。"
                 videoProgress = nil; updateReport()
             } catch {
                 guard let self, videoRevision == ticket, !Task.isCancelled else { return }
                 videoProgress = nil
-                let message = (error as? SubtitleReadError)?.explanation ?? "無法讀取翻譯影片的字幕。"
-                notice = message; sourceStatus["ytm-manual"] = message; updateReport()
+                let failure = error as? SubtitleReadError
+                let message = failure?.explanation ?? "無法讀取翻譯影片的字幕。"
+                notice = message
+                sourceStatus["ytm-manual"] = message
+                sourceDiagnostics["ytm-manual"] = failure?.detail
+                updateReport()
             }
         }
     }
@@ -216,7 +241,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         } catch { notice = "字幕已套用，但無法保存。請確認可用空間。" }
         manual = saved; translationPreview = nil
         cancelRequests(); token = UUID().uuidString
-        apply(base); updateReport(); sendInput()
+        displayBase(); updateReport(); sendInput()
     }
 
     private func translationFile(_ song: SubtitleSong) -> URL? {
@@ -267,14 +292,14 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         view.evaluateJavaScript("typeof window.FoliaSubtitles?.configure === 'function'") { [weak self] result, _ in
             guard let self, generation == engineGeneration else { return }
             probing = false
-            guard result as? Bool == true else { return }
-            markReady()
+            if result as? Bool == true { markReady() }
+            else { restartEngine() }
         }
     }
     func restartEngine(manual: Bool = false) {
         if manual || Date().timeIntervalSince(recoveryWindow) > 60 { recoveries = 0; recoveryWindow = Date() }
         ready = false; probing = false; engineGeneration = UUID()
-        cancelRequests(); apply(preferences.active ? base : raw); token = UUID().uuidString
+        cancelRequests(); token = UUID().uuidString
         updateReport()
         guard recoveries < 2, let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaSubtitles") else {
             engineError = "繁體字幕尚未恢復，請按「重新準備字幕」再試。"; updateReport(); return
@@ -351,8 +376,9 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
            let data = try? JSONSerialization.data(withJSONObject: lines), data.count <= 16_000_000,
            let decoded = try? JSONDecoder().decode([LyricLine].self, from: data), decoded.count <= 20_000 {
             let cleaned = LyricTimeline(lines: decoded).prepared(for: (input?.song.durationMs ?? 0) / 1000)
-            apply(cleaned.lines.isEmpty && !base.lines.isEmpty ? base : cleaned)
-            updateReport()
+            guard !cleaned.lines.isEmpty || base.lines.isEmpty else { return }
+            conversionTask?.cancel(); conversionError = nil
+            apply(cleaned); updateReport()
         } else if type == "report" {
             engineReportText = body["text"] as? String ?? "目前沒有報告。"
             engineReport = body["value"] as? [String: Any] ?? [:]
@@ -368,11 +394,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         let names = ["netease": "網易雲", "qq": "QQ 音樂", "ytm": "YouTube 搜尋", "ytm-manual": "YouTube 翻譯影片",
             "local": "本機", "navidrome": "Navidrome", "lrclib": "LRCLIB"]
         let states = sourceStatus.keys.sorted().map { "\(names[$0] ?? $0)：\(sourceStatus[$0] ?? "")" }
-        let details = sourceDiagnostics.keys.sorted().map { "\($0)：\(sourceDiagnostics[$0] ?? "")" }
-        let engine = engineError ?? (preferences.active ? (ready ? "已就緒" : "準備中") : "已停用")
+        let details = sourceDiagnostics.keys.sorted().map { "\(names[$0] ?? $0)：\(sourceDiagnostics[$0] ?? "")" }
+        let engine = preferences.active ? (ready ? "搜尋已就緒" : engineError ?? "搜尋引擎準備中") : "已停用"
+        let conversion = preferences.active && preferences.enabled ? conversionError ?? "離線轉換已啟用" : "離線轉換已停用"
         let song = input.map { "\($0.song.title) · \($0.song.artist)" } ?? "目前沒有歌曲"
         let translated = timeline.lines.filter { $0.translation?.isEmpty == false || $0.extra["displayTranslation"] != nil }.count
-        let summary = ["繁體字幕：\(engine)", "歌曲：\(song)",
+        let summary = ["繁體字幕：\(engine)", conversion, "歌曲：\(song)",
             "原字幕 \(raw.lines.count) 行 · 顯示 \(timeline.lines.count) 行 · 附譯文 \(translated) 行",
             manual.map { "已套用：\($0.source)" } ?? (input?.loading == true ? "等待目前音源與原字幕。" : "")]
             .filter { !$0.isEmpty }.joined(separator: "\n")
@@ -392,6 +419,28 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         for task in tasks.values { task.cancel() }; tasks.removeAll()
         candidates.removeAll(); candidateOrder.removeAll()
     }
+    private func displayBase() {
+        conversionTask?.cancel()
+        conversionError = nil
+        let source = preferences.active ? base : raw
+        guard preferences.active, !source.lines.isEmpty else { apply(source); return }
+        let settings = preferences
+        let browserReady = ready
+        conversionTask = Task { [weak self] in
+            do {
+                if browserReady { try await Task.sleep(for: .milliseconds(120)) }
+                let converted = try await NativeSubtitleConverter.shared.convert(source.lines, preferences: settings)
+                guard let self, !Task.isCancelled else { return }
+                apply(LyricTimeline(lines: converted))
+                updateReport()
+            } catch {
+                guard let self, !Task.isCancelled else { return }
+                conversionError = "離線轉換失敗，顯示原字幕。"
+                apply(source); updateReport()
+            }
+        }
+    }
+
     private func apply(_ next: LyricTimeline) {
         guard timeline.lines != next.lines else { return }
         timeline = next; revision = UUID()
@@ -404,9 +453,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
 
     private func request(_ body: [String: Any]) {
-        guard preferences.active, let id = body["id"] as? String, tasks[id] == nil,
-              tasks.count < 4, let method = body["method"] as? String,
+        guard preferences.active, let id = body["id"] as? String, tasks[id] == nil, let method = body["method"] as? String,
               let params = body["params"] as? [String: Any], let provider = params["providerId"] as? String else { return }
+        guard tasks.count < 4 else {
+            call("window.FoliaSubtitles.resolve(id, result, error)", ["id": id, "result": [:], "error": ["code": "rate-limited", "message": "rate-limited"]])
+            return
+        }
         let requestAccount = accountKey
         let requestToken = token
         let requestPreferences = preferences
@@ -482,6 +534,12 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
                  decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         decisionHandler(navigationAction.request.url?.isFileURL == true ? .allow : .cancel)
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        if (error as NSError).code != NSURLErrorCancelled { restartEngine() }
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        if (error as NSError).code != NSURLErrorCancelled { restartEngine() }
     }
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         restartEngine()

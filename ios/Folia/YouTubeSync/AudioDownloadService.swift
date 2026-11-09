@@ -7,6 +7,7 @@ import YouTubeKit
 actor AudioDownloadService {
     static let shared = AudioDownloadService()
     private var blockedUntil: [String: Date] = [:]
+    private var videoMetadata: [String: (title: String, artist: String, duration: Double, expires: Date)] = [:]
     private let session = AudioDownloadService.anonymousSession(seconds: 600)
     private let metadataSession = AudioDownloadService.anonymousSession(seconds: 13)
     private static func anonymousSession(seconds: TimeInterval) -> URLSession {
@@ -41,6 +42,49 @@ actor AudioDownloadService {
         return candidates
     }
 
+    // Streaming uses small formats and a shared time budget. Slow lookups cannot hold
+    // back candidates from the other sources until their normal download timeouts.
+    func streamingCandidates(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
+        guard YouTubeVideo.validID(song.videoID), let duration = song.duration, duration.isFinite, duration > 0 else { return [] }
+        return try await withThrowingTaskGroup(of: [DownloadAudioCandidate]?.self) { group in
+            defer { group.cancelAll() }
+            group.addTask {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
+                   let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
+                    return [DownloadAudioCandidate(url: file, title: song.title, artist: song.artist,
+                        duration: duration, format: "m4a", bitrate: 128_000, source: "測試音源")]
+                }
+                #endif
+                return (try? await self.netease(song, streaming: true)) ?? []
+            }
+            group.addTask {
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {
+                    try await Task.sleep(for: .seconds(45))
+                    return []
+                }
+                #endif
+                return (try? await self.qq(song, streaming: true)) ?? []
+            }
+            if let account {
+                group.addTask { (try? await NavidromeClient(account: account).downloadCandidates(for: song)) ?? [] }
+            }
+            group.addTask {
+                try await Task.sleep(for: .seconds(5))
+                return nil
+            }
+            var found: [DownloadAudioCandidate] = []
+            for _ in 0..<(account == nil ? 2 : 3) {
+                guard let response = try await group.next(), let batch = response else { break }
+                found += batch
+            }
+            try Task.checkCancellation()
+            var seen = Set<URL>()
+            return found.sorted(by: DownloadAudioCandidate.preferredForStreaming).filter { seen.insert($0.url).inserted }
+        }
+    }
+
     private func attempt(_ work: @Sendable () async throws -> [DownloadAudioCandidate]) async -> Result<[DownloadAudioCandidate], Error> {
         do { return .success(try await work()) } catch { return .failure(error) }
     }
@@ -50,11 +94,18 @@ actor AudioDownloadService {
         return String((metadata.title + " " + (DownloadSongMatch.artistNames(metadata.artist).first ?? "")).prefix(120))
     }
 
-    private func netease(_ song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+    private func netease(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
         let data = try await metadata(URL(string: "https://music.163.com/api/cloudsearch/pc")!, provider: "netease",
             form: [.init(name: "s", value: query(song)), .init(name: "type", value: "1"), .init(name: "limit", value: "12")])
+        let recordings = try DownloadSourceDecoders.search(data, for: song).prefix(2)
+        if streaming, !recordings.isEmpty {
+            let ids = recordings.map { String($0.id) }.joined(separator: ",")
+            let response = try await metadata(URL(string: "https://music.163.com/api/song/enhance/player/url/v1")!, provider: "netease",
+                form: [.init(name: "ids", value: "[\(ids)]"), .init(name: "level", value: "standard"), .init(name: "encodeType", value: "mp3")])
+            return try recordings.compactMap { try DownloadSourceDecoders.audio(response, recording: $0) }
+        }
         var result: [DownloadAudioCandidate] = []
-        for recording in try DownloadSourceDecoders.search(data, for: song).prefix(2) {
+        for recording in recordings {
             async let high = attempt { try await self.neteaseAudio(recording, level: "hires") }
             async let lossless = attempt { try await self.neteaseAudio(recording, level: "lossless") }
             async let standard = attempt { try await self.neteaseAudio(recording, level: "exhigh") }
@@ -76,7 +127,7 @@ actor AudioDownloadService {
         return try DownloadSourceDecoders.audio(audio, recording: recording).map { [$0] } ?? []
     }
 
-    private func qq(_ song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+    private func qq(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
         var search = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp")!
         search.queryItems = [.init(name: "w", value: query(song)), .init(name: "format", value: "json"),
                              .init(name: "p", value: "1"), .init(name: "n", value: "8")]
@@ -85,7 +136,8 @@ actor AudioDownloadService {
         var results: [DownloadAudioCandidate] = []
         for recording in try DownloadSourceDecoders.qqSearch(data, for: song).prefix(2) {
             try Task.checkCancellation()
-            let names = DownloadSourceDecoders.qqFormats.map { $0.prefix + recording.mediaID + "." + $0.format }
+            let names = DownloadSourceDecoders.qqFormats.filter { !streaming || $0.bitrate > 0 }
+                .map { $0.prefix + recording.mediaID + "." + $0.format }
             let body: [String: Any] = ["comm": ["uin": 0, "format": "json", "ct": 24, "cv": 0],
                 "req_0": ["module": "vkey.GetVkeyServer", "method": "CgiGetVkey", "param": [
                     "guid": String(UInt64.random(in: 1_000_000_000...9_999_999_999)), "songmid": names.map { _ in recording.mid },
@@ -99,7 +151,7 @@ actor AudioDownloadService {
         return results
     }
 
-    func youtube(_ song: SyncedYouTubeSong) async throws -> [DownloadAudioCandidate] {
+    func youtube(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
         #if canImport(YouTubeKit)
         let details = try await publicVideo(song.videoID)
         guard song.duration == nil || DownloadSongMatch.sameDuration(song.duration, details.duration) else {
@@ -108,16 +160,18 @@ actor AudioDownloadService {
         let video = YouTube(videoID: song.videoID, useOAuth: false, allowOAuthCache: false, methods: [.local])
         guard !(try await video.ageRestricted) else { throw PlatformError.message("YouTube 需要年齡驗證。") }
         let streams = try await video.streams.filter { $0.includesAudioTrack && !$0.includesVideoTrack && $0.fileExtension == .m4a }
-        let streamCandidates = streams.filter { Self.publicMediaURL($0.url, provider: "youtube") }
-            .sorted { ($0.averageBitrate ?? $0.bitrate ?? 0) > ($1.averageBitrate ?? $1.bitrate ?? 0) }
-        guard let first = streamCandidates.first else { throw PlatformError.message("YouTube 未提供可用的完整音訊。") }
-        try await first.waitUntilAvailable()
-        try Task.checkCancellation()
         let recording = YouTubeCaptionDecoders.metadata(id: song.videoID, title: details.title, artist: details.artist, duration: details.duration)
-        return streamCandidates.prefix(3).map { stream in
-            DownloadAudioCandidate(url: stream.url, title: recording.title, artist: recording.artist,
-                duration: details.duration, format: "m4a", bitrate: stream.averageBitrate ?? stream.bitrate ?? 0, source: "YouTube", recording: recording)
-        }
+        let playable = streams.filter { Self.publicMediaURL($0.url, provider: "youtube") }
+            .map { stream in
+                (stream, DownloadAudioCandidate(url: stream.url, title: recording.title, artist: recording.artist,
+                    duration: details.duration, format: "m4a", bitrate: stream.averageBitrate ?? stream.bitrate ?? 0,
+                    source: "YouTube", recording: recording))
+            }.sorted { streaming ? DownloadAudioCandidate.preferredForStreaming($0.1, $1.1)
+                                  : DownloadAudioCandidate.preferred($0.1, $1.1) }
+        guard let first = playable.first else { throw PlatformError.message("YouTube 未提供可用的完整音訊。") }
+        try await first.0.waitUntilAvailable()
+        try Task.checkCancellation()
+        return playable.prefix(streaming ? 2 : 3).map { $0.1 }
         #else
         throw PlatformError.message("目前建置未包含 YouTube 音訊來源。")
         #endif
@@ -145,6 +199,7 @@ actor AudioDownloadService {
 
     func publicVideo(_ id: String) async throws -> (title: String, artist: String, duration: Double) {
         guard YouTubeVideo.validID(id) else { throw SubtitleReadError("invalid-response") }
+        if let cached = videoMetadata[id], cached.expires > Date() { return (cached.title, cached.artist, cached.duration) }
         var url = URLComponents(string: "https://www.youtube.com/watch")!
         url.queryItems = [.init(name: "v", value: id), .init(name: "hl", value: "zh-TW")]
         let bytes = try await metadata(url.url!, provider: "youtube", maximum: 8_000_000)
@@ -158,6 +213,10 @@ actor AudioDownloadService {
         }
         let duration = SubtitleSourceDecoders.number(item["lengthSeconds"])
         guard duration > 0, duration <= 5400 else { throw SubtitleReadError("invalid-response") }
+        if videoMetadata.count >= 32, let oldest = videoMetadata.min(by: { $0.value.expires < $1.value.expires }) {
+            videoMetadata.removeValue(forKey: oldest.key)
+        }
+        videoMetadata[id] = (title, artist, duration, Date().addingTimeInterval(300))
         return (title, artist, duration)
     }
 

@@ -53,7 +53,7 @@ struct NowPlayingScreen: View {
                                 let translation = subtitles.timeline.lines[index].translationText {
                             VStack {
                                 Spacer()
-                                Text(translation).font(.callout.weight(.medium)).multilineTextAlignment(.center)
+                                Text(translation).font(FoliaLyricFont.text(.callout, size: 16)).multilineTextAlignment(.center)
                                     .padding(.horizontal, 16).padding(.vertical, 7)
                                     .background(.black.opacity(0.45), in: Capsule())
                             }.allowsHitTesting(false)
@@ -133,6 +133,9 @@ struct NowPlayingScreen: View {
                     .id(track.id)
             }
             .onChange(of: track.id) { _, _ in showingSearch = false }
+            .onChange(of: player.subtitleInput, initial: true) { _, input in
+                subtitles.load(input, timeline: player.timeline)
+            }
         } else {
             Color.clear.onAppear { dismiss() }
         }
@@ -298,6 +301,7 @@ struct MiniPlayer: View {
                 .contentShape(Rectangle())
             }
             .accessibilityHint("打開完整播放畫面")
+            .accessibilityIdentifier("openMiniPlayer")
             Button { player.toggle() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
             }

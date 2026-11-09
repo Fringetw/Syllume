@@ -69,12 +69,12 @@ private struct SubtitleSettingsContent: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel("內建繁體字幕")
                     .accessibilityIdentifier("subtitleEngineState")
-                    .accessibilityValue(subtitles.ready && subtitles.engineError == nil ? "已就緒" : "準備中")
+                    .accessibilityValue(subtitles.ready ? "已就緒" : "可離線轉換")
                 Toggle("啟用內建模組", isOn: $subtitles.preferences.active)
                     .accessibilityIdentifier("subtitleActive")
-                if !subtitles.ready && subtitles.engineError == nil { ProgressView("正在準備繁體字幕") }
+                if !subtitles.ready && subtitles.engineError == nil { ProgressView("正在準備字幕搜尋") }
                 if subtitles.engineError != nil {
-                    Button("重新準備字幕") { subtitles.restartEngine(manual: true) }
+                    Button("重新準備字幕搜尋") { subtitles.restartEngine(manual: true) }
                 }
             } footer: {
                 Text("模組隨 App 內建。停用會還原原字幕，不會改寫歌詞檔。")

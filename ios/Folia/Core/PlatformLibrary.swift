@@ -106,19 +106,24 @@ enum PlatformLibrary {
             parts.queryItems = [.init(name: "limit", value: "20"), .init(name: "offset", value: String(offset))]
         } else {
             let path: String
-            var parameters = [URLQueryItem(name: "part", value: "snippet,contentDetails"), .init(name: "maxResults", value: "50")]
+            var parameters = [URLQueryItem(name: "maxResults", value: "50")]
+            let fields: String
             switch collection {
             case .playlists:
                 path = "playlists"
-                parameters.append(.init(name: "mine", value: "true"))
+                fields = "nextPageToken,items(id,snippet(title,channelTitle))"
+                parameters += [.init(name: "part", value: "snippet"), .init(name: "mine", value: "true")]
             case .liked:
                 path = "videos"
-                parameters.append(.init(name: "myRating", value: "like"))
+                fields = "nextPageToken,items(id,snippet(title,channelTitle,channelId),contentDetails(duration))"
+                parameters += [.init(name: "part", value: "snippet,contentDetails"), .init(name: "myRating", value: "like")]
             case .playlist(let id):
                 guard validID(id) else { throw PlatformError.message("歌單識別碼無效。") }
                 path = "playlistItems"
-                parameters.append(.init(name: "playlistId", value: id))
+                fields = "nextPageToken,items(id,snippet(title,channelTitle,videoOwnerChannelTitle,videoOwnerChannelId,resourceId(videoId)))"
+                parameters += [.init(name: "part", value: "snippet"), .init(name: "playlistId", value: id)]
             }
+            parameters.append(.init(name: "fields", value: fields))
             if let cursor { parameters.append(.init(name: "pageToken", value: cursor)) }
             parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/" + path)!
             parts.queryItems = parameters

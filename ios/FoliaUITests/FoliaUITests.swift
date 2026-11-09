@@ -55,6 +55,22 @@ final class FoliaUITests: XCTestCase {
         XCTAssertFalse(report.label.contains("完整結構化紀錄"))
     }
 
+    func testOfflineTraditionalSubtitlesWhileSearchUnavailable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--subtitle-offline-only", "--subtitle-fixture", "--subtitle-reset",
+                               "-Folia.LyricDisplayMode", "lyrics"]
+        app.launch()
+        XCTAssertTrue(app.buttons["demoTrack"].waitForExistence(timeout: 15))
+        app.buttons["demoTrack"].tap()
+        let transport = app.buttons["playerToggle"]
+        XCTAssertTrue(transport.waitForExistence(timeout: 10))
+        if transport.label == "暫停" { transport.tap() }
+        assertLyric("頭髮發現", in: app)
+        assertLyric("風裡的回聲", in: app)
+        XCTAssertEqual(app.buttons["lyricLine-0"].value as? String, "GenSenRounded2JP-M")
+    }
+
     func testSubtitleSourceSettingsPersist() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -94,7 +110,7 @@ final class FoliaUITests: XCTestCase {
         if toggle.label == "播放" { toggle.tap() }
         let stage = app.descendants(matching: .any)["foliaSonnetStage"].firstMatch
         XCTAssertTrue(stage.waitForExistence(timeout: 30))
-        let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: stage)
+        let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒 · GenSenRounded2JP-M"), evaluatedWith: stage)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 90), .completed, "Sonnet: \(String(describing: stage.value))")
         if toggle.label == "播放" { toggle.tap() }
         XCTAssertEqual(toggle.label, "暫停")
@@ -115,7 +131,7 @@ final class FoliaUITests: XCTestCase {
         app.segmentedControls.buttons["繪光"].tap()
         let lumiere = app.descendants(matching: .any)["foliaLumiereStage"].firstMatch
         XCTAssertTrue(lumiere.waitForExistence(timeout: 20))
-        let lumiereReady = expectation(for: NSPredicate(format: "value == %@", "已就緒"), evaluatedWith: lumiere)
+        let lumiereReady = expectation(for: NSPredicate(format: "value == %@", "已就緒 · GenSenRounded2JP-M"), evaluatedWith: lumiere)
         XCTAssertEqual(XCTWaiter.wait(for: [lumiereReady], timeout: 120), .completed, "Lumiere: \(String(describing: lumiere.value))")
         XCTAssertGreaterThan(lumiere.frame.height, app.frame.height * 0.8)
         capture(app, name: "Lumiere-paused")
@@ -160,13 +176,15 @@ final class FoliaUITests: XCTestCase {
     func testYouTubeSyncedAudioPausesWithoutVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-slow-source-fixture",
+                               "--subtitle-fixture", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
         app.launch(); app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let audio = app.buttons["youtubeSong-fixture-row"]
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
         XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
+        XCTAssertTrue(app.staticTexts["正在載入其餘歌曲…"].exists)
         audio.tap()
         let toggle = app.buttons["playerToggle"]
         XCTAssertTrue(toggle.waitForExistence(timeout: 15))
@@ -191,7 +209,20 @@ final class FoliaUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 20), .completed,
                        "Expected the media clock to advance from \(stopped); observed \(String(describing: probe.value))")
         toggle.tap(); capture(app, name: "YouTube-audio-without-video")
-        app.buttons["關閉播放畫面"].tap()
+        let closePlayer = app.buttons["關閉播放畫面"]
+        let loadingPages = app.staticTexts["正在載入其餘歌曲…"]
+        closePlayer.tap()
+        XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
+        app.buttons["openMiniPlayer"].tap()
+        let playlistSync = app.staticTexts["youtubePlaylistSyncProbe"]
+        XCTAssertTrue(playlistSync.waitForExistence(timeout: 10))
+        XCTAssertEqual(playlistSync.value as? String, "已暫停")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(playlistSync.waitForExistence(timeout: 10))
+        XCTAssertEqual(playlistSync.value as? String, "已暫停")
+        closePlayer.tap()
+        XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
         audio.press(forDuration: 1)
         let download = app.buttons["下載音樂"].firstMatch
         XCTAssertTrue(download.waitForExistence(timeout: 10))

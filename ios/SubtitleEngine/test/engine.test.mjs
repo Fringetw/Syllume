@@ -191,3 +191,19 @@ test('configuration revisions reject an older disable arriving after reenable', 
     assert.equal(h.last().configurationRevision, 4);
     h.engine.dispose();
 });
+
+test('the shipped conversion works without window, WebKit, timers or providers', () => {
+    const context = vm.createContext({});
+    vm.runInContext(fs.readFileSync(new URL('../../Folia/Resources/FoliaSubtitles/subtitles.js', import.meta.url), 'utf8'), context);
+    const original = { ...lines[0], translation: '风里的回声', displayTranslation: '风里的回声',
+        alternateTexts: [null], backgroundVocals: [null] };
+    const storedDisplayOnly = { ...lines[1], displayTranslation: '蓝色的天空' };
+    const result = JSON.parse(context.FoliaConvertSubtitles(JSON.stringify([original, storedDisplayOnly]), JSON.stringify(defaults)));
+    assert.equal(result[0].fullText, original.fullText);
+    assert.deepEqual(result[0].words, original.words);
+    assert.equal(result[0].translation, '風裡的回聲');
+    assert.equal(result[0].displayTranslation, '風裡的回聲');
+    assert.equal(result[1].displayTranslation, '藍色的天空');
+    const off = JSON.parse(context.FoliaConvertSubtitles(JSON.stringify([original]), JSON.stringify({ ...defaults, convertTranslation: false })));
+    assert.equal(off[0].displayTranslation, '风里的回声');
+});

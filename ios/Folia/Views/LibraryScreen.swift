@@ -47,20 +47,20 @@ struct LibraryScreen: View {
                 case .navidrome:
                     NavidromeSearch(account: navidrome.account, configure: { showingServer = true }) { track, tracks, client in
                         player.play(tracks, from: track, client: client)
-                        showingPlayer = true
+                        presentPlayer()
                     }
                 case .spotify:
                     PlatformLibraryScreen(connection: spotify, pauseLocalPlayback: pauseForPlatform, playYouTube: { _, _ in })
                 case .youtube:
                     YouTubeMusicScreen(connection: youtube, sync: youtubeSync, library: library,
-                        account: navidrome.account, player: player, openPlayer: { showingPlayer = true })
+                        account: navidrome.account, player: player, openPlayer: presentPlayer, refresh: refreshYouTubePlaylist)
                 }
             }
             .background(FoliaPalette.surface.ignoresSafeArea())
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if let track = player.current {
-                    MiniPlayer(track: track, player: player, open: { showingPlayer = true })
+                    MiniPlayer(track: track, player: player, open: presentPlayer)
                 }
             }
         }
@@ -68,19 +68,33 @@ struct LibraryScreen: View {
             SubtitleEngineAnchor(controller: subtitles).frame(width: 1, height: 1)
                 .allowsHitTesting(false).accessibilityHidden(true)
         }
-        .fullScreenCover(isPresented: $showingPlayer) { NowPlayingScreen(player: player, subtitles: subtitles) }
+        .fullScreenCover(isPresented: $showingPlayer, onDismiss: { refreshYouTubePlaylist() }) {
+            NowPlayingScreen(player: player, subtitles: subtitles)
+                #if DEBUG
+                .overlay(alignment: .topLeading) {
+                    if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {
+                        Text("歌單同步狀態檢查").font(.system(size: 1)).frame(height: 1)
+                            .accessibilityIdentifier("youtubePlaylistSyncProbe")
+                            .accessibilityValue(youtubeSync.busy ? "同步中" : "已暫停")
+                    }
+                }
+                #endif
+        }
         .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
         .onAppear { subtitles.sources(library: library, account: navidrome.account) }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .active { subtitles.synchronize() }
+            if phase == .active {
+                subtitles.synchronize()
+                refreshYouTubePlaylist()
+            }
             if phase == .background { youtubeSync.cancel() }
         }
         .onChange(of: youtube.sessionID, initial: true) { _, _ in youtubeSync.activate(youtube) }
         .onChange(of: navidrome.account) { _, _ in
             player.clearNavidrome(); subtitles.sources(library: library, account: navidrome.account)
             youtubeSync.cancel()
-            if source == .youtube { youtubeSync.synchronize(connection: youtube) }
+            refreshYouTubePlaylist()
         }
         .onChange(of: player.subtitleInput, initial: true) { _, next in
             subtitles.load(next, timeline: player.timeline)
@@ -99,6 +113,16 @@ struct LibraryScreen: View {
                 catch { message = "無法更新本機曲庫。" }
             }
         } message: { track in Text(track.title) }
+    }
+
+    private func presentPlayer() {
+        youtubeSync.cancel()
+        showingPlayer = true
+    }
+
+    private func refreshYouTubePlaylist(force: Bool = false) {
+        guard source == .youtube, scenePhase == .active, !showingPlayer else { return }
+        youtubeSync.synchronize(connection: youtube, force: force)
     }
 
     private var masthead: some View {
@@ -161,8 +185,8 @@ struct LibraryScreen: View {
                     if visibleTracks.isEmpty { Text("沒有符合的歌曲。").foregroundStyle(.secondary) }
                     ForEach(visibleTracks) { track in
                         TrackRow(track: track, active: player.current?.source == .local && player.current?.id == track.id) {
-                                player.play(visibleTracks, from: track)
-                            showingPlayer = true
+                            player.play(visibleTracks, from: track)
+                            presentPlayer()
                         }
                         .contextMenu {
                             Button("附加歌詞", systemImage: "text.badge.plus") {
@@ -182,7 +206,7 @@ struct LibraryScreen: View {
     private var demoCard: some View {
         Button {
             player.play([.demo], from: .demo)
-            showingPlayer = true
+            presentPlayer()
         } label: {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {

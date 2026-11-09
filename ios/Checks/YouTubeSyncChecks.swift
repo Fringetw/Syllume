@@ -15,6 +15,17 @@ enum YouTubeSyncChecks {
         precondition(DownloadSongMatch.safeAudioURL("http://example.com/song.mp3") == nil)
         precondition(DownloadSongMatch.safeAudioURL("https://user:pass@example.com/song.mp3") == nil)
 
+        let duet = SyncedYouTubeSong(LibraryEntry(id: "row-jane-doe",
+            title: "米津玄師, 宇多田ヒカル Kenshi Yonezu, Hikaru Utada -  JANE DOE",
+            subtitle: "Kenshi Yonezu  米津玄師和Hikaru Utada",
+            url: URL(string: "https://music.youtube.com/watch?v=sPLqsLsooJY")!, duration: 247))!
+        precondition(DownloadSongMatch.matches(duet, title: "JANE DOE", artists: ["米津玄師", "宇多田ヒカル"], duration: 236.007))
+        precondition(DownloadSongMatch.matches(duet, title: "JANE DOE", artists: ["米津玄師", "宇多田光"], duration: 235))
+        precondition(!DownloadSongMatch.matches(duet, title: "JANE DOE", artists: ["米津玄師", "另一位歌手"], duration: 236))
+        precondition(!DownloadSongMatch.matches(duet, title: "JANE DOE", artists: ["米津玄師", "宇多田光"], duration: 30))
+        precondition(!DownloadSongMatch.matches(duet, title: "JANE DOE (Live)", artists: ["米津玄師", "宇多田光"], duration: 236))
+        precondition(!DownloadSongMatch.matches(duet, title: "其他歌曲", artists: ["米津玄師", "宇多田光"], duration: 236))
+
         let recording = try DownloadSourceDecoders.search(Data(#"{"code":200,"result":{"songs":[{"id":1,"name":"LOSER","ar":[{"name":"米津玄師"}],"dt":244000},{"id":2,"name":"LOSER (Remix)","ar":[{"name":"米津玄師"}],"dt":244000}]}}"#.utf8), for: song)
         precondition(recording.count == 1 && recording[0].id == 1)
         let kawaki = SyncedYouTubeSong(LibraryEntry(id: "row-alias", title: "カワキヲアメク", subtitle: "美波 - Topic",
@@ -35,6 +46,11 @@ enum YouTubeSyncChecks {
             format: "mp3", bitrate: 320000, source: "測試")
         precondition(DownloadAudioCandidate.preferred(audio, mp3))
         precondition(!DownloadAudioCandidate.preferred(mp3, audio))
+        let compact = DownloadAudioCandidate(url: audio.url, title: "LOSER", artist: "米津玄師", duration: 244,
+            format: "m4a", bitrate: 128_000, source: "測試")
+        precondition(DownloadAudioCandidate.preferred(mp3, compact))
+        precondition([audio, mp3, compact].sorted(by: DownloadAudioCandidate.preferredForStreaming).map(\.bitrate)
+            == [128_000, 320_000, 900_000])
 
         let qq = try DownloadSourceDecoders.qqSearch(Data(#"{"code":0,"data":{"song":{"list":[{"songmid":"S1","strMediaMid":"M1","songid":7,"songname":"LOSER","singer":[{"name":"米津玄師"}],"interval":244}]}}}"#.utf8), for: song)
         precondition(qq.count == 1)

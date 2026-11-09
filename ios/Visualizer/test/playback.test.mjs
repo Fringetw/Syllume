@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import crypto from 'node:crypto';
-import { createStageController } from '../stageController.mjs';
+import { createStageController, loadLyricFont } from '../stageController.mjs';
 
 function stageHarness(factory) {
     let now = 0, visible = true;
@@ -14,6 +14,16 @@ function stageHarness(factory) {
     return { stage, calls, messages, runtime, advance(ms) { now += ms; }, hide() { visible = false; stage.suspend(); } };
 }
 const song = { id: 'a', style: 'sonnet', lines: [], reduceMotion: false, energySaving: false };
+
+test('animation waits for the bundled JP face and falls back on load failure or timeout', async () => {
+    const calls = [];
+    const fonts = { load: async (...args) => { calls.push(args); return [{ status: 'loaded' }]; } };
+    assert.equal(await loadLyricFont(fonts), 'GenSenRounded2JP-M');
+    assert.deepEqual(calls, [['500 28px "GenSenRounded2JP-M"', '繁體かなABC']]);
+    assert.equal(await loadLyricFont({ load: async () => [] }), undefined);
+    assert.equal(await loadLyricFont({ load: async () => { throw new Error('file unavailable'); } }), undefined);
+    assert.equal(await loadLyricFont({ load: () => new Promise(() => {}) }, 5), undefined);
+});
 
 test('paused stage freezes its clock and does no repeated GPU work', async () => {
     const h = stageHarness(); await h.stage.setSong(song);

@@ -29,7 +29,7 @@ struct SonnetStage: View {
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
-                Text(translation).font(.callout).foregroundStyle(.white.opacity(0.8))
+                Text(translation).font(FoliaLyricFont.text(.callout, size: 16)).foregroundStyle(.white.opacity(0.8))
                     .multilineTextAlignment(.center).padding(.horizontal, 24).padding(.bottom, 18)
                     .allowsHitTesting(false)
             }
@@ -76,11 +76,16 @@ private struct SonnetWebView: UIViewRepresentable {
     }
     func updateUIView(_ view: WKWebView, context: Context) {
         context.coordinator.parent = self; context.coordinator.update()
-        view.accessibilityValue = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
-        view.accessibilityIdentifier = style == "lumiere" ? "foliaLumiereStage" : "foliaSonnetStage"
-        if let index = timeline.activeIndex(at: time) {
-            view.accessibilityLabel = (style == "lumiere" ? "繪光歌詞舞台，" : "商籟歌詞舞台，") + lines[index].fullText
+        var state = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
+        #if DEBUG
+        if ready, ProcessInfo.processInfo.arguments.contains("--playback-probe") {
+            state += " · " + context.coordinator.lyricFont
         }
+        #endif
+        view.accessibilityValue = state
+        view.accessibilityIdentifier = style == "lumiere" ? "foliaLumiereStage" : "foliaSonnetStage"
+        let label = style == "lumiere" ? "繪光歌詞舞台" : "商籟歌詞舞台"
+        view.accessibilityLabel = timeline.activeIndex(at: time).map { label + "，" + lines[$0].fullText } ?? label
     }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
         view.evaluateJavaScript("window.FoliaStage?.stop()", completionHandler: nil)
@@ -92,6 +97,7 @@ private struct SonnetWebView: UIViewRepresentable {
         weak var view: WKWebView?
         var loaded = false
         var failureDetail = ""
+        var lyricFont = ""
         var sentSong = ""
         var lastTime = 0.0
         var lastStamp = Date.distantPast
@@ -135,15 +141,28 @@ private struct SonnetWebView: UIViewRepresentable {
         }
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
-            if type == "loaded" { loaded = true; update() }
+            if type == "loaded" { markLoaded() }
+            else if type == "font" { lyricFont = body["detail"] as? String ?? "" }
             else if type == "ready" { parent.ready = true; parent.failed = false }
             else if type == "error" { failureDetail = body["detail"] as? String ?? ""; parent.failed = true }
+        }
+        private func markLoaded() {
+            guard !loaded else { return }
+            loaded = true; update()
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { parent.failed = true }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             webView.evaluateJavaScript("typeof window.FoliaStage") { [weak self] result, _ in
-                if result as? String != "object" { self?.parent.failed = true }
+                guard let self else { return }
+                if result as? String == "object" { markLoaded() }
+                else { parent.failed = true }
             }
+        }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            if (error as NSError).code != NSURLErrorCancelled { parent.failed = true }
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            if (error as NSError).code != NSURLErrorCancelled { parent.failed = true }
         }
     }
 }

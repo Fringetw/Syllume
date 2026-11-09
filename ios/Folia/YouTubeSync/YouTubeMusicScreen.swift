@@ -8,7 +8,7 @@ struct YouTubeMusicScreen: View {
     let account: NavidromeAccount?
     let player: PlaybackModel
     let openPlayer: () -> Void
-    @Environment(\.scenePhase) private var scenePhase
+    let refresh: (Bool) -> Void
     @State private var showingPicker = false
     @State private var showingAccount = false
     @State private var addingLocal = false
@@ -76,10 +76,9 @@ struct YouTubeMusicScreen: View {
             sync.activate(connection)
             if connection.connected {
                 if sync.snapshot.choice == nil { offerPlaylistPicker() }
-                else { refresh() }
+                else { refresh(false) }
             } else { showingPicker = false }
         }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
             let song = attachment; attachment = nil
             guard let song else { return }
@@ -100,7 +99,7 @@ struct YouTubeMusicScreen: View {
         }
         .confirmationDialog("下載音樂到「檔案」？", isPresented: Binding(
             get: { downloadTarget != nil }, set: { if !$0 { downloadTarget = nil } }), presenting: downloadTarget) { song in
-            Button("下載音樂") { sync.download(song, library: library, account: account); downloadTarget = nil }
+            Button("下載音樂") { sync.download(song, library: library, account: account, connection: connection); downloadTarget = nil }
         } message: { song in
             Text("「\(song.title)」會選擇可用的最高音質，必要時嘗試原 YouTube 音訊。音檔會先完整解碼驗證。")
         }
@@ -140,7 +139,7 @@ struct YouTubeMusicScreen: View {
                         Button("停止同步") { sync.cancel() }.buttonStyle(.bordered)
                     }
                 } else {
-                    Button("同步歌單", systemImage: "arrow.triangle.2.circlepath") { refresh() }
+                    Button("同步歌單", systemImage: "arrow.triangle.2.circlepath") { refresh(true) }
                         .accessibilityIdentifier("syncYouTubePlaylist")
                 }
                 if sync.downloading != nil {
@@ -166,7 +165,7 @@ struct YouTubeMusicScreen: View {
         }
         .environment(\.editMode, $editing)
         .listStyle(.plain).scrollContentBackground(.hidden)
-        .refreshable { refresh() }
+        .refreshable { refresh(true) }
     }
 
     private func songRow(_ song: SyncedYouTubeSong) -> some View {
@@ -194,7 +193,7 @@ struct YouTubeMusicScreen: View {
         .accessibilityValue(status(song))
         .contextMenu {
             Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
-                player.playNext(song, bindings: sync.snapshot.bindings, account: account)
+                player.playNext(song, bindings: sync.snapshot.bindings, account: account, connection: connection)
             }
             if YouTubeVideo.validID(song.videoID) {
                 Button("下載音樂", systemImage: "arrow.down.circle") { downloadTarget = song }.disabled(sync.downloading != nil)
@@ -205,11 +204,10 @@ struct YouTubeMusicScreen: View {
     }
 
     private func play(_ song: SyncedYouTubeSong, _ queue: [SyncedYouTubeSong]) {
-        player.playPlaylist(queue, from: song, bindings: sync.snapshot.bindings, account: account)
         openPlayer()
+        player.playPlaylist(queue, from: song, bindings: sync.snapshot.bindings, account: account, connection: connection)
     }
 
-    private func refresh() { sync.synchronize(connection: connection) }
     private func offerPlaylistPicker() {
         guard !showingAccount, connection.connected else { return }
         sync.activate(connection)
@@ -272,8 +270,8 @@ private struct YouTubePlaylistPicker: View {
                 loaded += page.entries.filter { ids.insert($0.id).inserted }.map { YouTubePlaylistChoice(id: $0.id, title: $0.title) }
                 cursor = page.next
                 if let cursor, !cursors.insert(cursor).inserted { throw PlatformError.message("歌單分頁回應重複，請重試。") }
+                choices = loaded
             } while cursor != nil
-            choices = loaded
         } catch is CancellationError { }
         catch { if connection.sessionID == session { self.error = "無法載入完整歌單，請下拉重試或重新連接 Google。" } }
     }
