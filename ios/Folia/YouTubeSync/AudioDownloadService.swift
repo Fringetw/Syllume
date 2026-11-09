@@ -42,46 +42,68 @@ actor AudioDownloadService {
         return candidates
     }
 
-    // Streaming uses small formats and a shared time budget. Slow lookups cannot hold
-    // back candidates from the other sources until their normal download timeouts.
-    func streamingCandidates(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
-        guard YouTubeVideo.validID(song.videoID), let duration = song.duration, duration.isFinite, duration > 0 else { return [] }
-        return try await withThrowingTaskGroup(of: [DownloadAudioCandidate]?.self) { group in
+    struct SourceAttempt: Sendable {
+        let source: DiagnosticSource
+        let candidates: [DownloadAudioCandidate]
+        let problem: DiagnosticProblem?
+        let elapsedMs: Int
+    }
+
+    // Every provider contributes its own outcome, even when another source succeeds.
+    func streamingSearch(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [SourceAttempt] {
+        let sources: [DiagnosticSource] = account == nil ? [.netease, .qq] : [.netease, .qq, .navidrome]
+        return try await withThrowingTaskGroup(of: SourceAttempt?.self) { group in
             defer { group.cancelAll() }
-            group.addTask {
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
-                   let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
-                    return [DownloadAudioCandidate(url: file, title: song.title, artist: song.artist,
-                        duration: duration, format: "m4a", bitrate: 128_000, source: "測試音源")]
-                }
-                #endif
-                return (try? await self.netease(song, streaming: true)) ?? []
+            for source in sources {
+                group.addTask { await self.streamingSource(source, song: song, account: account) }
             }
-            group.addTask {
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {
-                    try await Task.sleep(for: .seconds(45))
-                    return []
-                }
-                #endif
-                return (try? await self.qq(song, streaming: true)) ?? []
-            }
-            if let account {
-                group.addTask { (try? await NavidromeClient(account: account).downloadCandidates(for: song)) ?? [] }
-            }
-            group.addTask {
-                try await Task.sleep(for: .seconds(5))
-                return nil
-            }
-            var found: [DownloadAudioCandidate] = []
-            for _ in 0..<(account == nil ? 2 : 3) {
-                guard let response = try await group.next(), let batch = response else { break }
-                found += batch
+            group.addTask { try await Task.sleep(for: .seconds(5)); return nil }
+            var results: [SourceAttempt] = []
+            for _ in sources {
+                guard let reply = try await group.next(), let attempt = reply else { break }
+                results.append(attempt)
             }
             try Task.checkCancellation()
-            var seen = Set<URL>()
-            return found.sorted(by: DownloadAudioCandidate.preferredForStreaming).filter { seen.insert($0.url).inserted }
+            let completed = Set(results.map(\.source))
+            return results + sources.filter { !completed.contains($0) }.map {
+                SourceAttempt(source: $0, candidates: [], problem: DiagnosticProblem(code: .timeout), elapsedMs: 5000)
+            }
+        }
+    }
+
+    func streamingSource(_ source: DiagnosticSource, song: SyncedYouTubeSong, account: NavidromeAccount?) async -> SourceAttempt {
+        let started = Date()
+        var candidates: [DownloadAudioCandidate] = []
+        var problem: DiagnosticProblem?
+        do {
+            guard YouTubeVideo.validID(song.videoID), let duration = song.duration, duration.isFinite, duration > 0 else {
+                throw DiagnosticProblem(code: .missingDuration)
+            }
+            candidates = try await streamingOptions(source, song: song, duration: duration, account: account)
+            if candidates.isEmpty { problem = DiagnosticProblem(code: .noMatch) }
+        } catch { problem = DiagnosticProblem.classify(error) }
+        return SourceAttempt(source: source, candidates: candidates, problem: problem,
+                             elapsedMs: max(0, Int(Date().timeIntervalSince(started) * 1000)))
+    }
+
+    private func streamingOptions(_ source: DiagnosticSource, song: SyncedYouTubeSong, duration: Double,
+                                  account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {
+            if source == .qq { try await Task.sleep(for: .seconds(45)); return [] }
+            if source == .netease, let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
+                return [DownloadAudioCandidate(url: file, title: song.title, artist: song.artist,
+                    duration: duration, format: "m4a", bitrate: 128_000, source: "測試音源")]
+            }
+        }
+        #endif
+        switch source {
+        case .netease: return try await netease(song, streaming: true)
+        case .qq: return try await qq(song, streaming: true)
+        case .navidrome:
+            guard let account else { throw DiagnosticProblem(code: .signedOut) }
+            return try await NavidromeClient(account: account).downloadCandidates(for: song)
+        default: throw DiagnosticProblem(code: .unavailable)
         }
     }
 
@@ -168,7 +190,12 @@ actor AudioDownloadService {
                     source: "YouTube", recording: recording))
             }.sorted { streaming ? DownloadAudioCandidate.preferredForStreaming($0.1, $1.1)
                                   : DownloadAudioCandidate.preferred($0.1, $1.1) }
-        guard let first = playable.first else { throw PlatformError.message("YouTube 未提供可用的完整音訊。") }
+        guard !playable.isEmpty else { throw DiagnosticProblem(code: .unavailable) }
+        // A delayed first rendition must not hold up an already available rendition.
+        let now = Date()
+        let ready = streaming ? playable.filter { $0.0.availableAt <= now } : []
+        if !ready.isEmpty { return ready.prefix(2).map { $0.1 } }
+        guard let first = playable.first else { throw DiagnosticProblem(code: .unavailable) }
         try await first.0.waitUntilAvailable()
         try Task.checkCancellation()
         return playable.prefix(streaming ? 2 : 3).map { $0.1 }
@@ -234,8 +261,18 @@ actor AudioDownloadService {
         let (temporary, response) = try await session.download(for: request, delegate: policy)
         do {
             try Task.checkCancellation()
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-                  http.value(forHTTPHeaderField: "Content-Range") == nil,
+            guard let http = response as? HTTPURLResponse else { throw DiagnosticProblem(code: .invalidResponse) }
+            guard http.statusCode == 200 else {
+                let code: DiagnosticCode = switch http.statusCode {
+                case 401, 403: .permission
+                case 429: .rateLimit
+                case 451: .region
+                case 500...599: .transport
+                default: .unavailable
+                }
+                throw DiagnosticProblem(code: code, httpStatus: http.statusCode)
+            }
+            guard http.value(forHTTPHeaderField: "Content-Range") == nil,
                   let final = response.url, final.scheme == "https", final.host == parts.host, final.port == parts.port else {
                 throw PlatformError.message("來源未傳回完整音檔，已略過。")
             }
@@ -283,10 +320,11 @@ actor AudioDownloadService {
         guard let http = response as? HTTPURLResponse else { throw SubtitleReadError("network") }
         if let delay = AudioRetryPolicy.delay(status: http.statusCode, retryAfter: http.value(forHTTPHeaderField: "Retry-After")) {
             blockedUntil[provider] = Date().addingTimeInterval(delay)
-            throw SubtitleReadError("rate-limited")
+            throw DiagnosticProblem(code: .rateLimit, httpStatus: http.statusCode)
         }
-        if http.statusCode == 403 || http.statusCode == 451 { throw SubtitleReadError("region-restricted") }
-        guard http.statusCode == 200, response.expectedContentLength <= Int64(maximum) else { throw SubtitleReadError("unavailable") }
+        if http.statusCode == 403 || http.statusCode == 451 { throw DiagnosticProblem(code: .region, httpStatus: http.statusCode) }
+        guard http.statusCode == 200 else { throw DiagnosticProblem(code: .unavailable, httpStatus: http.statusCode) }
+        guard response.expectedContentLength <= Int64(maximum) else { throw DiagnosticProblem(code: .invalidResponse) }
         var data = Data()
         for try await byte in bytes {
             try Task.checkCancellation()

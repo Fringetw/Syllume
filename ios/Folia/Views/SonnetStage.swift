@@ -13,6 +13,7 @@ struct SonnetStage: View {
     var style: String = "sonnet"
     var rendering: Bool = true
     var showsTranslation: Bool = true
+    var diagnosticProbe: DiagnosticStageProbe? = nil
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var ready = false
@@ -25,7 +26,7 @@ struct SonnetStage: View {
             SonnetWebView(songID: songID, title: title, artist: artist, timeline: timeline, revision: revision,
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
                           style: style, energySaving: energySaving || lowPower, rendering: rendering && scenePhase == .active,
-                          ready: $ready, failed: $failed)
+                          diagnosticProbe: diagnosticProbe, ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
@@ -53,6 +54,7 @@ private struct SonnetWebView: UIViewRepresentable {
     let style: String
     let energySaving: Bool
     let rendering: Bool
+    let diagnosticProbe: DiagnosticStageProbe?
     @Binding var ready: Bool
     @Binding var failed: Bool
 
@@ -69,6 +71,7 @@ private struct SonnetWebView: UIViewRepresentable {
         view.accessibilityIdentifier = style == "lumiere" ? "foliaLumiereStage" : "foliaSonnetStage"
         view.accessibilityValue = "載入中"
         context.coordinator.view = view
+        diagnosticProbe?.webView = view
         if let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "FoliaStage") {
             view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
         } else { DispatchQueue.main.async { failed = true } }
@@ -88,6 +91,7 @@ private struct SonnetWebView: UIViewRepresentable {
         view.accessibilityLabel = timeline.activeIndex(at: time).map { label + "，" + lines[$0].fullText } ?? label
     }
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        if coordinator.parent.diagnosticProbe?.webView === view { coordinator.parent.diagnosticProbe?.webView = nil }
         view.evaluateJavaScript("window.FoliaStage?.stop()", completionHandler: nil)
         view.stopLoading(); view.configuration.userContentController.removeScriptMessageHandler(forName: "stage")
     }
@@ -95,6 +99,7 @@ private struct SonnetWebView: UIViewRepresentable {
     @MainActor final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         var parent: SonnetWebView
         weak var view: WKWebView?
+        let loadStarted = Date()
         var loaded = false
         var failureDetail = ""
         var lyricFont = ""
@@ -142,27 +147,46 @@ private struct SonnetWebView: UIViewRepresentable {
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             if type == "loaded" { markLoaded() }
-            else if type == "font" { lyricFont = body["detail"] as? String ?? "" }
-            else if type == "ready" { parent.ready = true; parent.failed = false }
-            else if type == "error" { failureDetail = body["detail"] as? String ?? ""; parent.failed = true }
+            else if type == "font" {
+                lyricFont = body["detail"] as? String ?? ""
+                if let probe = currentProbe { probe.font = lyricFont }
+            } else if type == "ready" {
+                parent.ready = true; parent.failed = false
+                if let probe = currentProbe { probe.readyCount += 1 }
+                else if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageReady, source: stageSource, since: loadStarted) }
+            } else if type == "error" {
+                failureDetail = body["detail"] as? String ?? ""
+                markFailure()
+            }
         }
         private func markLoaded() {
             guard !loaded else { return }
             loaded = true; update()
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { parent.failed = true }
+        private var stageSource: DiagnosticSource { parent.style == "lumiere" ? .lumiere : .sonnet }
+        private var currentProbe: DiagnosticStageProbe? {
+            guard let probe = parent.diagnosticProbe, let view, probe.webView === view else { return nil }
+            return probe
+        }
+        private func markFailure() {
+            parent.failed = true
+            let problem = DiagnosticProblem(code: .engine)
+            if let probe = currentProbe { probe.fault = problem }
+            else if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageError, source: stageSource, problem: problem) }
+        }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { markFailure() }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             webView.evaluateJavaScript("typeof window.FoliaStage") { [weak self] result, _ in
                 guard let self else { return }
                 if result as? String == "object" { markLoaded() }
-                else { parent.failed = true }
+                else { markFailure() }
             }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { parent.failed = true }
+            if (error as NSError).code != NSURLErrorCancelled { markFailure() }
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            if (error as NSError).code != NSURLErrorCancelled { parent.failed = true }
+            if (error as NSError).code != NSURLErrorCancelled { markFailure() }
         }
     }
 }

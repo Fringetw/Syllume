@@ -118,6 +118,23 @@ final class YouTubeSyncController {
                 } while cursor != nil
                 var next = snapshot; next.songs = songs; next.lastSync = Date(); next.attempts = nil
                 try save(next)
+                // Populate up to one official batch while the playlist is idle. A tap still cancels the task.
+                var seenMissing = Set<String>()
+                let missing = songs.compactMap { song in
+                    song.duration == nil && seenMissing.insert(song.videoID).inserted ? song.videoID : nil
+                }
+                if !missing.isEmpty {
+                    let ids = Array(missing.prefix(50))
+                    let durations = try? await PlaybackLookup.within(.seconds(4)) { try await connection.videoDurations(ids) }
+                    try ensureCurrent(ticket, session: session, connection: connection)
+                    if let durations, !durations.isEmpty {
+                        var enriched = snapshot
+                        for index in enriched.songs.indices where enriched.songs[index].duration == nil {
+                            enriched.songs[index].duration = durations[enriched.songs[index].videoID]
+                        }
+                        try save(enriched)
+                    }
+                }
             } catch is CancellationError { }
             catch { if revision == ticket { self.error = Self.message(error) } }
         }
@@ -230,6 +247,7 @@ final class YouTubeSyncController {
     }
 
     private static func message(_ error: Error) -> String {
+        if let error = error as? DiagnosticProblem { return error.code.title }
         if let error = error as? SubtitleReadError { return error.explanation }
         if let error = error as? PlatformError { return error.localizedDescription }
         if let error = error as? NavidromeError { return error.localizedDescription }

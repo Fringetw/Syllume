@@ -68,7 +68,10 @@ struct LibraryScreen: View {
             SubtitleEngineAnchor(controller: subtitles).frame(width: 1, height: 1)
                 .allowsHitTesting(false).accessibilityHidden(true)
         }
-        .fullScreenCover(isPresented: $showingPlayer, onDismiss: { refreshYouTubePlaylist() }) {
+        .fullScreenCover(isPresented: $showingPlayer, onDismiss: {
+            DiagnosticsEvents.shared.record(.playerClosed)
+            refreshYouTubePlaylist()
+        }) {
             NowPlayingScreen(player: player, subtitles: subtitles)
                 #if DEBUG
                 .overlay(alignment: .topLeading) {
@@ -80,15 +83,24 @@ struct LibraryScreen: View {
                 }
                 #endif
         }
-        .sheet(isPresented: $showingSettings) { FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome) }
+        .sheet(isPresented: $showingSettings) {
+            FoliaSettingsScreen(subtitles: subtitles, navidrome: navidrome, youtube: youtube, library: library, player: player)
+        }
         .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
-        .onAppear { subtitles.sources(library: library, account: navidrome.account) }
+        .onAppear {
+            DiagnosticsEvents.shared.firstViewAppeared()
+            subtitles.sources(library: library, account: navidrome.account)
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active {
+                DiagnosticsEvents.shared.record(.foreground)
                 subtitles.synchronize()
                 refreshYouTubePlaylist()
             }
-            if phase == .background { youtubeSync.cancel() }
+            if phase == .background {
+                DiagnosticsEvents.shared.record(.background)
+                youtubeSync.cancel()
+            }
         }
         .onChange(of: youtube.sessionID, initial: true) { _, _ in youtubeSync.activate(youtube) }
         .onChange(of: navidrome.account) { _, _ in
@@ -116,6 +128,7 @@ struct LibraryScreen: View {
     }
 
     private func presentPlayer() {
+        DiagnosticsEvents.shared.record(.playerOpened)
         youtubeSync.cancel()
         showingPlayer = true
     }

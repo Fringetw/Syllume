@@ -23,7 +23,19 @@ final class PlaybackModel {
     private(set) var lyricOffset = 0.0
     private(set) var audioSource: String?
     private(set) var activeLocalTrackID: String?
-    var lyricPosition: Double { max(0, position + lyricOffset) }
+
+    var diagnosticTransportMetrics: [String: Double] {
+        guard player.currentItem != nil else { return [:] }
+        var metrics: [String: Double] = ["lyricCueCount": Double(timeline.lines.count), "manualLyricOffset_s": lyricOffset]
+        let audio = player.currentTime().seconds
+        if audio.isFinite, !seeking { metrics["displayClockDifference_s"] = abs(position - audio) }
+        if let event = player.currentItem?.accessLog()?.events.last {
+            for (key, value) in ["stalls": Double(event.numberOfStalls), "observedBitrate_bps": event.observedBitrate, "startup_s": event.startupTime]
+                where value.isFinite && value >= 0 { metrics[key] = value }
+        }
+        return metrics
+    }
+    var lyricPosition: Double { LyricTimingOffset.displayed(position: position, offset: lyricOffset) }
     var subtitleInput: SubtitleInput? {
         guard let track = current else { return nil }
         let recording = activeRecording ?? track.recording
@@ -114,7 +126,7 @@ final class PlaybackModel {
 
     func adjustLyrics(by amount: Double) {
         guard let track = current, amount.isFinite else { return }
-        lyricOffset = min(15, max(-15, ((lyricOffset + amount) * 10).rounded() / 10))
+        lyricOffset = LyricTimingOffset.adjusted(lyricOffset, by: amount)
         UserDefaults.standard.set(lyricOffset, forKey: offsetKey(track))
     }
 
@@ -154,6 +166,7 @@ final class PlaybackModel {
     }
 
     func pause() {
+        if isPlaying { DiagnosticsEvents.shared.record(.playbackPaused) }
         resumeAfterInterruption = false
         player.pause()
         isPlaying = false
@@ -206,6 +219,7 @@ final class PlaybackModel {
     func seek(to time: Double) {
         guard let item = player.currentItem, time.isFinite else { return }
         let target = duration > 0 ? min(duration, max(0, time)) : max(0, time)
+        DiagnosticsEvents.shared.record(.seek)
         let revision = UUID()
         seekGeneration = revision
         seeking = true
@@ -301,6 +315,7 @@ final class PlaybackModel {
         guard player.currentItem === item else { return }
         if let track = current, track.source == .catalogue {
             sourceFailures.append((audioSource ?? "音源") + "無法持續播放")
+            DiagnosticsEvents.shared.record(.playbackStalled)
             streamTimeout?.cancel(); streamTimeout = nil
             player.replaceCurrentItem(with: nil)
             lyricsTask?.cancel(); artworkTask?.cancel()
@@ -315,6 +330,7 @@ final class PlaybackModel {
 
     func interrupt(began: Bool, shouldResume: Bool) {
         if began {
+            DiagnosticsEvents.shared.record(.audioInterruption)
             let wasPlaying = isPlaying
             pause()
             resumeAfterInterruption = wasPlaying
@@ -405,6 +421,7 @@ final class PlaybackModel {
     private func resolveCatalogue(_ track: Track) {
         guard resolveTask == nil, let song = track.playlistSong else { return }
         let ticket = UUID(), revision = generation
+        DiagnosticsEvents.shared.record(.lookupStarted)
         resolveTicket = ticket
         isPlaying = true; isBuffering = true; lyricClockRunning = false; lyricsLoading = true
         startCatalogueDeadline()
@@ -464,43 +481,65 @@ final class PlaybackModel {
                         } catch {
                             try check()
                             candidates.removeFirst(); sourceFailures.append(candidate.source + "無法完整播放")
+                            DiagnosticsEvents.shared.record(.assetRejected, source: candidate.diagnosticSource,
+                                problem: DiagnosticProblem.classify(error, fallback: .invalidMedia))
                         }
                     } else if !searchedCatalogue {
                         if target.duration == nil, catalogueTarget == nil, YouTubeVideo.validID(song.videoID) {
-                            if let youtubeConnection { target = await youtubeConnection.playlistSongWithDuration(song) }
-                            try check()
-                            if target.duration == nil {
-                                target = (try? await PlaybackLookup.within(.seconds(4)) { await service.withDuration(song) }) ?? song
+                            let connection = youtubeConnection
+                            let started = Date()
+                            let resolved = try? await PlaybackLookup.within(.seconds(4)) {
+                                try await PlaybackLookup.firstAvailable([
+                                    { @Sendable in
+                                        guard let connection else { return nil }
+                                        let result = await connection.playlistSongWithDuration(song)
+                                        return result.duration == nil ? nil : result
+                                    },
+                                    { @Sendable in
+                                        let result = await service.withDuration(song)
+                                        return result.duration == nil ? nil : result
+                                    }
+                                ])
                             }
                             try check()
+                            target = resolved ?? song
                             catalogueTarget = target
+                            DiagnosticsEvents.shared.record(target.duration == nil ? .durationUnavailable : .durationRead,
+                                source: .youtube, problem: target.duration == nil ? DiagnosticProblem(code: .missingDuration) : nil,
+                                since: started)
                             if target.duration != nil {
                                 candidates = library.matchingAudio(for: target).filter { $0.localTrackID != track.preferredLocalID }
                                     .sorted(by: DownloadAudioCandidate.preferred)
                                 if !candidates.isEmpty { continue }
                             }
                         }
-                        do {
-                            let found = try await service.streamingCandidates(for: target, account: account)
-                            try check(); candidates = found
-                        } catch is CancellationError { throw CancellationError() }
-                        catch {
-                            try check()
-                            if let error = error as? SubtitleReadError { sourceFailures.append(error.explanation) }
+                        let attempts = try await service.streamingSearch(for: target, account: account)
+                        try check()
+                        var seen = Set<URL>()
+                        candidates = attempts.flatMap(\.candidates).sorted(by: DownloadAudioCandidate.preferredForStreaming)
+                            .filter { seen.insert($0.url).inserted }
+                        for attempt in attempts {
+                            DiagnosticsEvents.shared.record(attempt.problem == nil ? .providerMatched : .providerUnavailable,
+                                source: attempt.source, problem: attempt.problem, elapsedMs: attempt.elapsedMs)
+                            if let problem = attempt.problem {
+                                sourceFailures.append(attempt.source.title + "：" + problem.code.title)
+                            }
                         }
                         searchedCatalogue = true
                     } else if !searchedYouTube, YouTubeVideo.validID(song.videoID) {
+                        let started = Date()
                         do {
                             let selected = target
-                            let found = try await PlaybackLookup.within(.seconds(8)) {
+                            let found = try await PlaybackLookup.within(.seconds(11)) {
                                 try await service.youtube(selected, streaming: true)
                             }
                             try check(); candidates = found
-                        } catch is CancellationError { throw CancellationError() }
-                        catch {
+                            DiagnosticsEvents.shared.record(.providerMatched, source: .youtube, since: started)
+                        } catch {
                             try check()
-                            sourceFailures.append("YouTube：" + ((error as? SubtitleReadError)?.explanation ??
-                                (error as? PlatformError)?.localizedDescription ?? "暫時無法讀取公開音源。"))
+                            let problem = DiagnosticProblem.classify(error)
+                            DiagnosticsEvents.shared.record(.providerUnavailable, source: .youtube, problem: problem, since: started)
+                            sourceFailures.append("YouTube：" + problem.code.title)
                         }
                         searchedYouTube = true
                     } else {
@@ -509,7 +548,13 @@ final class PlaybackModel {
                         return
                     }
                 }
-            } catch { /* An interrupted search must not restart the audio. */ }
+            } catch {
+                // Ignore callbacks from an older or cancelled track. Any other failure must end the spinner.
+                guard resolveTicket == ticket, generation == revision, !Task.isCancelled else { return }
+                let problem = DiagnosticProblem.classify(error)
+                DiagnosticsEvents.shared.record(.providerUnavailable, problem: problem)
+                fail(problem.code.title + "。按播放重試，或附加音檔。")
+            }
         }
     }
 
@@ -519,6 +564,7 @@ final class PlaybackModel {
         startupTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(26))
             guard let self, !Task.isCancelled, generation == revision, isPlaying, !lyricClockRunning else { return }
+            DiagnosticsEvents.shared.record(.providerUnavailable, problem: DiagnosticProblem(code: .timeout))
             statusObservation?.invalidate(); statusObservation = nil
             player.replaceCurrentItem(with: nil)
             lyricsLoading = false
@@ -578,6 +624,7 @@ final class PlaybackModel {
     }
 
     private func resetItem() {
+        if isPlaying { DiagnosticsEvents.shared.record(.playbackPaused) }
         generation = UUID()
         seekGeneration = UUID()
         seeking = false
@@ -624,8 +671,11 @@ final class PlaybackModel {
 
     private func refreshTransport() {
         let status = player.timeControlStatus
+        let wasBuffering = isBuffering, wasRunning = lyricClockRunning
         isBuffering = isPlaying && (status != .playing || player.currentItem == nil)
         lyricClockRunning = isPlaying && status == .playing && !seeking
+        if isBuffering && !wasBuffering { DiagnosticsEvents.shared.record(.playbackStalled) }
+        if lyricClockRunning && !wasRunning { DiagnosticsEvents.shared.record(.playbackStarted) }
         if lyricClockRunning {
             startupTimeout?.cancel(); startupTimeout = nil
             if !catalogueHasStarted, let track = current, let song = track.playlistSong {

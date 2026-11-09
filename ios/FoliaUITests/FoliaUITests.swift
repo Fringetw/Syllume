@@ -235,6 +235,42 @@ final class FoliaUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 20), .completed)
     }
 
+    func testDeveloperDiagnosticsProducesEvidenceAndReport() throws {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--diagnostics-ui-fixture", "--presentation-reset"]
+        app.launch()
+        app.buttons["Folia 設定"].tap()
+        let entry = app.buttons["developerDiagnostics"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 10))
+        entry.tap()
+        let run = app.buttons["diagnosticsRunAll"]
+        XCTAssertTrue(run.waitForExistence(timeout: 10))
+        run.tap()
+        let reportProbe = app.staticTexts["diagnosticsFixtureJSON"]
+        XCTAssertTrue(reportProbe.waitForExistence(timeout: 110))
+        let text = try XCTUnwrap(reportProbe.value as? String)
+        let data = Data(text.utf8)
+        let report = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(report["environment"] as? String, "ciFixture")
+        XCTAssertEqual(report["schemaVersion"] as? Int, 1)
+        let areas = try XCTUnwrap(report["results"] as? [[String: Any]])
+        XCTAssertEqual(Set(areas.compactMap { $0["area"] as? String }), ["google", "captions", "audio", "animation", "device"])
+        let checks = areas.flatMap { $0["checks"] as? [[String: Any]] ?? [] }
+        for id in ["google.fixture", "captions.opencc", "captions.offset", "audio.bundled", "audio.retry",
+                   "animation.sonnet.init", "animation.sonnet.font", "animation.sonnet.clock",
+                   "animation.lumiere.init", "animation.lumiere.font", "animation.lumiere.clock"] {
+            let check = checks.first { $0["id"] as? String == id }
+            XCTAssertEqual(check?["state"] as? String, "passed", "(id): (String(describing: check))")
+        }
+        XCTAssertFalse(checks.contains { $0["evidence"] as? String == "liveNetwork" && $0["state"] as? String == "passed" })
+        let attachment = XCTAttachment(data: data, uniformTypeIdentifier: "public.json")
+        attachment.name = "Folia-Diagnostics-Simulator-Fixture"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        capture(app, name: "Diagnostics-complete")
+    }
+
     func testPlatformSetup() {
         continueAfterFailure = false
         let app = XCUIApplication()

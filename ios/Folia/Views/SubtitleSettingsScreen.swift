@@ -5,6 +5,9 @@ import UniformTypeIdentifiers
 struct FoliaSettingsScreen: View {
     let subtitles: SubtitleController
     let navidrome: NavidromeConnection
+    let youtube: PlatformConnection
+    let library: LocalLibrary
+    let player: PlaybackModel
     @Environment(\.dismiss) private var dismiss
     @State private var showingServer = false
     @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
@@ -28,6 +31,13 @@ struct FoliaSettingsScreen: View {
                 }
                 Section("音樂來源") {
                     Button("Navidrome 設定") { showingServer = true }
+                }
+                Section("維護") {
+                    NavigationLink {
+                        DiagnosticsScreen(youtube: youtube, library: library, player: player, navidrome: navidrome)
+                    } label: {
+                        Label("開發者診斷", systemImage: "waveform.path.ecg")
+                    }.accessibilityIdentifier("developerDiagnostics")
                 }
                 Section {
                     let info = Bundle.main.infoDictionary
@@ -169,7 +179,7 @@ private struct SubtitleSettingsContent: View {
             }
         }
         .onAppear { neteaseDraft = subtitles.preferences.neteaseAPI }
-        .fileExporter(isPresented: $exporting, document: SubtitleReportDocument(data: exportedReport),
+        .fileExporter(isPresented: $exporting, document: FoliaReportDocument(data: exportedReport),
                       contentType: .json, defaultFilename: "Folia-字幕診斷") { result in
             if case .failure = result { exportError = "未能儲存報告，可改用複製。" }
         }
@@ -180,8 +190,8 @@ private struct SubtitleSettingsContent: View {
     }
 }
 
-private struct SubtitleReportDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.json] }
+struct FoliaReportDocument: FileDocument {
+    static var readableContentTypes: [UTType] { [.json, .plainText] }
     var data: Data
     init(data: Data) { self.data = data }
     init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }

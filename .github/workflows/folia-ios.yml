@@ -24,7 +24,7 @@ jobs:
     # Same-repository branches are already checked on push; keep PR checks for forks.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - name: Configure maintainer Google login
@@ -42,6 +42,7 @@ jobs:
       - name: Check the lyric timeline and Xcode project references
         env:
           FOLIA_PROBE_SUBTITLE_SOURCES: "1"
+          FOLIA_DIAGNOSTICS_FIXTURE_REPORT: ${{ runner.temp }}/Folia-diagnostics-fixture.json
         run: |
           set -o pipefail
           bash ios/Checks/run.sh | tee "$RUNNER_TEMP/Folia-subtitle-source-checks.txt"
@@ -51,6 +52,11 @@ jobs:
           name: Folia-subtitle-source-checks
           path: ${{ runner.temp }}/Folia-subtitle-source-checks.txt
           if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Folia-diagnostics-fixture
+          path: ${{ runner.temp }}/Folia-diagnostics-fixture.json
+          if-no-files-found: error
       - name: Compile for iOS Simulator
         run: >-
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia
@@ -88,9 +94,9 @@ jobs:
             -only-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
             -only-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
-      - name: Exercise remaining playback and platform setup on iPhone Simulator
+      - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
         if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
-        timeout-minutes: 26
+        timeout-minutes: 32
         run: |
           xcodebuild -project ios/Folia.xcodeproj -scheme Folia -configuration Debug \
             -destination "platform=iOS Simulator,id=$FOLIA_SIMULATOR_ID" \
@@ -99,7 +105,7 @@ jobs:
             -skip-testing:FoliaUITests/FoliaUITests/testYouTubePlaylistChoicePersists \
             -skip-testing:FoliaUITests/FoliaUITests/testYouTubeSyncedAudioPausesWithoutVideo \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
-      - name: Export simulator screenshots
+      - name: Export simulator screenshots and diagnostic reports
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/FoliaUIScreenshots"
