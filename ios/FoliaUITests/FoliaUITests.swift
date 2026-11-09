@@ -209,7 +209,20 @@ final class FoliaUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 20), .completed,
                        "Expected the media clock to advance from \(stopped); observed \(String(describing: probe.value))")
         toggle.tap(); capture(app, name: "YouTube-audio-without-video")
-        app.buttons["關閉播放畫面"].tap()
+        let closePlayer = app.buttons["關閉播放畫面"]
+        let loadingPages = app.staticTexts["正在載入其餘歌曲…"]
+        closePlayer.tap()
+        XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
+        app.buttons["openMiniPlayer"].tap()
+        let playlistSync = app.staticTexts["youtubePlaylistSyncProbe"]
+        XCTAssertTrue(playlistSync.waitForExistence(timeout: 10))
+        XCTAssertEqual(playlistSync.value as? String, "已暫停")
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        XCTAssertTrue(playlistSync.waitForExistence(timeout: 10))
+        XCTAssertEqual(playlistSync.value as? String, "已暫停")
+        closePlayer.tap()
+        XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
         audio.press(forDuration: 1)
         let download = app.buttons["下載音樂"].firstMatch
         XCTAssertTrue(download.waitForExistence(timeout: 10))

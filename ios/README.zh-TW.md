@@ -1,4 +1,4 @@
-# Folia iOS 0.3.9 · build 17
+# Folia iOS 0.3.10 · build 18
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Xcode 會解析固定版本的 YouTubeKit 套件；Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
@@ -11,6 +11,10 @@
 - 內建 30 秒「潮汐之間」示範音軌與歌詞，可離線試用。
 
 0.1.0 採用原生歌詞清單；0.3.0 開始直接使用桌面版 Sonnet 引擎。0.3.1 內建 OpenCC 繁體字幕；0.3.4 加入繪光；其餘桌面動畫樣式與通用 Folium 插件系統尚未移植。
+
+## 0.3.10 播放時暫停歌單同步
+
+從歌曲列或迷你播放器開啟完整播放頁會暫停歌單同步。切回 App 時，若完整播放頁仍開著，會等到回到 YouTube 歌單頁再同步，讓弱網路下的音訊優先使用連線。
 
 ## 0.3.9 源泉圓體 JP 字幕
 

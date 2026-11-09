@@ -8,7 +8,7 @@ struct YouTubeMusicScreen: View {
     let account: NavidromeAccount?
     let player: PlaybackModel
     let openPlayer: () -> Void
-    @Environment(\.scenePhase) private var scenePhase
+    let refresh: (Bool) -> Void
     @State private var showingPicker = false
     @State private var showingAccount = false
     @State private var addingLocal = false
@@ -76,10 +76,9 @@ struct YouTubeMusicScreen: View {
             sync.activate(connection)
             if connection.connected {
                 if sync.snapshot.choice == nil { offerPlaylistPicker() }
-                else { refresh() }
+                else { refresh(false) }
             } else { showingPicker = false }
         }
-        .onChange(of: scenePhase) { _, phase in if phase == .active { refresh() } }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.audio]) { result in
             let song = attachment; attachment = nil
             guard let song else { return }
@@ -140,7 +139,7 @@ struct YouTubeMusicScreen: View {
                         Button("停止同步") { sync.cancel() }.buttonStyle(.bordered)
                     }
                 } else {
-                    Button("同步歌單", systemImage: "arrow.triangle.2.circlepath") { refresh(force: true) }
+                    Button("同步歌單", systemImage: "arrow.triangle.2.circlepath") { refresh(true) }
                         .accessibilityIdentifier("syncYouTubePlaylist")
                 }
                 if sync.downloading != nil {
@@ -166,7 +165,7 @@ struct YouTubeMusicScreen: View {
         }
         .environment(\.editMode, $editing)
         .listStyle(.plain).scrollContentBackground(.hidden)
-        .refreshable { refresh(force: true) }
+        .refreshable { refresh(true) }
     }
 
     private func songRow(_ song: SyncedYouTubeSong) -> some View {
@@ -205,12 +204,10 @@ struct YouTubeMusicScreen: View {
     }
 
     private func play(_ song: SyncedYouTubeSong, _ queue: [SyncedYouTubeSong]) {
-        sync.cancel()
-        player.playPlaylist(queue, from: song, bindings: sync.snapshot.bindings, account: account, connection: connection)
         openPlayer()
+        player.playPlaylist(queue, from: song, bindings: sync.snapshot.bindings, account: account, connection: connection)
     }
 
-    private func refresh(force: Bool = false) { sync.synchronize(connection: connection, force: force) }
     private func offerPlaylistPicker() {
         guard !showingAccount, connection.connected else { return }
         sync.activate(connection)

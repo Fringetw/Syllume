@@ -301,6 +301,7 @@ struct MiniPlayer: View {
                 .contentShape(Rectangle())
             }
             .accessibilityHint("打開完整播放畫面")
+            .accessibilityIdentifier("openMiniPlayer")
             Button { player.toggle() } label: {
                 Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
             }
