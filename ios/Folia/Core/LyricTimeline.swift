@@ -181,3 +181,13 @@ struct LyricTimeline: Sendable {
         return (Double(minutes) ?? 0) * 60 + (Double(seconds) ?? 0) + decimal
     }
 }
+
+
+enum LyricTimingOffset {
+    static func adjusted(_ current: Double, by delta: Double) -> Double {
+        guard delta.isFinite else { return current }
+        return min(15, max(-15, ((current + delta) * 10).rounded() / 10))
+    }
+
+    static func displayed(position: Double, offset: Double) -> Double { max(0, position + offset) }
+}

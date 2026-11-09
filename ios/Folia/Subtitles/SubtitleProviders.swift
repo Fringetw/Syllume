@@ -135,11 +135,47 @@ actor SubtitleNetwork {
     }
 
     func youtubeLyrics(id: String, baseline: [LyricLine] = [], sameVideo: Bool = false) async throws -> [LyricLine] {
+        let (page, tracks) = try await captionWatch(id)
+        return try await chineseCaptions(page: page, tracks: tracks, id: id, baseline: baseline, sameVideo: sameVideo)
+    }
+
+    struct CaptionInspection: Sendable {
+        let chineseTracks: Int
+        let japaneseTracks: Int
+        let japaneseCues: Int?
+        let lines: [LyricLine]
+        let problem: DiagnosticProblem?
+    }
+
+    func inspectCaptions(_ id: String) async throws -> CaptionInspection {
+        let (page, tracks) = try await captionWatch(id)
+        let chinese = tracks.filter { $0.chinese && !$0.automatic }
+        let japanese = tracks.filter { $0.language.lowercased().split(separator: "-").first == "ja" }
+        let preferred = japanese.first { !$0.automatic } ?? japanese.first
+        async let originals = optionalCaption(preferred, userAgent: nil)
+        var lines: [LyricLine] = []
+        var problem: DiagnosticProblem?
+        do {
+            lines = try await chineseCaptions(page: page, tracks: tracks, id: id, baseline: [], sameVideo: false)
+        } catch {
+            try Task.checkCancellation()
+            problem = DiagnosticProblem.classify(error)
+        }
+        return CaptionInspection(chineseTracks: chinese.count, japaneseTracks: japanese.count,
+                                 japaneseCues: await originals?.count, lines: lines, problem: problem)
+    }
+
+    private func captionWatch(_ id: String) async throws -> (String, [YouTubeCaptionTrack]) {
         guard YouTubeVideo.validID(id) else { throw SubtitleReadError("invalid-response") }
         let data = try await read(url: url(base: URL(string: "https://www.youtube.com")!, path: "watch",
             query: [.init(name: "v", value: id), .init(name: "hl", value: "zh-TW")]), provider: "ytm")
         guard let page = String(data: data, encoding: .utf8) else { throw SubtitleReadError("invalid-response") }
         let tracks = try YouTubeCaptionDecoders.tracks(page, videoID: id)
+        return (page, tracks)
+    }
+
+    private func chineseCaptions(page: String, tracks: [YouTubeCaptionTrack], id: String,
+                                 baseline: [LyricLine], sameVideo: Bool) async throws -> [LyricLine] {
         do {
             return try await chineseCaptions(tracks, baseline: baseline, sameVideo: sameVideo)
         } catch let initial as SubtitleReadError where initial.code == "caption-read-failed" {

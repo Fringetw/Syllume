@@ -33,10 +33,15 @@ struct LyricSearchScreen: View {
             .navigationTitle("尋找歌詞").navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() }.accessibilityIdentifier("closeLyricSearch") } }
             .toolbar { ToolbarItem(placement: .primaryAction) {
-                Button { showingPreferences = true } label: { Image(systemName: "gearshape") }
+                Button { showingPreferences = true } label: {
+                    Image(systemName: "gearshape").frame(width: 44, height: 44).contentShape(Rectangle())
+                }
                     .accessibilityLabel("繁體字幕設定")
             } }
             .buttonStyle(FoliaPressStyle())
+            .navigationDestination(isPresented: $showingPreferences) {
+                SubtitleSettingsScreen(subtitles: subtitles, embeddedInNavigation: true)
+            }
         }
         .onDisappear { task?.cancel(); videoSearch?.cancel(); subtitles.cancelTranslationRead() }
         .fileImporter(isPresented: $importingVideo, allowedContentTypes: [.movie]) { result in
@@ -44,7 +49,6 @@ struct LyricSearchScreen: View {
         }
         .onChange(of: title) { _, _ in cancelSearch() }
         .onChange(of: artist) { _, _ in cancelSearch() }
-        .sheet(isPresented: $showingPreferences) { SubtitleSettingsScreen(subtitles: subtitles) }
         .alert("歌詞", isPresented: Binding(get: { subtitles.notice != nil }, set: { if !$0 { subtitles.notice = nil } })) {
             Button("好", role: .cancel) { subtitles.notice = nil }
         } message: { Text(subtitles.notice ?? "") }

@@ -34,7 +34,13 @@ enum LibraryPlatform: String, CaseIterable, Identifiable, Codable {
 
 enum PlatformError: LocalizedError {
     case message(String)
-    var errorDescription: String? { if case .message(let text) = self { return text }; return nil }
+    case timeout
+    var errorDescription: String? {
+        switch self {
+        case .message(let text): text
+        case .timeout: "音源連線逾時。"
+        }
+    }
 }
 
 // Public application identifiers are supplied by the maintainer at build time.
@@ -70,11 +76,11 @@ struct GoogleClientConfiguration {
     func acceptsCredential(clientID: String) -> Bool { isReady && self.clientID == clientID }
 }
 
-enum LibraryCollection: Equatable {
+enum LibraryCollection: Equatable, Sendable {
     case playlists, liked, playlist(String)
 }
 
-struct LibraryEntry: Identifiable, Equatable {
+struct LibraryEntry: Identifiable, Equatable, Sendable {
     let id: String
     let title: String
     let subtitle: String
@@ -83,7 +89,7 @@ struct LibraryEntry: Identifiable, Equatable {
     var channelID: String? = nil
 }
 
-struct LibraryPage {
+struct LibraryPage: Sendable {
     let entries: [LibraryEntry]
     let next: String?
 }

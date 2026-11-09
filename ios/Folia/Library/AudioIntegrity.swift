@@ -10,6 +10,8 @@ enum AudioIntegrity {
     }
 
     static func inspect(_ asset: AVURLAsset, expected: Double, decode: Bool, deadline: Duration?) async throws -> Double {
+        let clock = ContinuousClock()
+        let decodeDeadline = deadline.map { clock.now.advanced(by: $0) }
         let timer = deadline.map { time in
             Task {
                 try? await Task.sleep(for: time)
@@ -41,6 +43,10 @@ enum AudioIntegrity {
                 var first = Double.infinity, end = 0.0, decoded = 0.0
                 while let sample = output.copyNextSampleBuffer() {
                     if Task.isCancelled { reader.cancelReading(); throw CancellationError() }
+                    if let decodeDeadline, clock.now >= decodeDeadline {
+                        reader.cancelReading()
+                        throw DiagnosticProblem(code: .timeout)
+                    }
                     let stamp = sample.presentationTimeStamp.seconds
                     let sampleDuration = sample.duration.seconds
                     let rate = sample.formatDescription.flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate } ?? 0

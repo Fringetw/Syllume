@@ -203,7 +203,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                     }
                 }
                 guard let self, videoRevision == ticket, input?.song.id == song.id, !Task.isCancelled else { return }
-                let result = Self.alignTranslation(lines, to: raw.lines)
+                let result = YouTubeCaptionDecoders.alignTranslation(lines, to: raw.lines)
                 let timeline = LyricTimeline(lines: result.lines).prepared(for: song.durationMs / 1000)
                 guard !timeline.lines.isEmpty else { throw SubtitleReadError("empty") }
                 let shown = (try? await NativeSubtitleConverter.shared.convert(timeline.lines, preferences: preferences)) ?? timeline.lines
@@ -255,23 +255,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
             && DownloadSongMatch.normalized(stored.title) == DownloadSongMatch.normalized(song.title)
     }
 
-    private static func alignTranslation(_ donor: [LyricLine], to original: [LyricLine]) -> (lines: [LyricLine], aligned: Bool) {
-        var matches: [String: [LyricLine]] = [:]
-        for line in donor where line.translation != nil {
-            let key = DownloadSongMatch.normalized(line.fullText)
-            if key.count >= 3 { matches[key, default: []].append(line) }
-        }
-        var last = -1.0, anchors = 0
-        let merged = original.map { line in
-            var line = line
-            if let options = matches[DownloadSongMatch.normalized(line.fullText)], options.count == 1,
-               let candidate = options.first, candidate.startTime > last {
-                last = candidate.startTime; anchors += 1; line.translation = candidate.translation
-            }
-            return line
-        }
-        return anchors >= max(3, donor.count / 3) ? (merged, true) : (donor, false)
-    }
+
 
     // Keep this offline worker attached to the scene even when a full-screen player covers the library.
     fileprivate func mount(in window: UIWindow, lease: UUID) {

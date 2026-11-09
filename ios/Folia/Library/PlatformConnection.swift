@@ -161,6 +161,9 @@ final class PlatformConnection {
         }
         try Task.checkCancellation()
         guard sessionID == revision else { throw CancellationError() }
+        if platform == .youtube, !(200..<300).contains(result.1.statusCode) {
+            throw DiagnosticProblem.googleHTTP(result.1.statusCode, body: result.0)
+        }
         switch result.1.statusCode {
         case 200..<300:
             do { return try PlatformLibrary.decode(result.0, platform: platform, collection: collection) }
@@ -203,16 +206,16 @@ final class PlatformConnection {
         }
         try Task.checkCancellation()
         guard sessionID == revision else { throw CancellationError() }
-        guard (200..<300).contains(result.1.statusCode) else { throw PlatformError.message("無法取得歌曲長度，請重新同步。") }
+        guard (200..<300).contains(result.1.statusCode) else { throw DiagnosticProblem.googleHTTP(result.1.statusCode, body: result.0) }
         struct Page: Decodable {
             let items: [Item]
             struct Item: Decodable { let id: String; let contentDetails: Details }
             struct Details: Decodable { let duration: String }
         }
         let page = try JSONDecoder().decode(Page.self, from: result.0)
-        return Dictionary(uniqueKeysWithValues: page.items.compactMap { item in
+        return Dictionary(page.items.filter { ids.contains($0.id) }.compactMap { item in
             PlatformLibrary.isoDuration(item.contentDetails.duration).map { (item.id, $0) }
-        })
+        }, uniquingKeysWith: { first, _ in first })
     }
 
     func channelPortraits(_ ids: [String]) async throws -> [String: (name: String, url: URL)] {
@@ -248,8 +251,14 @@ final class PlatformConnection {
         return result
     }
 
+    func verifyGoogleRefresh() async throws {
+        guard platform == .youtube, connected else { throw DiagnosticProblem(code: .signedOut) }
+        _ = try await accessToken(refresh: true)
+        _ = try await page(.liked, cursor: nil)
+    }
+
     private func accessToken(refresh: Bool = false) async throws -> String {
-        guard let credential else { throw PlatformError.message("請先登入連接曲庫。") }
+        guard let credential else { throw DiagnosticProblem(code: .signedOut) }
         if !refresh && credential.expires.timeIntervalSinceNow > 60 { return credential.accessToken }
         let revision = sessionID
         if let refreshTask {
@@ -257,7 +266,7 @@ final class PlatformConnection {
             guard sessionID == revision else { throw CancellationError() }
             return updated.accessToken
         }
-        guard let refreshToken = credential.refreshToken else { throw PlatformError.message("請重新登入以更新曲庫授權。") }
+        guard let refreshToken = credential.refreshToken else { throw DiagnosticProblem(code: .reauthorize) }
         let task = Task {
             let updated = try await exchange([
                 .init(name: "client_id", value: credential.clientID), .init(name: "grant_type", value: "refresh_token"),
@@ -283,6 +292,9 @@ final class PlatformConnection {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.httpBody = Data((form.percentEncodedQuery ?? "").replacingOccurrences(of: "+", with: "%2B").utf8)
         let (data, response) = try await session.data(for: request)
+        if platform == .youtube, let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw DiagnosticProblem.googleHTTP(http.statusCode, body: data)
+        }
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode), data.count <= 1_000_000,
               let token = try? JSONDecoder().decode(TokenResponse.self, from: data), !token.access_token.isEmpty,
               token.expires_in.isFinite, token.expires_in > 0 else {

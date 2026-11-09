@@ -81,6 +81,16 @@ struct DownloadAudioCandidate: Sendable {
     var expectedBytes: Int? = nil
     var sampleRate: Double? = nil
     var bits: Int? = nil
+    var diagnosticSource: DiagnosticSource? {
+        switch source {
+        case "本機音檔": .local
+        case "Navidrome": .navidrome
+        case "網易雲": .netease
+        case "QQ 音樂": .qq
+        case "YouTube": .youtube
+        default: nil
+        }
+    }
     var lossless: Bool { ["flac", "alac", "wav", "aiff", "aif"].contains(format.lowercased()) }
     var quality: String { source + " · " + format.uppercased() + (lossless ? " 無損" : source == "本機音檔" ? "" : bitrate > 0 ? " \(bitrate / 1000) kbps" : " 原始音質") }
     static func preferred(_ lhs: Self, _ rhs: Self) -> Bool {
@@ -113,11 +123,24 @@ enum PlaybackLookup {
             group.addTask(operation: operation)
             group.addTask {
                 try await Task.sleep(for: duration)
-                throw PlatformError.message("音源連線逾時。")
+                throw PlatformError.timeout
             }
             guard let value = try await group.next() else { throw CancellationError() }
             try Task.checkCancellation()
             return value
+        }
+    }
+
+    static func firstAvailable<Value: Sendable>(_ operations: [@Sendable () async -> Value?]) async throws -> Value? {
+        try await withThrowingTaskGroup(of: Value?.self) { group in
+            defer { group.cancelAll() }
+            for operation in operations { group.addTask(operation: operation) }
+            for try await value in group {
+                try Task.checkCancellation()
+                if let value { return value }
+            }
+            try Task.checkCancellation()
+            return nil
         }
     }
 }

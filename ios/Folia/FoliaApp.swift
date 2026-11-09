@@ -8,6 +8,7 @@ struct FoliaApp: App {
     @State private var navidrome = NavidromeConnection()
 
     init() {
+        DiagnosticsEvents.shared.beganInitialization()
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--presentation-reset") {
             UserDefaults.standard.removeObject(forKey: "Folia.LyricDisplayMode")

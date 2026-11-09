@@ -10,7 +10,11 @@ struct Checks {
         try YouTubeChecks.run()
         try YouTubeSyncChecks.run()
         try SubtitleSourceChecks.run()
-        if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" { await SubtitleSourceProbe.run() }
+        try await DiagnosticsChecks.run()
+        if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" {
+            print("LIVE NETWORK PROBE: public subtitle endpoints from the CI runner; device and OAuth not covered")
+            await SubtitleSourceProbe.run()
+        }
         let ios = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
         let fontName = "GenSenRounded2JP-M"
         let fontURL = ios.appending(path: "Folia/Resources/FoliaStage/" + fontName + ".otf")

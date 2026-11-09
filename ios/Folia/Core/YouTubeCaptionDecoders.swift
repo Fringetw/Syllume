@@ -208,7 +208,14 @@ enum YouTubeCaptionDecoders {
         if let status = root["playabilityStatus"] as? [String: Any], let value = status["status"] as? String, value != "OK" {
             let reason = (status["reason"] as? String ?? "").lowercased()
             let challenge = reason.contains("bot") || reason.contains("verify") || reason.contains("驗證")
-            throw SubtitleReadError(value == "LOGIN_REQUIRED" && !challenge ? "not-signed-in" : "verification-required")
+            if challenge || value == "AGE_CHECK_REQUIRED" || value == "CONTENT_CHECK_REQUIRED" {
+                throw SubtitleReadError("verification-required")
+            }
+            if value == "LOGIN_REQUIRED" { throw SubtitleReadError("not-signed-in") }
+            if reason.contains("country") || reason.contains("region") || reason.contains("地區") || reason.contains("國家") {
+                throw SubtitleReadError("region-restricted")
+            }
+            throw SubtitleReadError("video-unavailable")
         }
         guard let details = root["videoDetails"] as? [String: Any], details["videoId"] as? String == videoID else {
             throw SubtitleReadError("invalid-response")
@@ -340,5 +347,23 @@ enum YouTubeCaptionDecoders {
         }
         let paired = SubtitleSourceDecoders.attach(original, translations: translatedText)
         return paired.contains(where: { $0.translation != nil }) ? paired : chinese
+    }
+
+    static func alignTranslation(_ donor: [LyricLine], to original: [LyricLine]) -> (lines: [LyricLine], aligned: Bool) {
+        var matches: [String: [LyricLine]] = [:]
+        for line in donor where line.translation != nil {
+            let key = DownloadSongMatch.normalized(line.fullText)
+            if key.count >= 3 { matches[key, default: []].append(line) }
+        }
+        var last = -1.0, anchors = 0
+        let merged = original.map { line in
+            var line = line
+            if let options = matches[DownloadSongMatch.normalized(line.fullText)], options.count == 1,
+               let candidate = options.first, candidate.startTime > last {
+                last = candidate.startTime; anchors += 1; line.translation = candidate.translation
+            }
+            return line
+        }
+        return anchors >= max(3, donor.count / 3) ? (merged, true) : (donor, false)
     }
 }
