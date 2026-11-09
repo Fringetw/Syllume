@@ -24,5 +24,5 @@ struct Track: Codable, Identifiable, Equatable, Sendable {
     }
 
     static let demo = Track(id: "folia-demo", source: .demo, title: "潮汐之間",
-                            artist: "Folia 示範音軌", album: nil, duration: 30)
+                            artist: "Syllume 示範音軌", album: nil, duration: 30)
 }

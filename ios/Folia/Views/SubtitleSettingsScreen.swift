@@ -41,7 +41,7 @@ struct FoliaSettingsScreen: View {
                 }
                 Section {
                     let info = Bundle.main.infoDictionary
-                    Text("Folia iOS \(info?["CFBundleShortVersionString"] as? String ?? "—") · build \(info?["CFBundleVersion"] as? String ?? "—")")
+                    Text("Syllume iOS \(info?["CFBundleShortVersionString"] as? String ?? "—") · build \(info?["CFBundleVersion"] as? String ?? "—")")
                         .foregroundStyle(.secondary)
                 }
             }
@@ -189,7 +189,7 @@ private struct SubtitleSettingsContent: View {
         }
         .onAppear { neteaseDraft = subtitles.preferences.neteaseAPI }
         .fileExporter(isPresented: $exporting, document: FoliaReportDocument(data: exportedReport),
-                      contentType: .json, defaultFilename: "Folia-字幕診斷") { result in
+                      contentType: .json, defaultFilename: "Syllume-字幕診斷") { result in
             if case .failure = result { exportError = "未能儲存報告，可改用複製。" }
         }
         .alert("繁體字幕", isPresented: Binding(get: { subtitles.notice != nil || exportError != nil },

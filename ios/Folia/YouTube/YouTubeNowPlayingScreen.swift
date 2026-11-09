@@ -23,7 +23,7 @@ struct YouTubeNowPlayingScreen: View {
                     Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 40) }
                         .accessibilityLabel("關閉 YouTube 播放畫面")
                     Spacer()
-                    Text("YouTube · Folia").font(.subheadline.weight(.semibold))
+                    Text("YouTube · Syllume").font(.subheadline.weight(.semibold))
                     Spacer()
                     Menu {
                         Button("繁體字幕設定") { player.pause(); showingSubtitles = true }

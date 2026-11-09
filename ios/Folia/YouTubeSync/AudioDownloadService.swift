@@ -8,6 +8,12 @@ actor AudioDownloadService {
     static let shared = AudioDownloadService()
     private var blockedUntil: [String: Date] = [:]
     private var videoMetadata: [String: (title: String, artist: String, duration: Double, expires: Date)] = [:]
+    private let artworkCache: NSCache<NSURL, NSData> = {
+        let cache = NSCache<NSURL, NSData>()
+        cache.totalCostLimit = 8_000_000
+        cache.countLimit = 120
+        return cache
+    }()
     private let session = AudioDownloadService.anonymousSession(seconds: 600)
     private let metadataSession = AudioDownloadService.anonymousSession(seconds: 13)
     private static func anonymousSession(seconds: TimeInterval) -> URLSession {
@@ -276,14 +282,7 @@ actor AudioDownloadService {
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else { throw DiagnosticProblem(code: .invalidResponse) }
             guard http.statusCode == 200 else {
-                let code: DiagnosticCode = switch http.statusCode {
-                case 401, 403: .permission
-                case 429: .rateLimit
-                case 451: .region
-                case 500...599: .transport
-                default: .unavailable
-                }
-                throw DiagnosticProblem(code: code, httpStatus: http.statusCode)
+                throw DiagnosticProblem.mediaHTTP(http.statusCode)
             }
             guard http.value(forHTTPHeaderField: "Content-Range") == nil,
                   let final = response.url, final.scheme == "https", final.host == parts.host, final.port == parts.port else {
@@ -309,11 +308,33 @@ actor AudioDownloadService {
         return host == domain || host.hasSuffix("." + domain)
     }
 
-    func portrait(_ url: URL) async -> Data? {
-        guard ["yt3.googleusercontent.com", "yt3.ggpht.com", "yt4.ggpht.com"].contains(url.host ?? ""),
-              DownloadSongMatch.safeAudioURL(url.absoluteString) != nil,
-              url.port == nil || url.port == 443 else { return nil }
-        return try? await metadata(url, provider: "portrait", maximum: 600_000)
+    // Record only the response status. Do not read the audio body or retry a rejected request.
+    func streamingHTTPProblem(at url: URL) async throws -> DiagnosticProblem? {
+        guard Self.publicMediaURL(url, provider: "youtube") else { return nil }
+        var request = URLRequest(url: url, timeoutInterval: 2)
+        request.setValue("bytes=0-0", forHTTPHeaderField: "Range")
+        request.setValue("identity", forHTTPHeaderField: "Accept-Encoding")
+        let (bytes, response) = try await metadataSession.bytes(for: request, delegate: AudioDownloadGuard(origin: url, limit: 1))
+        defer { bytes.task.cancel() }
+        guard let http = response as? HTTPURLResponse, (400...599).contains(http.statusCode) else { return nil }
+        return DiagnosticProblem.mediaHTTP(http.statusCode)
+    }
+
+    func artwork(at url: URL) async -> Data? {
+        guard !Task.isCancelled else { return nil }
+        let value = url.absoluteString
+        guard YouTubeArtwork.thumbnailURL(value) != nil || YouTubeArtwork.portraitURL(value) != nil else { return nil }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture"),
+           url == YouTubeArtwork.defaultThumbnail(for: "M7lc1UVf-VE") {
+            return Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGNM37OWARtgwio6aCUAbbEB4B0QKzMAAAAASUVORK5CYII=")
+        }
+        #endif
+        if let cached = artworkCache.object(forKey: url as NSURL) { return cached as Data }
+        guard let bytes = try? await metadata(url, provider: "artwork", maximum: 600_000),
+              !Task.isCancelled else { return nil }
+        artworkCache.setObject(bytes as NSData, forKey: url as NSURL, cost: bytes.count)
+        return bytes
     }
 
     private func metadata(_ url: URL, provider: String, form: [URLQueryItem]? = nil, maximum: Int = 2_000_000) async throws -> Data {

@@ -17,7 +17,7 @@ struct DiagnosticsScreen: View {
     @State private var account = false
     @State private var exporting = false
     @State private var document: FoliaReportDocument?
-    @State private var exportName = "Folia-Diagnostics"
+    @State private var exportName = "Syllume-Diagnostics"
     @State private var exportAfterReview = false
     @State private var copied = false
     @State private var exportType = UTType.json
@@ -231,7 +231,7 @@ struct DiagnosticsScreen: View {
         do {
             document = FoliaReportDocument(data: type == .json ? try report.json() : Data(report.text.utf8))
             exportType = type
-            exportName = "Folia-Diagnostics-\(report.appVersion)-\(Int(report.startedAt.timeIntervalSince1970))"
+            exportName = "Syllume-Diagnostics-\(report.appVersion)-\(Int(report.startedAt.timeIntervalSince1970))"
             if reviewing != nil { exportAfterReview = true; reviewing = nil }
             else { exporting = true }
         } catch { message = "無法建立診斷報告。" }

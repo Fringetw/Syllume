@@ -30,7 +30,7 @@ actor OnlineLyrics {
         parts.queryItems = items
         parts.percentEncodedQuery = parts.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         var request = URLRequest(url: parts.url!, timeoutInterval: 15)
-        request.setValue("Folia-iOS/0.3.3 (https://github.com/Fringetw/folia-ios)", forHTTPHeaderField: "User-Agent")
+        request.setValue("Syllume-iOS/0.3.12 (https://github.com/Fringetw/Syllume)", forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
         if http.statusCode == 404 { return nil }

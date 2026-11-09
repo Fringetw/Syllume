@@ -145,7 +145,7 @@ struct Checks {
         precondition(LyricTimeline(lrc: demo).lines.count == 5)
         print("PASS: LRC, Folia .fia, Navidrome timeline, and bundled demonstration lyrics")
 
-        let project = try readPlist(ios.appending(path: "Folia.xcodeproj/project.pbxproj"))
+        let project = try readPlist(ios.appending(path: "Syllume.xcodeproj/project.pbxproj"))
         let objects = project["objects"] as! [String: [String: Any]]
         let root = objects[project["rootObject"] as! String]!
         let target = objects[(root["targets"] as! [String])[0]]!
@@ -167,6 +167,8 @@ struct Checks {
         let bridge = try String(contentsOf: app.appending(path: "Resources/FoliaYouTube/player.js"), encoding: .utf8)
         precondition(bridge.contains("commandRevision") && bridge.contains("player.pauseVideo()"))
         let info = try readPlist(app.appending(path: "Resources/Info.plist"))
+        precondition(info["CFBundleDisplayName"] as? String == "Syllume")
+        precondition(target["productName"] as? String == "Syllume")
         precondition((info["UIBackgroundModes"] as? [String])?.contains("audio") == true)
         precondition(info["UIApplicationSceneManifest"] != nil)
         print("PASS: Xcode project references, app resources, and background-audio declaration")

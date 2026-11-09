@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 struct YouTubeMusicScreen: View {
@@ -30,7 +31,7 @@ struct YouTubeMusicScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Folia 播放清單").font(.headline)
+                Text("Syllume 播放清單").font(.headline)
                 Spacer()
                 Button("更換歌單") { showingPicker = true }
                     .disabled(!connection.connected).accessibilityIdentifier("changeYouTubePlaylist")
@@ -41,7 +42,7 @@ struct YouTubeMusicScreen: View {
                 ContentUnavailableView {
                     Label("同步你的 YouTube 歌單", systemImage: "music.note.list")
                 } description: {
-                    Text("連接 Google 後選擇一份歌單或「喜歡的影片」。Folia 會記住最後選擇，點歌時尋找可播放的音源。")
+                    Text("連接 Google 後選擇一份歌單或「喜歡的影片」。Syllume 會記住最後選擇，點歌時尋找可播放的音源。")
                 } actions: { Button("連接 Google 帳號") { showingAccount = true }.buttonStyle(.borderedProminent) }
             } else if sync.snapshot.choice == nil {
                 ContentUnavailableView {
@@ -92,7 +93,7 @@ struct YouTubeMusicScreen: View {
         .alert("音檔", isPresented: Binding(get: { message != nil }, set: { if !$0 { message = nil } })) {
             Button("好", role: .cancel) { message = nil }
         } message: { Text(message ?? "") }
-        .alert("重新命名 Folia 播放清單", isPresented: $renaming) {
+        .alert("重新命名 Syllume 播放清單", isPresented: $renaming) {
             TextField("播放清單名稱", text: $name)
             Button("儲存") { sync.rename(name) }
             Button("取消", role: .cancel) { }
@@ -158,8 +159,8 @@ struct YouTubeMusicScreen: View {
                 if !sync.busy && filtered.isEmpty { Text(songs.isEmpty ? "這份歌單尚無歌曲。" : "沒有符合的歌曲。").foregroundStyle(.secondary) }
             }
             Section {
-                Text("長按歌曲可下載或附加音檔。下載位置：「檔案 → 我的 iPhone → Folia → YouTube Music」。")
-                Text("編輯只影響 Folia。開啟此頁、回到 App 或下拉時會同步 YouTube 的變更。")
+                Text("長按歌曲可下載或附加音檔。下載位置：「檔案 → 我的 iPhone → Syllume → YouTube Music」。")
+                Text("編輯只影響 Syllume。開啟此頁、回到 App 或下拉時會同步 YouTube 的變更。")
                 if sync.snapshot.choice?.id == "liked" { Text("YouTube 官方 API 最多提供最近 1,000 部喜歡的影片。") }
             }.font(.footnote).foregroundStyle(.secondary)
         }
@@ -171,13 +172,7 @@ struct YouTubeMusicScreen: View {
     private func songRow(_ song: SyncedYouTubeSong) -> some View {
         Button { if !editing.isEditing { play(song, songs) } } label: {
             HStack(spacing: 12) {
-                Group {
-                    if let url = song.avatarURL {
-                        AsyncImage(url: url) { image in image.resizable().scaledToFill() }
-                            placeholder: { Image(systemName: "person.crop.circle.fill") }
-                    } else { Image(systemName: "music.note") }
-                }
-                .foregroundStyle(FoliaPalette.accent).frame(width: 32, height: 32).clipShape(Circle())
+                YouTubePlaylistArtwork(urls: song.artworkURLs)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(song.title).foregroundStyle(.primary).lineLimit(2)
                     Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
@@ -274,5 +269,34 @@ private struct YouTubePlaylistPicker: View {
             } while cursor != nil
         } catch is CancellationError { }
         catch { if connection.sessionID == session { self.error = "無法載入完整歌單，請下拉重試或重新連接 Google。" } }
+    }
+}
+
+private struct YouTubePlaylistArtwork: View {
+    let urls: [URL]
+    @State private var image: UIImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Image(systemName: "music.note").foregroundStyle(FoliaPalette.accent)
+            }
+        }
+        .frame(width: 32, height: 32)
+        .background(.white.opacity(0.06), in: Circle())
+        .clipShape(Circle())
+        .accessibilityHidden(true)
+        .task(id: urls, priority: .utility) {
+            image = nil
+            for url in urls {
+                if Task.isCancelled { return }
+                if let bytes = await AudioDownloadService.shared.artwork(at: url), let decoded = UIImage(data: bytes) {
+                    if !Task.isCancelled { image = decoded }
+                    return
+                }
+            }
+        }
     }
 }

@@ -9,7 +9,7 @@
 		000000000000000000000020 /* LyricTimeline.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000010; };
 		000000000000000000000021 /* NavidromeLyrics.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000011; };
 		000000000000000000000022 /* Track.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000012; };
-		000000000000000000000023 /* FoliaApp.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000013; };
+		000000000000000000000023 /* SyllumeApp.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000013; };
 		000000000000000000000024 /* LocalLibrary.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000014; };
 		000000000000000000000025 /* NavidromeClient.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000015; };
 		000000000000000000000026 /* PlaybackModel.swift */ = {isa = PBXBuildFile; fileRef = 000000000000000000000016; };
@@ -60,11 +60,11 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		000000000000000000000005 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Folia.app; sourceTree = BUILT_PRODUCTS_DIR;};
+		000000000000000000000005 = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Syllume.app; sourceTree = BUILT_PRODUCTS_DIR;};
 		000000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/LyricTimeline.swift"; sourceTree = "<group>"; };
 		000000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/NavidromeLyrics.swift"; sourceTree = "<group>"; };
 		000000000000000000000012 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/Track.swift"; sourceTree = "<group>"; };
-		000000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FoliaApp.swift"; sourceTree = "<group>"; };
+		000000000000000000000013 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SyllumeApp.swift"; sourceTree = "<group>"; };
 		000000000000000000000014 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Library/LocalLibrary.swift"; sourceTree = "<group>"; };
 		000000000000000000000015 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Library/NavidromeClient.swift"; sourceTree = "<group>"; };
 		000000000000000000000016 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Playback/PlaybackModel.swift"; sourceTree = "<group>"; };
@@ -80,9 +80,9 @@
 		000000000000000000000100 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/PlatformLibrary.swift"; sourceTree = "<group>"; };
 		000000000000000000000101 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Library/PlatformConnection.swift"; sourceTree = "<group>"; };
 		000000000000000000000102 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/PlatformLibraryViews.swift"; sourceTree = "<group>"; };
-		000000000000000000000210 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FoliaUITests/FoliaUITests.swift"; sourceTree = "<group>"; };
+		000000000000000000000210 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "SyllumeUITests/SyllumeUITests.swift"; sourceTree = "<group>"; };
 		000000000000000000000300 = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = GoogleOAuth.xcconfig; sourceTree = "<group>"; };
-		000000000000000000000212 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = FoliaUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		000000000000000000000212 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SyllumeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		000000000000000000000400 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/YouTubeVideo.swift"; sourceTree = "<group>"; };
 		000000000000000000000401 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Library/OnlineLyrics.swift"; sourceTree = "<group>"; };
 		000000000000000000000402 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "YouTube/YouTubePlayback.swift"; sourceTree = "<group>"; };
@@ -135,16 +135,16 @@
 /* Begin PBXNativeTarget section */
 		000000000000000000000006 = {isa = PBXNativeTarget; buildConfigurationList = 00000000000000000000000B;
             buildPhases = (000000000000000000000007, 000000000000000000000009, 000000000000000000000008, );
-            buildRules = (); dependencies = (); packageProductDependencies = (D70000000000000000000000, ); name = Folia; productName = Folia;
+            buildRules = (); dependencies = (); packageProductDependencies = (D70000000000000000000000, ); name = Syllume; productName = Syllume;
             productReference = 000000000000000000000005; productType = "com.apple.product-type.application"; };
         000000000000000000000220 = {isa = PBXNativeTarget; buildConfigurationList = 000000000000000000000230;
             buildPhases = (000000000000000000000221, 000000000000000000000222, 000000000000000000000223, );
-            buildRules = (); dependencies = (000000000000000000000225, ); name = FoliaUITests; productName = FoliaUITests;
+            buildRules = (); dependencies = (000000000000000000000225, ); name = SyllumeUITests; productName = SyllumeUITests;
             productReference = 000000000000000000000212; productType = "com.apple.product-type.bundle.ui-testing"; };
 /* End PBXNativeTarget section */
 
 /* Begin PBXContainerItemProxy section */
-        000000000000000000000224 = {isa = PBXContainerItemProxy; containerPortal = 000000000000000000000001; proxyType = 1; remoteGlobalIDString = 000000000000000000000006; remoteInfo = Folia; };
+        000000000000000000000224 = {isa = PBXContainerItemProxy; containerPortal = 000000000000000000000001; proxyType = 1; remoteGlobalIDString = 000000000000000000000006; remoteInfo = Syllume; };
 /* End PBXContainerItemProxy section */
 /* Begin PBXTargetDependency section */
         000000000000000000000225 = {isa = PBXTargetDependency; target = 000000000000000000000006; targetProxy = 000000000000000000000224; };
@@ -227,13 +227,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 22;
+				CURRENT_PROJECT_VERSION = 23;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Folia/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 0.3.11;
+				MARKETING_VERSION = 0.3.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(FOLIA_APP_BUNDLE_ID)";
-				PRODUCT_NAME = Folia;
+				PRODUCT_NAME = Syllume;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -247,13 +247,13 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 22;
+				CURRENT_PROJECT_VERSION = 23;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Folia/Resources/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
-				MARKETING_VERSION = 0.3.11;
+				MARKETING_VERSION = 0.3.12;
 				PRODUCT_BUNDLE_IDENTIFIER = "$(FOLIA_APP_BUNDLE_ID)";
-				PRODUCT_NAME = Folia;
+				PRODUCT_NAME = Syllume;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -261,8 +261,8 @@
 			};
 			name = Release;
 		};
-        000000000000000000000231 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = org.folia.community.ios.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = Folia; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";}; name = Debug; };
-        000000000000000000000232 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = org.folia.community.ios.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = Folia; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";}; name = Release; };
+        000000000000000000000231 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = org.folia.community.ios.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = Syllume; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";}; name = Debug; };
+        000000000000000000000232 = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_STYLE = Automatic; GENERATE_INFOPLIST_FILE = YES; IPHONEOS_DEPLOYMENT_TARGET = 17.0; PRODUCT_BUNDLE_IDENTIFIER = org.folia.community.ios.uitests; PRODUCT_NAME = "$(TARGET_NAME)"; SDKROOT = iphoneos; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; TEST_TARGET_NAME = Syllume; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";}; name = Release; };
 /* End XCBuildConfiguration section */
 	};
 	rootObject = 000000000000000000000001;
