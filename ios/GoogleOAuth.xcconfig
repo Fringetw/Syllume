@@ -1,0 +1,2 @@
+// Default for source builds. The maintainer configuration script supplies the registered ID.
+FOLIA_APP_BUNDLE_ID = org.folia.community.ios

@@ -1,0 +1,5 @@
+# Preserve the imported upstream sources and third-party license text byte for byte.
+ios/Visualizer/desktop/** -whitespace
+ios/Syllume/Resources/SyllumeStage/THIRD_PARTY_NOTICES.txt -whitespace
+# Generated shader strings retain their upstream whitespace.
+ios/Syllume/Resources/SyllumeStage/sonnet.js -whitespace
