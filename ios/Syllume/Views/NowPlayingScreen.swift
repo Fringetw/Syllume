@@ -95,10 +95,20 @@ struct NowPlayingScreen: View {
 
               if controlsVisible {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
-                        .accessibilityAddTraits(.isHeader)
-                    if !track.subtitle.isEmpty {
-                        Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                    HStack(spacing: 10) {
+                        if mode != .cover, let image = player.artwork {
+                            Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: 42, height: 42).clipShape(.rect(cornerRadius: 8))
+                                .accessibilityLabel("目前歌曲封面")
+                                .accessibilityIdentifier("nowPlayingThumbnail")
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
+                                .accessibilityAddTraits(.isHeader)
+                            if !track.subtitle.isEmpty {
+                                Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                            }
+                        }
                     }
                     if let error = player.error {
                         Text(error).font(.footnote).foregroundStyle(.orange)

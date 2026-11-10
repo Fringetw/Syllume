@@ -47,7 +47,9 @@ final class PlaybackModel {
         var metrics: [String: Double] = ["displayedClock_s": position, "sourceDuration_s": duration,
             "lyricCueCount": Double(timeline.lines.count), "manualLyricOffset_s": lyricOffset]
         if let embeddedVideo {
-            if !embeddedVideo.isSeeking { metrics["displayClockDifference_s"] = abs(position - embeddedVideo.position) }
+            if !embeddedVideo.isSeeking, let sampledTime = embeddedVideo.sampledTime {
+                metrics["displayClockDifference_s"] = abs(position - sampledTime)
+            }
             return metrics
         }
         guard player.currentItem != nil else { return metrics }
@@ -734,7 +736,11 @@ final class PlaybackModel {
     }
 
     func setEmbeddedVideoVisible(_ visible: Bool) {
-        embeddedVideo?.setVisible(visible)
+        guard let embeddedVideo else { return }
+        if visible, !embeddedVideo.visible, embeddedVideo.position > 0 {
+            embeddedVideo.seek(to: embeddedVideo.position)
+        }
+        embeddedVideo.setVisible(visible)
         refreshEmbeddedVideo()
     }
 

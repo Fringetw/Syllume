@@ -321,6 +321,7 @@ final class SyllumeUITests: XCTestCase {
         capture(app, name: "Recorded-songs-queue-artwork")
         app.buttons["完成"].tap()
         app.segmentedControls.buttons["歌詞"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["nowPlayingThumbnail"].firstMatch.waitForExistence(timeout: 10))
         let lyric = app.buttons["lyricLine-1"]
         let converted = expectation(for: NSPredicate(format: "label CONTAINS %@", "頭髮發現"), evaluatedWith: lyric)
         XCTAssertEqual(XCTWaiter.wait(for: [converted], timeout: 15), .completed)

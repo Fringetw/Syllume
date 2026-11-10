@@ -12,6 +12,7 @@ final class YouTubePlayback {
     private(set) var isBuffering = false
     private(set) var position = 0.0
     private(set) var duration = 0.0
+    private(set) var sampledTime: Double?
     private(set) var timeline = LyricTimeline(lines: [])
     private(set) var timelineRevision = UUID()
     private(set) var lyricsLoading = false
@@ -26,7 +27,7 @@ final class YouTubePlayback {
     private(set) var failure: DiagnosticProblem?
     var isSeeking: Bool { pendingSeek != nil }
     #if DEBUG
-    private(set) var mediaSampleTime = 0.0
+    var mediaSampleTime: Double { sampledTime ?? 0 }
     private(set) var mediaPlaybackState = "unknown"
     func recordMediaState(_ state: String, session: UUID, revision: Int) {
         guard session == self.session, revision == playbackRevision else { return }
@@ -103,9 +104,7 @@ final class YouTubePlayback {
         guard let track = current, snapshot.belongs(to: session, videoID: track.id) else { return }
         guard visible else { if wantsPlayback || isPlaying { pause() }; return }
         guard snapshot.commandRevision == playbackRevision else { return }
-        #if DEBUG
-        mediaSampleTime = snapshot.time
-        #endif
+        sampledTime = snapshot.time
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
         if let seek = pendingSeek, abs(snapshot.time - seek.time) > 1.5, Date().timeIntervalSince(seek.date) < 2 {
@@ -194,6 +193,7 @@ final class YouTubePlayback {
 
     private func load() {
         lyricTask?.cancel(); session = UUID(); error = nil; position = 0; duration = 0
+        sampledTime = nil
         didReachEnd = false; didBlockAutoplay = false; failure = nil; seekTime = 0; seekRevision = UUID()
         isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
         matchAttempts = 0
