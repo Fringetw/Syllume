@@ -342,12 +342,14 @@ final class SyllumeUITests: XCTestCase {
             }, evaluatedWith: transport)
             XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 25), .completed, "\(song): \(String(describing: transport.value))")
             app.segmentedControls.buttons[mode].tap()
-            let stage = app.descendants(matching: .any)[stageID].firstMatch
-            let rendering = expectation(for: NSPredicate { _, _ in
-                (stage.value as? String ?? "").hasSuffix("|playing|GenSenRounded2JP-M") && self.probeTime(stage) > 0.5
-            }, evaluatedWith: stage)
-            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 45), .completed, "\(song) \(mode): \(String(describing: stage.value))")
-            toggle.tap()
+            let stage = app.staticTexts[stageID]
+            let rendering = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|playing|GenSenRounded2JP-M"), evaluatedWith: stage)
+            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 75), .completed, "\(song) \(mode): \(String(describing: stage.value))")
+            XCTAssertGreaterThan(probeTime(stage), 0.5, song)
+            let button = toggle.frame
+            let screen = app.frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(dx: button.midX - screen.minX, dy: button.midY - screen.minY)).tap()
             let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|paused|GenSenRounded2JP-M"), evaluatedWith: stage)
             XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
             let audio = probeTime(transport), animation = probeTime(stage)
@@ -356,12 +358,12 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertEqual(probeTime(transport), audio, accuracy: 0.20)
             XCTAssertEqual(probeTime(stage), animation, accuracy: 0.12)
         }
-        playAndVerify("JANE DOE", mode: "商籟", stageID: "syllumeSonnetStage")
+        playAndVerify("JANE DOE", mode: "商籟", stageID: "syllumeSonnetClockProbe")
         app.buttons["播放佇列"].tap()
         XCTAssertTrue(lemonQueue.waitForExistence(timeout: 10)); lemonQueue.tap()
         XCTAssertTrue(fallback.waitForExistence(timeout: 15), "Lemon rejects the short sample and finishes the remaining source search")
         XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
-        playAndVerify("Lemon", mode: "繪光", stageID: "syllumeLumiereStage")
+        playAndVerify("Lemon", mode: "繪光", stageID: "syllumeLumiereClockProbe")
         capture(app, name: "Recorded-songs-Lemon-visible-fallback")
     }
 

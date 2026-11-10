@@ -20,13 +20,23 @@ struct SonnetStage: View {
     @State private var failed = false
     @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    #if DEBUG
+    @State private var clockProbe = ""
+    #endif
+
+    private var clockProbeBinding: Binding<String>? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") { return $clockProbe }
+        #endif
+        return nil
+    }
 
     var body: some View {
         ZStack(alignment: .bottom) {
             SonnetWebView(songID: songID, title: title, artist: artist, timeline: timeline, revision: revision,
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
                           style: style, energySaving: energySaving || lowPower, rendering: rendering && scenePhase == .active,
-                          diagnosticProbe: diagnosticProbe, ready: $ready, failed: $failed)
+                          diagnosticProbe: diagnosticProbe, clockProbe: clockProbeBinding, ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
@@ -35,6 +45,15 @@ struct SonnetStage: View {
                     .allowsHitTesting(false)
             }
         }
+        #if DEBUG
+        .overlay(alignment: .topLeading) {
+            if clockProbeBinding != nil {
+                Text("歌詞動畫時鐘").font(.system(size: 1)).frame(width: 80, height: 2)
+                    .accessibilityIdentifier(style == "lumiere" ? "syllumeLumiereClockProbe" : "syllumeSonnetClockProbe")
+                    .accessibilityValue(clockProbe)
+            }
+        }
+        #endif
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
             lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
@@ -55,6 +74,7 @@ private struct SonnetWebView: UIViewRepresentable {
     let energySaving: Bool
     let rendering: Bool
     let diagnosticProbe: DiagnosticStageProbe?
+    let clockProbe: Binding<String>?
     @Binding var ready: Bool
     @Binding var failed: Bool
 
@@ -79,10 +99,7 @@ private struct SonnetWebView: UIViewRepresentable {
         context.coordinator.parent = self; context.coordinator.update()
         var state = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
         #if DEBUG
-        if ready, ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
-            context.coordinator.sampleClock()
-            return
-        }
+        if ready, clockProbe != nil { context.coordinator.sampleClock() }
         if ready, ProcessInfo.processInfo.arguments.contains("--playback-probe") {
             state += " · " + context.coordinator.lyricFont
         }
@@ -113,14 +130,24 @@ private struct SonnetWebView: UIViewRepresentable {
         var lastPlaying = false
         var lastRendering = true
         #if DEBUG
+        private var lastClockProbe = ""
+        private var samplingClock = false
+
         func sampleClock() {
-            guard let view else { return }
+            guard let view, let probe = parent.clockProbe, !samplingClock else { return }
+            let key = "\(parent.revision)|\(parent.playing)|\(Int(parent.time * 2))|\(lyricFont)"
+            guard key != lastClockProbe else { return }
+            lastClockProbe = key
+            samplingClock = true
             view.callAsyncJavaScript("return window.FoliaStage?.diagnostics() ?? null", arguments: [:],
-                                     in: nil, in: .page) { [weak self, weak view] result in
-                guard let self, let view, case .success(let value) = result, let state = value as? [String: Any],
+                                     in: nil, in: .page) { [weak self] result in
+                guard let self else { return }
+                samplingClock = false
+                guard case .success(let value) = result, let state = value as? [String: Any],
                       state["canvas"] as? Bool == true, let time = state["time"] as? Double,
-                      let playing = state["playing"] as? Bool else { return }
-                view.accessibilityValue = String(format: "%.3f|%@|%@", time, playing ? "playing" : "paused", lyricFont)
+                      let playing = state["playing"] as? Bool else { lastClockProbe = ""; return }
+                let sample = String(format: "%.3f|%@|%@", time, playing ? "playing" : "paused", lyricFont)
+                if probe.wrappedValue != sample { probe.wrappedValue = sample }
             }
         }
         #endif
