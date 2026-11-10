@@ -142,6 +142,14 @@ final class PlatformConnection {
             if collection == .playlists {
                 return LibraryPage(entries: [LibraryEntry(id: "fixture-list", title: "測試歌單", subtitle: "", url: URL(string: "https://music.youtube.com/playlist?list=fixture-list")!)], next: nil)
             }
+            if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+                return LibraryPage(entries: [
+                    LibraryEntry(id: "recording-jane", title: "JANE DOE", subtitle: "Kenshi Yonezu - Topic",
+                        url: URL(string: "https://music.youtube.com/watch?v=6AR6Oc0-4NQ")!, duration: 236),
+                    LibraryEntry(id: "recording-lemon", title: "Lemon", subtitle: "Kenshi Yonezu - Topic",
+                        url: URL(string: "https://music.youtube.com/watch?v=3NNhrqHZqlI")!, duration: 256)
+                ], next: nil)
+            }
             let slow = ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture")
             if slow, cursor != nil {
                 try await Task.sleep(for: .seconds(90))
@@ -180,24 +188,36 @@ final class PlatformConnection {
         }
     }
 
-    // Fetch only the selected video's missing duration. The playlist stays usable
-    // while the remaining pages are syncing.
-    func playlistSongWithDuration(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
-        guard connected, song.duration == nil, YouTubeVideo.validID(song.videoID) else { return song }
+    // Fetch label credits only for the selected song, keeping bulk playlist requests small.
+    func playlistSongWithMetadata(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
+            var result = song
+            if song.videoID == "6AR6Oc0-4NQ" { result.creditedArtist = "Kenshi Yonezu、Hikaru Utada" }
+            return result
+        }
+        #endif
+        guard connected, YouTubeVideo.validID(song.videoID),
+              song.duration == nil || (song.creditedArtist == nil && song.artist.hasSuffix(" - Topic")) else { return song }
         let id = song.videoID
-        guard let seconds = try? await PlaybackLookup.within(.seconds(3), operation: {
-            try await self.videoDurations([id])[id]
-        }) else { return song }
-        var result = song; result.duration = seconds
-        return result
+        let details = try? await PlaybackLookup.within(.seconds(3)) { try await self.videoDetails([id], includeMetadata: true).first }
+        return details?.enrich(song) ?? song
     }
 
     func videoDurations(_ ids: [String]) async throws -> [String: Double] {
-        guard platform == .youtube, !ids.isEmpty, ids.count <= 50, ids.allSatisfy(YouTubeVideo.validID) else { return [:] }
+        let details = try await videoDetails(ids, includeMetadata: false)
+        return Dictionary(details.compactMap { item in item.duration.map { (item.id, $0) } },
+                          uniquingKeysWith: { first, _ in first })
+    }
+
+    func videoDetails(_ ids: [String], includeMetadata: Bool) async throws -> [YouTubeVideoDetails] {
+        guard platform == .youtube, !ids.isEmpty, ids.count <= 50, ids.allSatisfy(YouTubeVideo.validID) else { return [] }
         let revision = sessionID
         var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/videos")!
-        parts.queryItems = [.init(name: "part", value: "contentDetails"), .init(name: "id", value: ids.joined(separator: ",")),
-            .init(name: "fields", value: "items(id,contentDetails(duration))")]
+        let detail = includeMetadata ? ",snippet(title,channelTitle,description),status(embeddable)" : ""
+        parts.queryItems = [.init(name: "part", value: includeMetadata ? "contentDetails,snippet,status" : "contentDetails"),
+            .init(name: "id", value: ids.joined(separator: ",")),
+            .init(name: "fields", value: "items(id,contentDetails(duration)\(detail))")]
         var token = try await accessToken()
         var result = try await request(url: parts.url!, token: token)
         if result.1.statusCode == 401 {
@@ -207,15 +227,9 @@ final class PlatformConnection {
         try Task.checkCancellation()
         guard sessionID == revision else { throw CancellationError() }
         guard (200..<300).contains(result.1.statusCode) else { throw DiagnosticProblem.googleHTTP(result.1.statusCode, body: result.0) }
-        struct Page: Decodable {
-            let items: [Item]
-            struct Item: Decodable { let id: String; let contentDetails: Details }
-            struct Details: Decodable { let duration: String }
-        }
+        struct Page: Decodable { let items: [YouTubeVideoDetails] }
         let page = try JSONDecoder().decode(Page.self, from: result.0)
-        return Dictionary(page.items.filter { ids.contains($0.id) }.compactMap { item in
-            PlatformLibrary.isoDuration(item.contentDetails.duration).map { (item.id, $0) }
-        }, uniquingKeysWith: { first, _ in first })
+        return page.items.filter { ids.contains($0.id) }
     }
 
     func channelPortraits(_ ids: [String]) async throws -> [String: (name: String, url: URL)] {

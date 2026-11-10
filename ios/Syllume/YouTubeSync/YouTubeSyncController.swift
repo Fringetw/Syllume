@@ -194,8 +194,7 @@ final class YouTubeSyncController {
                     return
                 }
                 #endif
-                let identified = await connection.playlistSongWithDuration(song)
-                let target = await downloader.withDuration(identified)
+                let target = await connection.playlistSongWithMetadata(song)
                 try check()
                 var candidates = library.matchingAudio(for: target)
                 var failures: [String] = []

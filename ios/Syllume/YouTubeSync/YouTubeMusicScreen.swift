@@ -172,7 +172,7 @@ struct YouTubeMusicScreen: View {
         let file = sync.localTrack(for: song, library: library).flatMap(library.artworkURL)
         return Button { if !editing.isEditing { play(song, songs) } } label: {
             HStack(spacing: 12) {
-                SongArtworkView(source: .init(file: file, videoID: song.videoID, candidates: song.artworkURLs),
+                SongArtworkView(source: SongArtworkSource(file: file, song: song),
                                 tint: SyllumePalette.accent, size: 32, cornerRadius: 16)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(song.title).foregroundStyle(.primary).lineLimit(2)

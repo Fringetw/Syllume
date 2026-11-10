@@ -3,11 +3,12 @@ import MediaPlayer
 import Observation
 import UIKit
 
-// Native playback, queue and Now Playing state share a single AVPlayer clock.
+// The queue uses AVPlayer for matched audio and the visible IFrame clock for a YouTube video.
 @MainActor @Observable
 final class PlaybackModel {
     private(set) var queue: [Track] = []
     private(set) var index: Int?
+    private(set) var wantsPlayback = false
     private(set) var isPlaying = false
     private(set) var isBuffering = false
     private(set) var position: Double = 0
@@ -23,10 +24,33 @@ final class PlaybackModel {
     private(set) var lyricOffset = 0.0
     private(set) var audioSource: String?
     private(set) var activeLocalTrackID: String?
+    private(set) var embeddedVideo: YouTubePlayback?
+    private(set) var offersVideoFallback = false
+    private(set) var didAdvancePlayback = false
+    private(set) var diagnosticPlaybackProblem: DiagnosticProblem?
+    private var nativeReady = false
+    private var nativeHasAdvanced = false
+    private var videoHasAdvanced = false
+    @ObservationIgnored private var videoDeadline: Task<Void, Never>?
+    @ObservationIgnored private var lyricReferenceDuration: Double?
+    @ObservationIgnored private var manualLyrics = false
+
+    var canSeek: Bool {
+        if let embeddedVideo { return embeddedVideo.visible && embeddedVideo.duration > 0 }
+        return nativeReady && duration > 0
+    }
+    var transportLabel: String { isBuffering && wantsPlayback ? "取消載入" : wantsPlayback ? "暫停" : "播放" }
+    var transportIcon: String { isBuffering && wantsPlayback ? "stop.fill" : wantsPlayback ? "pause.fill" : "play.fill" }
 
     var diagnosticTransportMetrics: [String: Double] {
-        guard player.currentItem != nil else { return [:] }
-        var metrics: [String: Double] = ["lyricCueCount": Double(timeline.lines.count), "manualLyricOffset_s": lyricOffset]
+        guard current != nil else { return [:] }
+        var metrics: [String: Double] = ["displayedClock_s": position, "sourceDuration_s": duration,
+            "lyricCueCount": Double(timeline.lines.count), "manualLyricOffset_s": lyricOffset]
+        if let embeddedVideo {
+            if !embeddedVideo.isSeeking { metrics["displayClockDifference_s"] = abs(position - embeddedVideo.position) }
+            return metrics
+        }
+        guard player.currentItem != nil else { return metrics }
         let audio = player.currentTime().seconds
         if audio.isFinite, !seeking { metrics["displayClockDifference_s"] = abs(position - audio) }
         if let event = player.currentItem?.accessLog()?.events.last {
@@ -38,12 +62,19 @@ final class PlaybackModel {
     var lyricPosition: Double { LyricTimingOffset.displayed(position: position, offset: lyricOffset) }
     var subtitleInput: SubtitleInput? {
         guard let track = current else { return nil }
-        let recording = activeRecording ?? track.recording
+        let recording = activeRecording ?? catalogueTarget?.recordingMetadata ?? track.recording
+        let originalID = track.playlistSong.flatMap { song -> String? in
+            guard YouTubeVideo.validID(song.videoID) else { return nil }
+            if activeRecording != nil, let originalDuration = catalogueTarget?.duration,
+               abs(originalDuration - duration) > 2 { return nil }
+            return song.videoID
+        }
         return SubtitleInput(song: SubtitleSong(id: track.id, source: track.source.rawValue,
             title: recording?.title ?? track.title, artist: recording?.artist ?? track.artist ?? "",
             durationMs: (duration * 10).rounded() * 100, ref: recording?.ref,
-            originVideoID: track.playlistSong.flatMap { YouTubeVideo.validID($0.videoID) ? $0.videoID : nil } ?? recording?.originVideoID),
-            revision: timelineRevision, loading: lyricsLoading || (track.source == .catalogue && !catalogueHasStarted))
+            originVideoID: track.playlistSong == nil ? recording?.originVideoID : originalID,
+            usesVideoClock: embeddedVideo == nil ? nil : true),
+            revision: timelineRevision, loading: lyricsLoading)
     }
 
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
@@ -53,6 +84,14 @@ final class PlaybackModel {
         // Observe the clock even in cover mode or when a downloaded track has no lyrics.
         _ = position; _ = isPlaying; _ = isBuffering
         return String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
+    }
+    var nowPlayingProbe: String {
+        _ = position; _ = artwork; _ = isPlaying
+        let published = MPNowPlayingInfoCenter.default().nowPlayingInfo
+        let time = published?[MPNowPlayingInfoPropertyElapsedPlaybackTime] as? Double ?? -1
+        let rate = published?[MPNowPlayingInfoPropertyPlaybackRate] as? Double ?? -1
+        let hasArtwork = published?[MPMediaItemPropertyArtwork] != nil
+        return String(format: "%.1f|%.1f|%@", time, rate, hasArtwork ? "artwork" : "empty")
     }
     #endif
 
@@ -70,7 +109,8 @@ final class PlaybackModel {
     @ObservationIgnored private var streamTimeout: Task<Void, Never>?
     @ObservationIgnored private var startupTimeout: Task<Void, Never>?
     @ObservationIgnored private var youtubeConnection: PlatformConnection?
-    @ObservationIgnored private var catalogueTarget: SyncedYouTubeSong?
+    private var catalogueTarget: SyncedYouTubeSong?
+    @ObservationIgnored private var catalogueMetadataTask: Task<SyncedYouTubeSong, Never>?
     @ObservationIgnored private var activeCatalogueSource: DiagnosticSource?
     private var catalogueHasStarted = false
     @ObservationIgnored private var resolveTicket = UUID()
@@ -135,10 +175,23 @@ final class PlaybackModel {
         "folia.lyricOffset." + (track.playlistSong?.videoID ?? (track.source.rawValue + "." + track.id))
     }
 
-    func toggle() { isPlaying ? pause() : resume() }
+    func toggle() { wantsPlayback ? pause() : resume() }
 
     func resume() {
         guard !externalPlayback else { return }
+        if let embeddedVideo {
+            guard embeddedVideo.visible else { return }
+            if embeddedVideo.error != nil, !embeddedVideo.didBlockAutoplay {
+                embeddedVideo.retry()
+                videoHasAdvanced = false
+            } else {
+                if embeddedVideo.didReachEnd { embeddedVideo.seek(to: 0) }
+                embeddedVideo.resume()
+            }
+            refreshEmbeddedVideo()
+            return
+        }
+        guard resolveTask == nil else { return }
         if let track = current, track.source == .catalogue, error == nil,
            player.currentItem == nil || player.currentItem?.status == .failed {
             resolveCatalogue(track)
@@ -158,7 +211,7 @@ final class PlaybackModel {
             try session.setActive(true)
             resumeAfterInterruption = false
             error = nil
-            isPlaying = true
+            wantsPlayback = true
             player.play()
             refreshTransport()
         } catch {
@@ -167,15 +220,19 @@ final class PlaybackModel {
     }
 
     func pause() {
+        if let embeddedVideo {
+            embeddedVideo.pause()
+            refreshEmbeddedVideo()
+            return
+        }
         if isPlaying { DiagnosticsEvents.shared.record(.playbackPaused) }
         resumeAfterInterruption = false
         player.pause()
-        isPlaying = false
+        wantsPlayback = false
         streamTimeout?.cancel(); streamTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         if resolveTask != nil {
             resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
-            lyricsLoading = false
         }
         refreshTransport()
     }
@@ -183,11 +240,14 @@ final class PlaybackModel {
     func useLyrics(_ record: LyricSearchRecord) {
         guard current != nil, let text = record.syncedLyrics else { return }
         lyricsTask?.cancel(); lyricsLoading = false
+        manualLyrics = true
+        lyricReferenceDuration = record.duration
         timeline = LyricTimeline(lrc: text).prepared(for: duration)
     }
 
     func pauseForExternalPlayback() {
         pause()
+        setEmbeddedVideoVisible(false)
         externalPlayback = true
         system?.updateCommands(model: self)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -218,6 +278,13 @@ final class PlaybackModel {
     func seekToLyric(_ time: Double) { seek(to: time - lyricOffset) }
 
     func seek(to time: Double) {
+        if let embeddedVideo {
+            guard canSeek, time.isFinite else { return }
+            DiagnosticsEvents.shared.record(.seek, source: .youtube)
+            embeddedVideo.seek(to: time)
+            refreshEmbeddedVideo()
+            return
+        }
         guard let item = player.currentItem, time.isFinite else { return }
         let target = duration > 0 ? min(duration, max(0, time)) : max(0, time)
         DiagnosticsEvents.shared.record(.seek)
@@ -258,17 +325,36 @@ final class PlaybackModel {
     func reloadLocalLyrics(_ track: Track) {
         guard let index, current?.id == track.id || activeLocalTrackID == track.id else { return }
         if current?.source == .local { queue[index] = track }
+        manualLyrics = false
         loadLyrics(track: track, recording: track.recording ?? activeRecording)
     }
 
     private func loadLyrics(track: Track, recording: SubtitleSong?, remoteClient: NavidromeClient? = nil) {
         lyricsTask?.cancel()
         let revision = generation
+        let metadata = recording == nil ? catalogueMetadataTask : nil
         let needsLookup = track.source == .catalogue || track.id.hasPrefix("download-") || activeLocalTrackID != nil
         lyricsLoading = track.lyricFile != nil || recording != nil || remoteClient != nil || needsLookup
         guard lyricsLoading else { return }
         lyricsTask = Task { [weak self, library] in
+            let song = await metadata?.value ?? track.playlistSong
+            let recording = recording ?? song?.recordingMetadata
+            let expected = recording.map { $0.durationMs / 1000 } ?? track.duration ?? 0
+            guard !Task.isCancelled else { return }
+            #if DEBUG
+            if track.source == .catalogue, ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
+                guard let self, generation == revision else { return }
+                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+                    timeline = LyricTimeline(lrc: "[00:00.00]\(track.title) 測試文字\n[00:01.00]头发发现\n[00:03.00]風聲")
+                    lyricReferenceDuration = expected
+                }
+                lyricsLoading = false
+                return
+            }
+            #endif
+            let started = Date()
             var parsed = try? await library.lyrics(for: track)
+            var problem: DiagnosticProblem?
             if parsed == nil, let remoteClient, let recording, recording.source == "navidrome" {
                 let remote = Track(id: recording.id, source: .navidrome, title: recording.title,
                     artist: recording.artist, album: nil, duration: recording.durationMs / 1000)
@@ -282,20 +368,65 @@ final class PlaybackModel {
             if parsed == nil, needsLookup, !Task.isCancelled {
                 let artist = recording?.artist ?? track.artist ?? ""
                 let title = recording?.title ?? track.title
-                let duration = recording.map { $0.durationMs / 1000 } ?? track.duration ?? 0
-                let result = try? await OnlineLyrics.shared.exact(title: title, artist: artist, duration: duration)
-                if let text = result?.syncedLyrics { parsed = LyricTimeline(lrc: text) }
+                do {
+                    let result = try await PlaybackLookup.within(.seconds(12)) {
+                        try await OnlineLyrics.shared.exact(title: title, artist: artist, duration: expected)
+                    }
+                    if let text = result?.syncedLyrics { parsed = LyricTimeline(lrc: text) }
+                } catch { problem = DiagnosticProblem.classify(error) }
             }
             guard let self, generation == revision, !Task.isCancelled else { return }
-            if let next = parsed?.prepared(for: duration), !next.lines.isEmpty { timeline = next }
+            if recording?.source == "ytm", activeRecording != nil, expected > 0, abs(duration - expected) > 2 {
+                lyricsLoading = false
+                return
+            }
+            if let next = parsed?.prepared(for: duration > 0 ? duration : expected), !next.lines.isEmpty {
+                timeline = next
+                lyricReferenceDuration = expected > 0 ? expected : nil
+                DiagnosticsEvents.shared.record(.lyricsLoaded, since: started)
+            } else if needsLookup {
+                DiagnosticsEvents.shared.record(.lyricsUnavailable,
+                    problem: problem ?? DiagnosticProblem(code: expected > 0 ? .noMatch : .missingDuration), since: started)
+            }
             lyricsLoading = false
         }
+    }
+
+    private func prepareCatalogue(_ track: Track, song: SyncedYouTubeSong) {
+        catalogueTarget = song
+        let revision = generation
+        let connection = youtubeConnection
+        catalogueMetadataTask = Task { [weak self] in
+            let started = Date()
+            let resolved = await connection?.playlistSongWithMetadata(song) ?? song
+            guard let self, generation == revision, !Task.isCancelled else { return song }
+            catalogueTarget = resolved
+            if !nativeReady, embeddedVideo == nil, let length = resolved.duration { duration = length }
+            if song.duration == nil {
+                DiagnosticsEvents.shared.record(resolved.duration == nil ? .durationUnavailable : .durationRead, source: .youtube,
+                    problem: resolved.duration == nil ? DiagnosticProblem(code: .missingDuration) : nil, since: started)
+            }
+            return resolved
+        }
+        loadLyrics(track: track, recording: nil)
     }
 
     func tick() {
         guard let item = player.currentItem else { return }
         let seconds = player.currentTime().seconds
-        if !seeking, seconds.isFinite, abs(position - seconds) > 0.01 { position = max(0, seconds) }
+        if !seeking, seconds.isFinite, abs(position - seconds) > 0.01 {
+            let advance = seconds - position
+            position = max(0, seconds)
+            if lyricClockRunning, advance > 0.01, advance <= 1.5 {
+                DiagnosticsEvents.shared.observeAdvance(advance)
+                if !nativeHasAdvanced {
+                    nativeHasAdvanced = true
+                    didAdvancePlayback = true
+                    diagnosticPlaybackProblem = nil
+                    DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
+                }
+            }
+        }
         let itemDuration = item.duration.seconds
         if itemDuration.isFinite, itemDuration > 0, duration != itemDuration {
             duration = itemDuration
@@ -308,7 +439,7 @@ final class PlaybackModel {
 
     func didEnd(item: AVPlayerItem) {
         guard player.currentItem === item else { return }
-        if isPlaying, canAdvance { next() }
+        if wantsPlayback, canAdvance { next() }
         else { pause(); if duration > 0 { position = duration; publishNowPlaying() } }
     }
 
@@ -320,24 +451,26 @@ final class PlaybackModel {
             if let status, (400...599).contains(status) { problem = DiagnosticProblem.mediaHTTP(status) }
             else if let error = item.error { problem = DiagnosticProblem.classify(error, fallback: .invalidMedia) }
             else { problem = DiagnosticProblem(code: .timeout) }
+            diagnosticPlaybackProblem = problem
             sourceFailures.append((audioSource ?? "音源") + "：" + problem.code.title)
             DiagnosticsEvents.shared.record(.playbackStalled, source: activeCatalogueSource, problem: problem)
             streamTimeout?.cancel(); streamTimeout = nil
             player.replaceCurrentItem(with: nil)
-            lyricsTask?.cancel()
+            nativeReady = false
             catalogueHasStarted = false; lyricClockRunning = false
-            if isPlaying { resolveCatalogue(track) }
+            if wantsPlayback { resolveCatalogue(track) }
             return
         }
         fail(current?.source == .navidrome
              ? "無法串流這首歌。請檢查連線、音訊格式或伺服器轉碼設定。"
-             : "無法播放這個音訊檔。")
+             : "無法播放這個音訊檔。",
+             problem: item.error.map { DiagnosticProblem.classify($0, fallback: .invalidMedia) } ?? DiagnosticProblem(code: .invalidMedia))
     }
 
     func interrupt(began: Bool, shouldResume: Bool) {
         if began {
             DiagnosticsEvents.shared.record(.audioInterruption)
-            let wasPlaying = isPlaying
+            let wasPlaying = wantsPlayback && embeddedVideo == nil
             pause()
             resumeAfterInterruption = wasPlaying
         } else {
@@ -358,20 +491,22 @@ final class PlaybackModel {
         let url: URL?
         switch track.source {
         case .catalogue:
-            if let song = track.playlistSong { loadCatalogueArtwork(song, localID: track.preferredLocalID) }
+            system?.updateCommands(model: self)
+            if let song = track.playlistSong {
+                loadCatalogueArtwork(song, localID: track.preferredLocalID)
+                prepareCatalogue(track, song: song)
+            }
             resolveCatalogue(track)
+            publishNowPlaying()
             return
         case .local:
             url = library.assetURL(for: track)
             activeLocalTrackID = track.id
             activeRecording = track.recording
-            artwork = library.artwork(for: track).flatMap { UIImage(data: $0) }
-            if artwork == nil, let videoID = track.recording?.originVideoID {
-                loadYouTubeArtwork(videoID: videoID)
-            }
+            refreshArtworkIfNeeded()
             if track.id.hasPrefix("download-"), track.integrityChecked != true, let url, let expected = track.duration {
                 let revision = generation
-                isPlaying = true; isBuffering = true
+                wantsPlayback = true; isBuffering = true
                 resolveTask = Task { [weak self] in
                     guard let self else { return }
                     do {
@@ -413,6 +548,8 @@ final class PlaybackModel {
     private func install(_ asset: AVURLAsset) {
         seekGeneration = UUID()
         seeking = false
+        nativeReady = false
+        nativeHasAdvanced = false
         statusObservation?.invalidate()
         let item = AVPlayerItem(asset: asset)
         if !asset.url.isFileURL { item.preferredForwardBufferDuration = 4 }
@@ -421,7 +558,11 @@ final class PlaybackModel {
             Task { @MainActor [weak self] in
                 guard let self, player.currentItem === observed else { return }
                 if observed.status == .failed { playbackFailed(item: observed) }
-                else { tick() }
+                else {
+                    nativeReady = observed.status == .readyToPlay
+                    system?.updateCommands(model: self)
+                    tick()
+                }
             }
         }
         startCurrentItem()
@@ -433,9 +574,9 @@ final class PlaybackModel {
         let ticket = UUID(), revision = generation
         DiagnosticsEvents.shared.record(.lookupStarted)
         resolveTicket = ticket
-        isPlaying = true; isBuffering = true; lyricClockRunning = false; lyricsLoading = true
+        wantsPlayback = true; isPlaying = false; isBuffering = true; lyricClockRunning = false
+        offersVideoFallback = false
         startCatalogueDeadline()
-        lyricsTask?.cancel()
         resolveTask = Task { [weak self] in
             guard let self else { return }
             @MainActor func check() throws {
@@ -448,10 +589,12 @@ final class PlaybackModel {
                 try check()
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
-                    fail("測試音源目前無法播放。")
+                    catalogueFailed(problem: DiagnosticProblem(code: .unavailable))
+                    error = "測試音源目前無法播放。"
                     return
                 }
                 if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture"),
+                   !ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
                    let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
                     if let file = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
@@ -460,8 +603,10 @@ final class PlaybackModel {
                     install(url); return
                 }
                 #endif
+                let target = await catalogueMetadataTask?.value ?? song
+                try check()
                 if !triedLocal {
-                    var locals = library.matchingAudio(for: song).sorted(by: DownloadAudioCandidate.preferred)
+                    var locals = library.matchingAudio(for: target).sorted(by: DownloadAudioCandidate.preferred)
                     if let id = track.preferredLocalID, let local = library.availableTrack(id),
                        let url = library.assetURL(for: local), let length = local.duration {
                         locals.removeAll { $0.localTrackID == id }
@@ -472,7 +617,6 @@ final class PlaybackModel {
                     candidates += locals
                     triedLocal = true
                 }
-                var target = catalogueTarget ?? song
                 while true {
                     try check()
                     if let candidate = candidates.first {
@@ -486,7 +630,8 @@ final class PlaybackModel {
                                 deadline: url.isFileURL ? nil : .seconds(5))
                             try check()
                             candidates.removeFirst()
-                            duration = length; position = 0; timeline = LyricTimeline(lines: [])
+                            duration = length; position = 0
+                            resetLyricsIfClockChanged(to: length)
                             activeRecording = candidate.recording ?? SubtitleSong(id: track.id, source: "catalogue",
                                 title: candidate.title, artist: candidate.artist, durationMs: length * 1000)
                             activeLocalTrackID = local?.id
@@ -503,35 +648,6 @@ final class PlaybackModel {
                                 problem: problem, since: started)
                         }
                     } else if !searchedCatalogue {
-                        if target.duration == nil, catalogueTarget == nil, YouTubeVideo.validID(song.videoID) {
-                            let connection = youtubeConnection
-                            let started = Date()
-                            let probes: [@Sendable () async -> SyncedYouTubeSong?] = [
-                                { @Sendable in
-                                    guard let connection else { return nil }
-                                    let result = await connection.playlistSongWithDuration(song)
-                                    return result.duration == nil ? nil : result
-                                },
-                                { @Sendable in
-                                    let result = await service.withDuration(song)
-                                    return result.duration == nil ? nil : result
-                                }
-                            ]
-                            let resolved = try? await PlaybackLookup.within(.seconds(4)) {
-                                try await PlaybackLookup.firstAvailable(probes)
-                            }
-                            try check()
-                            target = resolved ?? song
-                            catalogueTarget = target
-                            DiagnosticsEvents.shared.record(target.duration == nil ? .durationUnavailable : .durationRead,
-                                source: .youtube, problem: target.duration == nil ? DiagnosticProblem(code: .missingDuration) : nil,
-                                since: started)
-                            if target.duration != nil {
-                                candidates = library.matchingAudio(for: target).filter { $0.localTrackID != track.preferredLocalID }
-                                    .sorted(by: DownloadAudioCandidate.preferred)
-                                if !candidates.isEmpty { continue }
-                            }
-                        }
                         let attempts = try await service.streamingSearch(for: target, account: account,
                             excluding: attemptedCatalogueSources)
                         try check()
@@ -548,8 +664,7 @@ final class PlaybackModel {
                         }
                         searchedCatalogue = attempts.isEmpty || candidates.isEmpty
                     } else {
-                        lyricsLoading = false
-                        fail((sourceFailures.last ?? "目前沒有可播放的同版本音源。") + " 按播放重試，或附加音檔。")
+                        catalogueFailed(problem: DiagnosticProblem(code: .noMatch))
                         return
                     }
                 }
@@ -557,8 +672,7 @@ final class PlaybackModel {
                 // Ignore callbacks from an older or cancelled track. Any other failure must end the spinner.
                 guard resolveTicket == ticket, generation == revision, !Task.isCancelled else { return }
                 let problem = DiagnosticProblem.classify(error)
-                DiagnosticsEvents.shared.record(.providerUnavailable, problem: problem)
-                fail(problem.code.title + "。按播放重試，或附加音檔。")
+                catalogueFailed(problem: problem)
             }
         }
     }
@@ -568,13 +682,114 @@ final class PlaybackModel {
         let revision = generation
         startupTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(34))
-            guard let self, !Task.isCancelled, generation == revision, isPlaying, !lyricClockRunning else { return }
-            DiagnosticsEvents.shared.record(.providerUnavailable, problem: DiagnosticProblem(code: .timeout))
+            guard let self, !Task.isCancelled, generation == revision, wantsPlayback, !lyricClockRunning else { return }
             statusObservation?.invalidate(); statusObservation = nil
             player.replaceCurrentItem(with: nil)
-            lyricsLoading = false
-            fail("音源連線逾時。按播放重試，或在歌單附加音檔。")
+            nativeReady = false
+            catalogueFailed(problem: DiagnosticProblem(code: .timeout))
         }
+    }
+
+    private func catalogueFailed(problem: DiagnosticProblem) {
+        diagnosticPlaybackProblem = problem
+        DiagnosticsEvents.shared.record(.playbackFailed, source: activeCatalogueSource, problem: problem)
+        let videoID = current?.playlistSong?.videoID
+        offersVideoFallback = videoID.map(YouTubeVideo.validID) == true
+        let detail = Array(Set(sourceFailures)).sorted().joined(separator: "、")
+        error = detail.isEmpty ? problem.code.title : detail
+        pause()
+    }
+
+    func playYouTubeFallback() {
+        guard offersVideoFallback, embeddedVideo == nil, !externalPlayback, let song = current?.playlistSong,
+              YouTubeVideo.validID(song.videoID) else { return }
+        pause()
+        player.replaceCurrentItem(with: nil)
+        nativeReady = false
+        let video = YouTubeVideo(id: song.videoID, title: song.title, artist: song.artist)
+        let transport = YouTubePlayback(automaticallyMatchesLyrics: false)
+        let needsOriginalLyrics = activeRecording != nil || (timeline.lines.isEmpty && !lyricsLoading)
+        activeRecording = nil
+        activeLocalTrackID = nil
+        embeddedVideo = transport
+        videoHasAdvanced = false
+        didAdvancePlayback = false
+        diagnosticPlaybackProblem = nil
+        audioSource = "YouTube · 官方播放器"
+        error = nil
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        system?.updateCommands(model: self)
+        DiagnosticsEvents.shared.record(.videoFallbackRequested, source: .youtube)
+        transport.play([video], selected: video)
+        if !transport.timeline.lines.isEmpty {
+            lyricsTask?.cancel()
+            timeline = transport.timeline
+            manualLyrics = true
+            lyricReferenceDuration = catalogueTarget?.duration
+            lyricsLoading = false
+        } else if needsOriginalLyrics && !manualLyrics, let track = current {
+            loadLyrics(track: track, recording: nil)
+        }
+        refreshEmbeddedVideo()
+    }
+
+    func setEmbeddedVideoVisible(_ visible: Bool) {
+        embeddedVideo?.setVisible(visible)
+        refreshEmbeddedVideo()
+    }
+
+    func refreshEmbeddedVideo() {
+        guard let video = embeddedVideo else { return }
+        let wasPlaying = isPlaying
+        let previousError = error
+        let previousPosition = position
+        position = video.position
+        if video.duration > 0, duration != video.duration {
+            duration = video.duration
+            resetLyricsIfClockChanged(to: duration)
+            if var song = catalogueTarget, let known = song.duration, abs(known - video.duration) > 2,
+               let track = current, !manualLyrics {
+                song.duration = video.duration
+                catalogueTarget = song
+                loadLyrics(track: track, recording: song.recordingMetadata)
+            }
+        }
+        wantsPlayback = video.wantsPlayback
+        isPlaying = video.visible && video.isPlaying
+        isBuffering = video.wantsPlayback && !isPlaying
+        lyricClockRunning = isPlaying && !video.isSeeking
+        error = video.error
+        let advance = position - previousPosition
+        if lyricClockRunning, advance > 0.02, advance <= 1.5 {
+            DiagnosticsEvents.shared.observeAdvance(advance)
+            if !videoHasAdvanced {
+                videoHasAdvanced = true
+                didAdvancePlayback = true
+                diagnosticPlaybackProblem = nil
+                DiagnosticsEvents.shared.record(.playbackStarted, source: .youtube)
+            }
+        }
+        if wasPlaying && !isPlaying {
+            DiagnosticsEvents.shared.record(.playbackPaused, source: .youtube)
+            videoHasAdvanced = false
+        }
+        if !video.visible || !wantsPlayback || videoHasAdvanced {
+            videoDeadline?.cancel()
+            videoDeadline = nil
+        } else if videoDeadline == nil {
+            let session = video.session
+            videoDeadline = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(25))
+                guard let self, !Task.isCancelled, let video = embeddedVideo, video.session == session else { return }
+                video.failed(-2, session: session.uuidString)
+                refreshEmbeddedVideo()
+            }
+        }
+        if let problem = video.failure, error != previousError {
+            diagnosticPlaybackProblem = problem
+            DiagnosticsEvents.shared.record(.playbackFailed, source: .youtube, problem: problem)
+        }
+        if video.didReachEnd && canAdvance { next() }
     }
 
     private func loadCatalogueDetails(_ track: Track, recording: SubtitleSong) {
@@ -589,31 +804,50 @@ final class PlaybackModel {
             return
         }
         #endif
-        loadLyrics(track: local ?? track, recording: recording,
-                   remoteClient: account.map { NavidromeClient(account: $0) })
+        if !manualLyrics {
+            loadLyrics(track: local ?? track, recording: recording,
+                       remoteClient: account.map { NavidromeClient(account: $0) })
+        }
+    }
+
+    private func resetLyricsIfClockChanged(to length: Double) {
+        guard let reference = lyricReferenceDuration, abs(reference - length) > 2 else { return }
+        timeline = LyricTimeline(lines: [])
+        lyricReferenceDuration = nil
+        manualLyrics = false
     }
 
     private func loadCatalogueArtwork(_ song: SyncedYouTubeSong, localID: String?) {
-        if let image = localID.flatMap(library.availableTrack).flatMap(library.artwork).flatMap(UIImage.init(data:)) {
-            artwork = image
-            return
-        }
-        loadYouTubeArtwork(videoID: song.videoID, song: song)
+        let file = localID.flatMap(library.availableTrack).flatMap(library.artworkURL)
+        loadArtwork(SongArtworkSource(file: file, song: song), song: song)
     }
 
-    private func loadYouTubeArtwork(videoID: String, song: SyncedYouTubeSong? = nil) {
-        guard YouTubeVideo.validID(videoID) else { return }
+    func artworkSource(for track: Track) -> SongArtworkSource {
+        let local = track.preferredLocalID.flatMap(library.availableTrack) ??
+            (track.source == .local ? library.availableTrack(track.id) ?? track : nil)
+        let file = local.flatMap(library.artworkURL)
+        if let song = track.playlistSong { return SongArtworkSource(file: file, song: song) }
+        return SongArtworkSource(file: file, videoID: track.recording?.originVideoID)
+    }
+
+    func refreshArtworkIfNeeded() {
+        guard artwork == nil, artworkTask == nil, let track = current,
+              track.source == .catalogue || track.source == .local else { return }
+        loadArtwork(artworkSource(for: track), song: track.playlistSong)
+    }
+
+    private func loadArtwork(_ source: SongArtworkSource, song: SyncedYouTubeSong?) {
+        guard source.file != nil || source.videoID.map(YouTubeVideo.validID) == true else { return }
         let revision = generation
         let connection = youtubeConnection
         artworkTask = Task(priority: .utility) { [weak self] in
             let started = Date()
-            let urls = song?.artworkURLs
             let store = YouTubeArtworkStore.shared
-            let bytes = await store.cover(for: videoID, candidates: urls)
+            let bytes = await store.image(for: source)
             var image = bytes.flatMap(UIImage.init(data:))
             if image == nil, !Task.isCancelled, let song, let connection, connection.connected, let channel = song.channelID,
                !YouTubeCaptionDecoders.isTranslatedUpload(song.title), DownloadSongMatch.versions(song.title).isEmpty,
-               let portrait = try? await connection.channelPortraits([channel])[channel], urls?.contains(portrait.url) != true {
+               let portrait = try? await connection.channelPortraits([channel])[channel], !source.candidates.contains(portrait.url) {
                 let performer = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title,
                     artist: song.artist, duration: song.duration ?? 0).artist
                 if !DownloadSongMatch.artistKeys(performer).isDisjoint(with: DownloadSongMatch.artistKeys(portrait.name)),
@@ -622,8 +856,10 @@ final class PlaybackModel {
                 }
             }
             guard let self, generation == revision, !Task.isCancelled else { return }
+            artworkTask = nil
             DiagnosticsEvents.shared.record(image == nil ? .artworkUnavailable : .artworkLoaded,
-                source: .youtube, problem: image == nil ? DiagnosticProblem(code: .unavailable) : nil, since: started)
+                source: source.videoID != nil ? .youtube : .local,
+                problem: image == nil ? DiagnosticProblem(code: .unavailable) : nil, since: started)
             guard let image else { return }
             artwork = image
             publishNowPlaying()
@@ -649,6 +885,15 @@ final class PlaybackModel {
 
     private func resetItem() {
         if isPlaying { DiagnosticsEvents.shared.record(.playbackPaused) }
+        embeddedVideo?.stop()
+        embeddedVideo = nil
+        videoDeadline?.cancel(); videoDeadline = nil
+        offersVideoFallback = false
+        nativeReady = false
+        nativeHasAdvanced = false
+        videoHasAdvanced = false
+        didAdvancePlayback = false
+        diagnosticPlaybackProblem = nil
         generation = UUID()
         seekGeneration = UUID()
         seeking = false
@@ -656,6 +901,8 @@ final class PlaybackModel {
         streamTimeout?.cancel(); streamTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         catalogueTarget = nil; catalogueHasStarted = false
+        catalogueMetadataTask?.cancel(); catalogueMetadataTask = nil
+        lyricReferenceDuration = nil; manualLyrics = false
         activeCatalogueSource = nil
         candidates = []; searchedCatalogue = false; attemptedCatalogueSources = []
         triedLocal = false; sourceFailures = []
@@ -669,11 +916,13 @@ final class PlaybackModel {
         }
         lyricsTask?.cancel()
         artworkTask?.cancel()
+        artworkTask = nil
         lyricsLoading = false
         position = 0
         duration = 0
         artwork = nil
         timeline = LyricTimeline(lines: [])
+        wantsPlayback = false
         isPlaying = false
         isBuffering = false
     }
@@ -689,19 +938,23 @@ final class PlaybackModel {
         publishNowPlaying()
     }
 
-    private func fail(_ message: String) {
+    private func fail(_ message: String, problem: DiagnosticProblem = DiagnosticProblem(code: .unavailable)) {
         lyricsTask?.cancel(); lyricsLoading = false
+        diagnosticPlaybackProblem = problem
+        DiagnosticsEvents.shared.record(.playbackFailed, problem: problem)
         pause()
         error = message
     }
 
     private func refreshTransport() {
+        guard embeddedVideo == nil else { return }
         let status = player.timeControlStatus
-        let wasBuffering = isBuffering, wasRunning = lyricClockRunning
-        isBuffering = isPlaying && (status != .playing || player.currentItem == nil)
-        lyricClockRunning = isPlaying && status == .playing && !seeking
+        let wasBuffering = isBuffering
+        isPlaying = wantsPlayback && status == .playing && player.currentItem != nil
+        isBuffering = wantsPlayback && !isPlaying
+        lyricClockRunning = isPlaying && !seeking
         if isBuffering && !wasBuffering { DiagnosticsEvents.shared.record(.playbackStalled) }
-        if lyricClockRunning && !wasRunning { DiagnosticsEvents.shared.record(.playbackStarted) }
+        if !isPlaying { nativeHasAdvanced = false }
         if lyricClockRunning {
             startupTimeout?.cancel(); startupTimeout = nil
             if !catalogueHasStarted, let track = current, track.playlistSong != nil {
@@ -724,6 +977,7 @@ final class PlaybackModel {
     }
 
     private func publishNowPlaying() {
+        guard embeddedVideo == nil else { return }
         guard !externalPlayback, let track = current else {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             return

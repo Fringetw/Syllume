@@ -61,13 +61,13 @@ final class PlaybackSystem {
 
     func updateCommands(model: PlaybackModel) {
         let remote = MPRemoteCommandCenter.shared()
-        let hasTrack = model.current != nil && !model.externalPlayback
+        let hasTrack = model.current != nil && !model.externalPlayback && model.embeddedVideo == nil
         remote.playCommand.isEnabled = hasTrack
         remote.pauseCommand.isEnabled = hasTrack
         remote.togglePlayPauseCommand.isEnabled = hasTrack
         remote.nextTrackCommand.isEnabled = hasTrack && model.canAdvance
         remote.previousTrackCommand.isEnabled = hasTrack
-        remote.changePlaybackPositionCommand.isEnabled = hasTrack && model.duration > 0
+        remote.changePlaybackPositionCommand.isEnabled = hasTrack && model.canSeek
     }
 
     private func add(_ command: MPRemoteCommand, model: PlaybackModel,

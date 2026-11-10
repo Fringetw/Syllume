@@ -79,6 +79,10 @@ private struct SonnetWebView: UIViewRepresentable {
         context.coordinator.parent = self; context.coordinator.update()
         var state = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
         #if DEBUG
+        if ready, ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+            context.coordinator.sampleClock()
+            return
+        }
         if ready, ProcessInfo.processInfo.arguments.contains("--playback-probe") {
             state += " · " + context.coordinator.lyricFont
         }
@@ -108,6 +112,18 @@ private struct SonnetWebView: UIViewRepresentable {
         var lastStamp = Date.distantPast
         var lastPlaying = false
         var lastRendering = true
+        #if DEBUG
+        func sampleClock() {
+            guard let view else { return }
+            view.callAsyncJavaScript("return window.FoliaStage?.diagnostics() ?? null", arguments: [:],
+                                     in: nil, in: .page) { [weak self, weak view] result in
+                guard let self, let view, case .success(let value) = result, let state = value as? [String: Any],
+                      state["canvas"] as? Bool == true, let time = state["time"] as? Double,
+                      let playing = state["playing"] as? Bool else { return }
+                view.accessibilityValue = String(format: "%.3f|%@|%@", time, playing ? "playing" : "paused", lyricFont)
+            }
+        }
+        #endif
         init(_ parent: SonnetWebView) { self.parent = parent }
         func update() {
             guard loaded, let view else { return }

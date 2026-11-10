@@ -4,7 +4,6 @@ import Foundation
 actor AudioDownloadService {
     static let shared = AudioDownloadService()
     private var blockedUntil: [String: Date] = [:]
-    private var videoMetadata: [String: (title: String, artist: String, duration: Double, expires: Date)] = [:]
     private let session = AudioDownloadService.anonymousSession(seconds: 600)
     private let metadataSession = AudioDownloadService.anonymousSession(seconds: 13)
     private static func anonymousSession(seconds: TimeInterval) -> URLSession {
@@ -14,12 +13,6 @@ actor AudioDownloadService {
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         return URLSession(configuration: config)
-    }
-
-    func withDuration(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
-        guard song.duration == nil, YouTubeVideo.validID(song.videoID),
-              let details = try? await publicVideo(song.videoID) else { return song }
-        var updated = song; updated.duration = details.duration; return updated
     }
 
     func candidates(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
@@ -95,6 +88,16 @@ actor AudioDownloadService {
     private func streamingOptions(_ source: DiagnosticSource, song: SyncedYouTubeSong, duration: Double,
                                   account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+            if song.title == "Lemon", source == .netease,
+               let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
+                // This short sample must be rejected before the resolver tries the other source.
+                return [DownloadAudioCandidate(url: file, title: song.title, artist: song.artist,
+                    duration: duration, format: "m4a", bitrate: 128_000, source: source.title)]
+            }
+            if source == .qq { try await Task.sleep(for: .milliseconds(150)) }
+            return []
+        }
         if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {
             if source == .qq { try await Task.sleep(for: .seconds(45)); return [] }
             if source == .netease, let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
@@ -117,15 +120,23 @@ actor AudioDownloadService {
         do { return .success(try await work()) } catch { return .failure(error) }
     }
 
-    private func query(_ song: SyncedYouTubeSong) -> String {
-        let metadata = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title, artist: song.artist, duration: song.duration ?? 0)
-        return String((metadata.title + " " + (DownloadSongMatch.artistNames(metadata.artist).first ?? "")).prefix(120))
+    private func queries(_ song: SyncedYouTubeSong) -> [String] {
+        let metadata = song.recordingMetadata
+        let artist = DownloadSongMatch.artistNames(metadata.artist).first ?? ""
+        return DownloadSongMatch.queryNames(for: artist).prefix(2).map {
+            String((metadata.title + " " + $0).prefix(120))
+        }
     }
 
     private func netease(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
-        let data = try await metadata(URL(string: "https://music.163.com/api/cloudsearch/pc")!, provider: "netease",
-            form: [.init(name: "s", value: query(song)), .init(name: "type", value: "1"), .init(name: "limit", value: "12")])
-        let recordings = try DownloadSourceDecoders.search(data, for: song).prefix(2)
+        var matched: [DownloadSourceDecoders.Song] = []
+        for query in queries(song) {
+            let data = try await metadata(URL(string: "https://music.163.com/api/cloudsearch/pc")!, provider: "netease",
+                form: [.init(name: "s", value: query), .init(name: "type", value: "1"), .init(name: "limit", value: "12")])
+            matched = try DownloadSourceDecoders.search(data, for: song)
+            if !matched.isEmpty { break }
+        }
+        let recordings = matched.prefix(2)
         if streaming, !recordings.isEmpty {
             let ids = recordings.map { String($0.id) }.joined(separator: ",")
             let response = try await metadata(URL(string: "https://music.163.com/api/song/enhance/player/url/v1")!, provider: "netease",
@@ -158,12 +169,17 @@ actor AudioDownloadService {
     }
 
     private func qq(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
-        var search = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp")!
-        search.queryItems = [.init(name: "w", value: query(song)), .init(name: "format", value: "json"),
-                             .init(name: "p", value: "1"), .init(name: "n", value: "8")]
-        search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
-        let data = try await metadata(search.url!, provider: "qq")
-        let matched = try DownloadSourceDecoders.qqSearch(data, for: song).prefix(2)
+        var recordings: [DownloadSourceDecoders.QQSong] = []
+        for query in queries(song) {
+            var search = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp")!
+            search.queryItems = [.init(name: "w", value: query), .init(name: "format", value: "json"),
+                                 .init(name: "p", value: "1"), .init(name: "n", value: "8")]
+            search.percentEncodedQuery = search.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
+            let data = try await metadata(search.url!, provider: "qq")
+            recordings = try DownloadSourceDecoders.qqSearch(data, for: song)
+            if !recordings.isEmpty { break }
+        }
+        let matched = recordings.prefix(2)
         var results: [DownloadAudioCandidate] = []
         for recording in matched {
             try Task.checkCancellation()
@@ -181,29 +197,6 @@ actor AudioDownloadService {
         }
         if streaming && !matched.isEmpty && results.isEmpty { throw DiagnosticProblem(code: .unavailable) }
         return results
-    }
-
-    func publicVideo(_ id: String) async throws -> (title: String, artist: String, duration: Double) {
-        guard YouTubeVideo.validID(id) else { throw SubtitleReadError("invalid-response") }
-        if let cached = videoMetadata[id], cached.expires > Date() { return (cached.title, cached.artist, cached.duration) }
-        var url = URLComponents(string: "https://www.youtube.com/watch")!
-        url.queryItems = [.init(name: "v", value: id), .init(name: "hl", value: "zh-TW")]
-        let bytes = try await metadata(url.url!, provider: "youtube", maximum: 8_000_000)
-        guard let page = String(data: bytes, encoding: .utf8) else { throw SubtitleReadError("invalid-response") }
-        let root = try YouTubeCaptionDecoders.playerResponse(page, videoID: id)
-        guard (root["playabilityStatus"] as? [String: Any])?["status"] as? String == "OK",
-              let item = root["videoDetails"] as? [String: Any],
-              item["isLiveContent"] as? Bool != true,
-              let title = item["title"] as? String, let artist = item["author"] as? String else {
-            throw SubtitleReadError("verification-required")
-        }
-        let duration = SubtitleSourceDecoders.number(item["lengthSeconds"])
-        guard duration > 0, duration <= 5400 else { throw SubtitleReadError("invalid-response") }
-        if videoMetadata.count >= 32, let oldest = videoMetadata.min(by: { $0.value.expires < $1.value.expires }) {
-            videoMetadata.removeValue(forKey: oldest.key)
-        }
-        videoMetadata[id] = (title, artist, duration, Date().addingTimeInterval(300))
-        return (title, artist, duration)
     }
 
     func download(_ candidate: DownloadAudioCandidate, limit: Int = 500_000_000) async throws -> URL {

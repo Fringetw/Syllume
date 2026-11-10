@@ -1,7 +1,7 @@
 import SwiftUI
 import WebKit
 
-// A visible official IFrame player stays inside Folia; no audio extraction or account tokens enter the page.
+// The official player occupies its own visible area and receives no library credentials.
 struct YouTubePlayerView: UIViewRepresentable {
     let player: YouTubePlayback
     // Explicit values make SwiftUI deliver every command even though the model identity is unchanged.
@@ -10,17 +10,20 @@ struct YouTubePlayerView: UIViewRepresentable {
     let requestRevision: Int
     let requestSeek: UUID
     let requestTime: Double
+    let onUpdate: @MainActor () -> Void
 
-    init(player: YouTubePlayback) {
+    init(player: YouTubePlayback, onUpdate: @escaping @MainActor () -> Void = {}) {
         self.player = player; requestSession = player.session
         requestPlayback = player.wantsPlayback && player.visible
         requestRevision = player.playbackRevision
         requestSeek = player.seekRevision; requestTime = player.seekTime
+        self.onUpdate = onUpdate
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(input: self) }
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
+        config.websiteDataStore = .nonPersistent()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.add(context.coordinator, name: "youtube")
@@ -53,7 +56,7 @@ struct YouTubePlayerView: UIViewRepresentable {
         func update() {
             guard let view, let video = player.current else { return }
             if session != input.requestSession {
-                session = input.requestSession; loaded = false; sentRevision = nil; sentSeek = input.requestSeek
+                session = input.requestSession; loaded = false; sentRevision = nil; sentSeek = nil
                 let bundle = (Bundle.main.bundleIdentifier ?? "org.folia.community.ios").lowercased()
                 let origin = "https://" + bundle
                 view.loadHTMLString(Self.html(video: video.id, session: input.requestSession.uuidString, origin: origin), baseURL: URL(string: origin))
@@ -97,13 +100,17 @@ struct YouTubePlayerView: UIViewRepresentable {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any],
                   let session = body["session"] as? String, session == player.session.uuidString,
                   let type = body["type"] as? String else { return }
-            if type == "loaded" { loaded = true; update() }
+            if type == "loaded" { loaded = true; update(); return }
             else if type == "blocked" { player.autoplayBlocked() }
             else if type == "error" { player.failed(body["code"] as? Int ?? -1, session: session) }
             else if type == "snapshot", let data = try? JSONSerialization.data(withJSONObject: body),
                     let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) { player.receive(snapshot) }
+            input.onUpdate()
         }
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) { player.failed(-1, session: session?.uuidString ?? "") }
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            player.failed(-1, session: session?.uuidString ?? "")
+            input.onUpdate()
+        }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
             if let url = navigationAction.request.url, ["http", "https"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
@@ -127,9 +134,9 @@ struct YouTubePlayerView: UIViewRepresentable {
                     document.getElementById(id).textContent='本機播放測試';setTimeout(()=>this.o.events.onReady(),0);}
                   playVideo(){this.a.play().then(()=>this.o.events.onStateChange()).catch(()=>this.o.events.onAutoplayBlocked());}
                   pauseVideo(){this.a.pause();this.o.events.onStateChange();}
-                  getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Folia'};}
+                  getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Syllume'};}
                   getPlayerState(){return this.a.paused?2:1;} getCurrentTime(){return this.a.currentTime;}
-                  getDuration(){return Number.isFinite(this.a.duration)?this.a.duration:30;}
+                  getDuration(){return {'6AR6Oc0-4NQ':236,'3NNhrqHZqlI':256}[videoID] || (Number.isFinite(this.a.duration)?this.a.duration:30);}
                   seekTo(time){this.a.currentTime=time;} destroy(){this.a.pause();this.a.src='';}
                 }};window.onYouTubeIframeAPIReady();
                 </script>
@@ -143,6 +150,7 @@ struct YouTubePlayerView: UIViewRepresentable {
             // These three inputs are validated identifiers, never free-form titles or lyrics.
             """
             <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
+            <meta name="referrer" content="strict-origin-when-cross-origin">
             <style>html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}</style></head><body>
             <div id="player"></div><script>
             const session='\(session)',videoID='\(video)',origin='\(origin)';

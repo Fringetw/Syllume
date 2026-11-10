@@ -49,6 +49,7 @@ struct SubtitleSong: Codable, Equatable, Sendable {
     let durationMs: Double
     var ref: String? = nil
     var originVideoID: String? = nil
+    var usesVideoClock: Bool? = nil
 }
 
 struct SubtitleInput: Equatable {
