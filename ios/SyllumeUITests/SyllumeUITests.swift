@@ -288,7 +288,7 @@ final class SyllumeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-artwork-reset",
                                "--syllume-recording-regression", "--youtube-playback-fixture", "--subtitle-fixture", "--subtitle-reset",
-                               "-Folia.LyricDisplayMode", "cover"]
+                               "--presentation-reset"]
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
@@ -301,6 +301,8 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(toggle.label, "播放")
         XCTAssertFalse(app.sliders["播放進度"].isEnabled)
         XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
+        // Select each mode in the UI so UserDefaults' launch-argument domain cannot pin the picker.
+        app.segmentedControls.buttons["封面"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["playerArtwork"].firstMatch.waitForExistence(timeout: 10))
         let nowPlaying = app.staticTexts["systemNowPlayingProbe"]
         let published = expectation(for: NSPredicate(format: "value == %@", "0.0|0.0|artwork"), evaluatedWith: nowPlaying)
