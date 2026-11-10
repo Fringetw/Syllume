@@ -271,6 +271,20 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(playlistSync.value as? String, "已暫停")
         closePlayer.tap()
         XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
+    }
+
+    func testYouTubePlaylistDownloadRequiresConfirmation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--subtitle-fixture"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let audio = app.buttons["youtubeSong-fixture-row"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["syncYouTubePlaylist"].waitForExistence(timeout: 15))
+        XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
         audio.press(forDuration: 1)
         let download = app.buttons["下載音樂"].firstMatch
         XCTAssertTrue(download.waitForExistence(timeout: 10))

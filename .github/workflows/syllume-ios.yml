@@ -97,6 +97,7 @@ jobs:
               -resultBundlePath "$RUNNER_TEMP/$1.xcresult" \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeCoverFallbackAndOfflineCacheWhenAudioUnavailable \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
+              -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistDownloadRequiresConfirmation \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
               -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
           }
@@ -131,6 +132,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/SyllumeUI.xcresult" \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeCoverFallbackAndOfflineCacheWhenAudioUnavailable \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistDownloadRequiresConfirmation \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
             -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
