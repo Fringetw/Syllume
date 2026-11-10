@@ -3,6 +3,7 @@ import Foundation
 // Public sources use a cookie-free session; Google OAuth remains confined to playlist metadata.
 actor AudioDownloadService {
     static let shared = AudioDownloadService()
+    private let authorizedMediaProviders: Set<DiagnosticSource>
     private var blockedUntil: [String: Date] = [:]
     private let session = AudioDownloadService.anonymousSession(seconds: 600)
     private let metadataSession = AudioDownloadService.anonymousSession(seconds: 13)
@@ -13,6 +14,18 @@ actor AudioDownloadService {
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         return URLSession(configuration: config)
+    }
+
+    init(authorizedMediaProviders: Set<DiagnosticSource>? = nil) {
+        let configured = Bundle.main.object(forInfoDictionaryKey: "SyllumeAuthorizedMediaProviders") as? [String] ?? []
+        self.authorizedMediaProviders = authorizedMediaProviders ?? Set(configured.compactMap { DiagnosticSource(rawValue: $0) })
+    }
+
+    private func checkMediaAuthorization(for source: DiagnosticSource?) throws {
+        guard let source, source == .netease || source == .qq else { return }
+        guard authorizedMediaProviders.contains(source) else {
+            throw DiagnosticProblem(code: .providerAuthorizationRequired)
+        }
     }
 
     func candidates(for song: SyncedYouTubeSong, account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
@@ -26,8 +39,14 @@ actor AudioDownloadService {
         let batches = await [netease, qq, personal]
         try Task.checkCancellation()
         let candidates = batches.flatMap { (try? $0.get()) ?? [] }.sorted(by: DownloadAudioCandidate.preferred)
-        if candidates.isEmpty, let failure = batches.compactMap({ if case .failure(let error) = $0 { return error }; return nil }).first {
-            throw failure
+        if candidates.isEmpty {
+            let failures = batches.compactMap { result -> Error? in
+                guard case .failure(let error) = result else { return nil }
+                return error
+            }
+            if let failure = failures.first(where: { ($0 as? DiagnosticProblem)?.code != .providerAuthorizationRequired }) ?? failures.first {
+                throw failure
+            }
         }
         return candidates
     }
@@ -129,6 +148,7 @@ actor AudioDownloadService {
     }
 
     private func netease(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
+        try checkMediaAuthorization(for: .netease)
         var matched: [DownloadSourceDecoders.Song] = []
         for query in queries(song) {
             let data = try await metadata(URL(string: "https://music.163.com/api/cloudsearch/pc")!, provider: "netease",
@@ -169,6 +189,7 @@ actor AudioDownloadService {
     }
 
     private func qq(_ song: SyncedYouTubeSong, streaming: Bool = false) async throws -> [DownloadAudioCandidate] {
+        try checkMediaAuthorization(for: .qq)
         var recordings: [DownloadSourceDecoders.QQSong] = []
         for query in queries(song) {
             var search = URLComponents(string: "https://c.y.qq.com/soso/fcgi-bin/client_search_cp")!
@@ -201,6 +222,7 @@ actor AudioDownloadService {
 
     func download(_ candidate: DownloadAudioCandidate, limit: Int = 500_000_000) async throws -> URL {
         try Task.checkCancellation()
+        try checkMediaAuthorization(for: candidate.diagnosticSource)
         guard let parts = URLComponents(url: candidate.url, resolvingAgainstBaseURL: false),
               DownloadSongMatch.safeAudioURL(candidate.url.absoluteString) != nil,
               ["flac", "alac", "wav", "aiff", "aif", "mp3", "m4a", "aac", "mp4"].contains(candidate.format),

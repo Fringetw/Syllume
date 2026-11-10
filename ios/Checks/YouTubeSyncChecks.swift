@@ -1,7 +1,7 @@
 import Foundation
 
 enum YouTubeSyncChecks {
-    static func run() throws {
+    static func run() async throws {
         precondition(PlatformLibrary.isoDuration("PT1H2M3S") == 3723)
         precondition(PlatformLibrary.isoDuration("PT4M0.5S") == 240.5)
         precondition(PlatformLibrary.isoDuration("PT") == nil)
@@ -41,6 +41,13 @@ enum YouTubeSyncChecks {
         precondition(!DownloadSongMatch.matches(lemon, title: "Lemon (Live)", artists: ["米津玄師"], duration: 256))
         precondition(official.enrich(lemon) == lemon)
 
+        let restrictedMedia = AudioDownloadService(authorizedMediaProviders: [])
+        for recording in [enriched, lemon] {
+            let attempted = try await restrictedMedia.streamingSearch(for: recording, account: nil, excluding: [])
+            precondition(Set(attempted.map(\.source)) == [.netease, .qq])
+            precondition(attempted.allSatisfy { $0.candidates.isEmpty && $0.problem?.code == .providerAuthorizationRequired })
+        }
+
         let janeLyrics = LyricSearchRecord(id: 1, trackName: "JANE DOE", artistName: "米津玄師 & 宇多田ヒカル",
             albumName: "JANE DOE", duration: 236, syncedLyrics: "[00:01]樣本")
         precondition(janeLyrics.matches(title: enriched.title, artist: enriched.recordingMetadata.artist, duration: 236))
@@ -62,6 +69,12 @@ enum YouTubeSyncChecks {
         let full = #"{"code":200,"data":[{"id":1,"code":200,"url":"http://m7.music.126.net/song.flac","type":"flac","br":900000,"time":244000,"freeTrialInfo":null}]}"#
         let audio = try DownloadSourceDecoders.audio(Data(full.utf8), recording: recording[0])!
         precondition(audio.lossless && audio.url.scheme == "https")
+        do {
+            _ = try await restrictedMedia.download(audio)
+            preconditionFailure("Direct provider downloads require authorization")
+        } catch let problem as DiagnosticProblem {
+            precondition(problem.code == .providerAuthorizationRequired)
+        }
         let preview = full.replacingOccurrences(of: "\"freeTrialInfo\":null", with: "\"freeTrialInfo\":{\"start\":0,\"end\":30}")
         let rejectedPreview = try DownloadSourceDecoders.audio(Data(preview.utf8), recording: recording[0])
         precondition(rejectedPreview == nil)

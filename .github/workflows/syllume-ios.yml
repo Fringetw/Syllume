@@ -103,7 +103,7 @@ jobs:
           set -o pipefail
           playlist_log="$RUNNER_TEMP/SyllumePlaylistUI.log"
           if ! run_playlist_ui SyllumePlaylistUI 2>&1 | tee "$playlist_log"; then
-            if grep -q 'Timed out waiting for AX loaded notification' "$playlist_log" && ! grep -q 'Test Case .* failed (' "$playlist_log"; then
+            if grep -Eq 'Timed out waiting for AX loaded notification|Timed out while loading Accessibility' "$playlist_log" && ! grep -q 'Test Case .* failed (' "$playlist_log"; then
               echo "::warning::Simulator accessibility initialization failed. Retrying the same tests once."
               xcrun simctl bootstatus "$simulator_id" -b
               run_playlist_ui SyllumePlaylistUIRetry
