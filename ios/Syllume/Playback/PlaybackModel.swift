@@ -347,7 +347,7 @@ final class PlaybackModel {
             if track.source == .catalogue, ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
                 guard let self, generation == revision else { return }
                 if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
-                    timeline = LyricTimeline(lrc: "[00:00.00]\(track.title) 測試文字\n[00:01.00]头发发现\n[00:03.00]風聲")
+                    timeline = LyricTimeline(lrc: "[00:00.00]头发发现\n[00:01.00]\(track.title) 測試文字\n[00:03.00]風聲")
                     lyricReferenceDuration = expected
                 }
                 lyricsLoading = false

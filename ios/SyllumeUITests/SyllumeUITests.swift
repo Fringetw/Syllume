@@ -322,10 +322,8 @@ final class SyllumeUITests: XCTestCase {
         app.buttons["完成"].tap()
         app.segmentedControls.buttons["歌詞"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["nowPlayingThumbnail"].firstMatch.waitForExistence(timeout: 10))
-        let lyric = app.buttons["lyricLine-1"]
-        let converted = expectation(for: NSPredicate(format: "label CONTAINS %@", "頭髮發現"), evaluatedWith: lyric)
-        XCTAssertEqual(XCTWaiter.wait(for: [converted], timeout: 15), .completed)
-        XCTAssertEqual(lyric.value as? String, "GenSenRounded2JP-M")
+        assertLyric("頭髮發現", in: app)
+        XCTAssertEqual(app.buttons["lyricLine-0"].value as? String, "GenSenRounded2JP-M")
         XCTAssertTrue(fallback.exists, "Lyrics must load before an audio route can start")
 
         let transport = app.staticTexts["youtubeTransportProbe"]
@@ -333,17 +331,20 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertTrue(fallback.waitForExistence(timeout: 15))
             XCTAssertEqual(toggle.label, "播放")
             fallback.tap()
-            XCTAssertTrue(app.webViews["youtubeEmbeddedPlayer"].waitForExistence(timeout: 15))
+            let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+            XCTAssertTrue(video.waitForExistence(timeout: 15), song)
+            XCTAssertGreaterThanOrEqual(video.frame.width, 200, song)
+            XCTAssertGreaterThanOrEqual(video.frame.height, 200, song)
             let advancing = expectation(for: NSPredicate { _, _ in
                 (transport.value as? String ?? "").hasSuffix("|playing") && self.probeTime(transport) > 0.5
             }, evaluatedWith: transport)
-            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 25), .completed, song)
+            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 25), .completed, "\(song): \(String(describing: transport.value))")
             app.segmentedControls.buttons[mode].tap()
             let stage = app.descendants(matching: .any)[stageID].firstMatch
             let rendering = expectation(for: NSPredicate { _, _ in
                 (stage.value as? String ?? "").hasSuffix("|playing|GenSenRounded2JP-M") && self.probeTime(stage) > 0.5
             }, evaluatedWith: stage)
-            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 45), .completed, "\(song) \(mode)")
+            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 45), .completed, "\(song) \(mode): \(String(describing: stage.value))")
             toggle.tap()
             let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|paused|GenSenRounded2JP-M"), evaluatedWith: stage)
             XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
