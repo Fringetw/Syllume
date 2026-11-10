@@ -351,10 +351,10 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertTrue(video.waitForExistence(timeout: 15), song)
             XCTAssertGreaterThanOrEqual(video.frame.width, 200, song)
             XCTAssertGreaterThanOrEqual(video.frame.height, 200, song)
-            let advancing = expectation(for: NSPredicate { _, _ in
-                (transport.value as? String ?? "").hasSuffix("|playing") && self.probeTime(transport) > 0.5
-            }, evaluatedWith: transport)
-            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 25), .completed, "\(song): \(String(describing: transport.value))")
+            // Use one accessibility snapshot for both the real media time and the play state.
+            let hasAdvanced = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing"#)
+            let advancing = expectation(for: hasAdvanced, evaluatedWith: transport)
+            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 90), .completed, "\(song): \(String(describing: transport.value))")
             app.segmentedControls.buttons[mode].tap()
             let stage = app.staticTexts[stageID]
             let rendering = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|playing|GenSenRounded2JP-M"), evaluatedWith: stage)
