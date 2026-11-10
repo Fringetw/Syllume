@@ -292,6 +292,7 @@ final class SyllumeUITests: XCTestCase {
         let entry = app.buttons["developerDiagnostics"]
         XCTAssertTrue(entry.waitForExistence(timeout: 10))
         entry.tap()
+        XCTAssertTrue(app.staticTexts["SYLLUME DIAGNOSTICS"].waitForExistence(timeout: 10))
         let run = app.buttons["diagnosticsRunAll"]
         XCTAssertTrue(run.waitForExistence(timeout: 10))
         run.tap()

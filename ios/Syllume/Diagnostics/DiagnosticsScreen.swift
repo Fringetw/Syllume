@@ -94,7 +94,7 @@ struct DiagnosticsScreen: View {
                     .frame(width: 50, height: 50)
                     .background(SyllumePalette.accent.opacity(0.12), in: .rect(cornerRadius: 15))
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("FOLIA DIAGNOSTICS")
+                    Text("SYLLUME DIAGNOSTICS")
                         .font(.system(.caption, design: .monospaced, weight: .semibold))
                         .tracking(1.4).foregroundStyle(SyllumePalette.accent)
                     Text("實機自動診斷").font(.system(.title2, design: .serif, weight: .bold))
