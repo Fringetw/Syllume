@@ -1,0 +1,143 @@
+name: Syllume native iOS
+
+on:
+  workflow_dispatch:
+    inputs:
+      require_google_login:
+        description: Require the maintainer Google login configuration
+        type: boolean
+        default: false
+  push:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/syllume-ios.yml'
+  pull_request:
+    paths:
+      - 'ios/**'
+      - '.github/workflows/syllume-ios.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # Same-repository branches are already checked on push; keep PR checks for forks.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-15-intel
+    timeout-minutes: 55
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure maintainer Google login
+        env:
+          GOOGLE_IOS_CLIENT_ID: ${{ vars.GOOGLE_IOS_CLIENT_ID }}
+          GOOGLE_IOS_BUNDLE_ID: ${{ vars.GOOGLE_IOS_BUNDLE_ID }}
+          FOLIA_BUILD_BUNDLE_ID: ${{ vars.FOLIA_BUILD_BUNDLE_ID }}
+          REQUIRE_GOOGLE_LOGIN: ${{ inputs.require_google_login || false }}
+        run: |
+          if [ "$REQUIRE_GOOGLE_LOGIN" = "true" ]; then
+            python3 ios/Tools/configure_google_oauth.py --require-configured
+          else
+            python3 ios/Tools/configure_google_oauth.py
+          fi
+      - name: Check the lyric timeline and Xcode project references
+        env:
+          FOLIA_PROBE_SUBTITLE_SOURCES: "1"
+          FOLIA_DIAGNOSTICS_FIXTURE_REPORT: ${{ runner.temp }}/Syllume-diagnostics-fixture.json
+        run: |
+          set -o pipefail
+          bash ios/Checks/run.sh | tee "$RUNNER_TEMP/Syllume-subtitle-source-checks.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Syllume-subtitle-source-checks
+          path: ${{ runner.temp }}/Syllume-subtitle-source-checks.txt
+          if-no-files-found: ignore
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Syllume-diagnostics-fixture
+          path: ${{ runner.temp }}/Syllume-diagnostics-fixture.json
+          if-no-files-found: error
+      - name: Compile for iOS Simulator
+        run: >-
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume
+          -configuration Debug -destination 'generic/platform=iOS Simulator'
+          -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
+      - name: Compile unsigned iPhone app
+        run: >-
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume
+          -configuration Release -destination 'generic/platform=iOS'
+          -derivedDataPath "$RUNNER_TEMP/SyllumeDevice" CODE_SIGNING_ALLOWED=NO build
+      # Make the successfully compiled device build available while simulator checks run.
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p "$RUNNER_TEMP/SyllumePackage/Payload"
+          cp -R "$RUNNER_TEMP/SyllumeDevice/Build/Products/Release-iphoneos/Syllume.app" "$RUNNER_TEMP/SyllumePackage/Payload/"
+          cd "$RUNNER_TEMP/SyllumePackage"
+          version=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Payload/Syllume.app/Info.plist)
+          /usr/bin/zip -qry "Syllume-iOS-${version}-unsigned.ipa" Payload
+          python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Syllume.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Syllume-iOS-unsigned
+          path: |
+            ${{ runner.temp }}/SyllumePackage/Syllume-iOS-*-unsigned.ipa
+            ${{ runner.temp }}/SyllumePackage/google-login-build-info.json
+          if-no-files-found: error
+      - name: Exercise YouTube playlist selection and audio playback on iPhone Simulator
+        timeout-minutes: 25
+        run: |
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for group in d["devices"].values() for x in group if x["name"].startswith("iPhone")))')
+          echo "FOLIA_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
+          xcrun simctl boot "$simulator_id" || xcrun simctl list devices booted | grep -F "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+          run_playlist_ui() {
+            xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+              -destination "platform=iOS Simulator,id=$simulator_id" \
+              -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" \
+              -resultBundlePath "$RUNNER_TEMP/$1.xcresult" \
+              -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeCoverFallbackAndOfflineCacheWhenAudioUnavailable \
+              -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
+              -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+              -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+          }
+          set -o pipefail
+          playlist_log="$RUNNER_TEMP/SyllumePlaylistUI.log"
+          if ! run_playlist_ui SyllumePlaylistUI 2>&1 | tee "$playlist_log"; then
+            if grep -q 'Timed out waiting for AX loaded notification' "$playlist_log" && ! grep -q 'Test Case .* failed (' "$playlist_log"; then
+              echo "::warning::Simulator accessibility initialization failed. Retrying the same tests once."
+              xcrun simctl bootstatus "$simulator_id" -b
+              run_playlist_ui SyllumePlaylistUIRetry
+            else
+              exit 1
+            fi
+          fi
+      - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
+        if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
+        timeout-minutes: 32
+        run: |
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+            -destination "platform=iOS Simulator,id=$FOLIA_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" \
+            -resultBundlePath "$RUNNER_TEMP/SyllumeUI.xcresult" \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeCoverFallbackAndOfflineCacheWhenAudioUnavailable \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+      - name: Export simulator screenshots and diagnostic reports
+        if: always()
+        run: |
+          mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
+          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeUI; do
+            if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
+              if ! xcrun xcresulttool export attachments --path "$RUNNER_TEMP/$result.xcresult" \
+                --output-path "$RUNNER_TEMP/SyllumeUIScreenshots/$result"; then
+                echo "::warning::Could not export attachments from $result"
+              fi
+            fi
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Syllume-iOS-UI-checks
+          path: ${{ runner.temp }}/SyllumeUIScreenshots
+          if-no-files-found: ignore
