@@ -14,6 +14,19 @@ struct NowPlayingScreen: View {
     @State private var showingQueue = false
 
     @State private var showingSearch = false
+    #if DEBUG
+    @State private var sonnetClockProbe = ""
+    @State private var lumiereClockProbe = ""
+    #endif
+
+    private func stageClockProbe(_ style: String) -> Binding<String>? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+            return style == "lumiere" ? $lumiereClockProbe : $sonnetClockProbe
+        }
+        #endif
+        return nil
+    }
 
     private var luminous: Bool { mode == .lumiere }
     private var accent: Color { luminous ? Color(red: 1, green: 0.83, blue: 0.58) : SyllumePalette.accent }
@@ -84,7 +97,8 @@ struct NowPlayingScreen: View {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                                         timeline: subtitles.timeline, revision: subtitles.revision,
                                         position: player.lyricPosition, playing: player.lyricClockRunning,
-                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue)
+                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue,
+                                        clockProbe: stageClockProbe(mode.rawValue))
                         }
                     case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
                     case .cover: artwork
@@ -147,6 +161,10 @@ struct NowPlayingScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
                     Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
                         .accessibilityIdentifier("systemNowPlayingProbe").accessibilityValue(player.nowPlayingProbe)
+                    Text("商籟動畫時鐘").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("syllumeSonnetClockProbe").accessibilityValue(sonnetClockProbe)
+                    Text("繪光動畫時鐘").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("syllumeLumiereClockProbe").accessibilityValue(lumiereClockProbe)
                 }
                 #endif
               }
@@ -178,7 +196,17 @@ struct NowPlayingScreen: View {
                 }
                     .id(track.id)
             }
-            .onChange(of: track.id) { _, _ in showingSearch = false }
+            .onChange(of: track.id) { _, _ in
+                showingSearch = false
+                #if DEBUG
+                sonnetClockProbe = ""; lumiereClockProbe = ""
+                #endif
+            }
+            #if DEBUG
+            .onChange(of: mode) { _, _ in
+                sonnetClockProbe = ""; lumiereClockProbe = ""
+            }
+            #endif
             .onChange(of: controlsVisible) { _, visible in
                 DiagnosticsEvents.shared.record(visible ? .immersiveOff : .immersiveOn)
             }
@@ -200,7 +228,7 @@ struct NowPlayingScreen: View {
                     SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                         timeline: subtitles.timeline, revision: subtitles.revision, position: player.lyricPosition,
                         playing: player.lyricClockRunning, style: "lumiere", rendering: !showingSearch && !showingQueue,
-                        showsTranslation: false)
+                        showsTranslation: false, clockProbe: stageClockProbe("lumiere"))
                 }
                 LinearGradient(stops: [.init(color: .black.opacity(0.76), location: 0),
                     .init(color: .clear, location: 0.24), .init(color: .clear, location: 0.65),

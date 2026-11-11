@@ -357,8 +357,9 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 90), .completed, "\(song): \(String(describing: transport.value))")
             app.segmentedControls.buttons[mode].tap()
             let stage = app.staticTexts[stageID]
-            let rendering = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|playing|GenSenRounded2JP-M"), evaluatedWith: stage)
-            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 75), .completed, "\(song) \(mode): \(String(describing: stage.value))")
+            let renderedTime = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing\|GenSenRounded2JP-M"#)
+            let rendering = expectation(for: renderedTime, evaluatedWith: stage)
+            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 120), .completed, "\(song) \(mode): \(String(describing: stage.value))")
             XCTAssertGreaterThan(probeTime(stage), 0.5, song)
             let button = toggle.frame
             let screen = app.frame

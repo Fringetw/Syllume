@@ -14,29 +14,19 @@ struct SonnetStage: View {
     var rendering: Bool = true
     var showsTranslation: Bool = true
     var diagnosticProbe: DiagnosticStageProbe? = nil
+    var clockProbe: Binding<String>? = nil
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var ready = false
     @State private var failed = false
     @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
-    #if DEBUG
-    @State private var clockProbe = ""
-    #endif
-
-    private var clockProbeBinding: Binding<String>? {
-        #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") { return $clockProbe }
-        #endif
-        return nil
-    }
-
     var body: some View {
         ZStack(alignment: .bottom) {
             SonnetWebView(songID: songID, title: title, artist: artist, timeline: timeline, revision: revision,
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
                           style: style, energySaving: energySaving || lowPower, rendering: rendering && scenePhase == .active,
-                          diagnosticProbe: diagnosticProbe, clockProbe: clockProbeBinding, ready: $ready, failed: $failed)
+                          diagnosticProbe: diagnosticProbe, clockProbe: clockProbe, ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
@@ -45,15 +35,6 @@ struct SonnetStage: View {
                     .allowsHitTesting(false)
             }
         }
-        #if DEBUG
-        .overlay(alignment: .topLeading) {
-            if clockProbeBinding != nil {
-                Text("歌詞動畫時鐘").font(.system(size: 1)).frame(width: 80, height: 2)
-                    .accessibilityIdentifier(style == "lumiere" ? "syllumeLumiereClockProbe" : "syllumeSonnetClockProbe")
-                    .accessibilityValue(clockProbe)
-            }
-        }
-        #endif
         .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
             lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
         }
@@ -139,10 +120,13 @@ private struct SonnetWebView: UIViewRepresentable {
             guard key != lastClockProbe else { return }
             lastClockProbe = key
             samplingClock = true
+            let songID = parent.songID
+            let style = parent.style
             view.callAsyncJavaScript("return window.FoliaStage?.diagnostics() ?? null", arguments: [:],
                                      in: nil, in: .page) { [weak self] result in
                 guard let self else { return }
                 samplingClock = false
+                guard parent.songID == songID, parent.style == style else { return }
                 guard case .success(let value) = result, let state = value as? [String: Any],
                       state["canvas"] as? Bool == true, let time = state["time"] as? Double,
                       let playing = state["playing"] as? Bool else { lastClockProbe = ""; return }
