@@ -23,6 +23,16 @@ enum DiagnosticsChecks {
         precondition(DiagnosticProblem.classify(SubtitleReadError("region-restricted")).code == .region)
         precondition(DiagnosticProblem.classify(SubtitleReadError("verification-required")).code == .verification)
 
+        let noMatch = DiagnosticProblem(code: .noMatch)
+        let unauthorized = DiagnosticProblem(code: .providerAuthorizationRequired)
+        let timeout = DiagnosticProblem(code: .timeout, nativeCode: NSURLErrorTimedOut)
+        let missingDuration = DiagnosticProblem(code: .missingDuration)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([noMatch, noMatch]) == noMatch)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([noMatch, unauthorized]) == unauthorized)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([unauthorized, noMatch, timeout]) == timeout)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([missingDuration, missingDuration]) == missingDuration)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([noMatch, media]) == media)
+
         let start = ContinuousClock.now
         let operations: [@Sendable () async -> Int?] = [
             { @Sendable in try? await Task.sleep(for: .seconds(10)); return nil },

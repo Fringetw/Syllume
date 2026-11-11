@@ -224,8 +224,9 @@ struct DiagnosticProbes {
         let player = inputs.player
         let metrics = player.diagnosticTransportMetrics
         if let problem = player.diagnosticPlaybackProblem {
+            let note = ["目前歌曲的播放已失敗。", player.diagnosticPlaybackDetails].compactMap { $0 }.joined(separator: "\n")
             return DiagnosticCheck(key, title, .failed, .observedPlayback, problem: problem,
-                note: "目前歌曲的播放已失敗。展開事件紀錄可查看各來源及媒體拒收原因。", metrics: metrics)
+                note: note, metrics: metrics)
         }
         guard player.didAdvancePlayback, let difference = metrics["displayClockDifference_s"] else {
             return skipped(key, title, .observedPlayback, .noData, note: "需要選定歌曲實際起播並觀測時間推進。")

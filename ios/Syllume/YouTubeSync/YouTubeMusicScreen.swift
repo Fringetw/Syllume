@@ -161,6 +161,26 @@ struct YouTubeMusicScreen: View {
                 if sync.downloading != nil {
                     Button("取消下載", systemImage: "xmark.circle") { sync.cancelDownload() }
                 }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-attachment-race-fixture"),
+                   let download = songs.first, let target = songs.dropFirst().first,
+                   let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
+                    Button("同時下載與附加音檔") {
+                        Task {
+                            let attachment = Task { try await sync.attach(file, to: target, library: library) }
+                            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                            while !library.importInProgress, ContinuousClock.now < deadline {
+                                try? await Task.sleep(for: .milliseconds(25))
+                            }
+                            sync.download(download, library: library, account: account, connection: connection)
+                            do { try await attachment.value }
+                            catch { message = "測試音檔附加失敗。" }
+                        }
+                    }
+                    .accessibilityIdentifier("attachWhileDownloadingFixture")
+                    .accessibilityValue(sync.localTrack(for: target, library: library)?.id ?? "")
+                }
+                #endif
                 if let error = sync.error { Text(error).foregroundStyle(.orange).font(.footnote) }
             }
             Section("歌曲") {

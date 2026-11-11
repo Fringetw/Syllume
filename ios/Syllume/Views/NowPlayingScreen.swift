@@ -12,6 +12,7 @@ struct NowPlayingScreen: View {
     @AppStorage("Folia.LyricDisplayMode") private var mode: LyricDisplayMode = .sonnet
     @State private var controlsVisible = true
     @State private var showingQueue = false
+    @State private var queueCoversVideo = false
 
     @State private var showingSearch = false
     #if DEBUG
@@ -30,7 +31,7 @@ struct NowPlayingScreen: View {
 
     private var luminous: Bool { mode == .lumiere }
     private var accent: Color { luminous ? Color(red: 1, green: 0.83, blue: 0.58) : SyllumePalette.accent }
-    private var videoVisible: Bool { scenePhase == .active && !showingQueue && !showingSearch }
+    private var videoVisible: Bool { scenePhase == .active && !queueCoversVideo && !showingSearch }
 
     var body: some View {
         if let track = player.current {
@@ -48,7 +49,9 @@ struct NowPlayingScreen: View {
                         .accessibilityLabel("尋找歌詞")
                     Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
                         .accessibilityLabel("進入沉浸模式")
-                    Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
+                    Button { queueCoversVideo = true; showingQueue = true } label: {
+                        Image(systemName: "list.bullet").frame(width: 44, height: 44)
+                    }
                         .accessibilityLabel("播放佇列")
                 }
                 .buttonStyle(SyllumePressStyle(luminous: luminous))
@@ -186,7 +189,9 @@ struct NowPlayingScreen: View {
                     .accessibilityLabel("顯示播放控制").padding(18)
                 }
             }
-            .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
+            .sheet(isPresented: $showingQueue, onDismiss: { queueCoversVideo = false }) {
+                PlaybackQueue(player: player)
+            }
             .sheet(isPresented: $showingSearch) {
                 let metadata = player.subtitleInput?.song
                 LyricSearchScreen(subtitles: subtitles, title: metadata?.title ?? track.title,
@@ -318,7 +323,7 @@ private struct TransportControls: View {
                 }
                 .accessibilityLabel("上一首或回到開頭")
 
-                Button { player.toggle() } label: {
+                Button { player.toggle(inApp: true) } label: {
                     Image(systemName: player.transportIcon)
                         .font(.title2.weight(.semibold))
                         .frame(width: 62, height: 62)
@@ -388,11 +393,12 @@ struct MiniPlayer: View {
             #endif
             Button {
                 if player.embeddedVideo != nil { open() }
-                else { player.toggle() }
+                else { player.toggle(inApp: true) }
             } label: {
                 Image(systemName: player.transportIcon).frame(width: 44, height: 44)
             }
             .accessibilityLabel(player.embeddedVideo == nil ? player.transportLabel : "開啟 YouTube 播放畫面")
+            .accessibilityIdentifier("miniPlayerToggle")
         }
         .buttonStyle(SyllumePressStyle())
         .padding(.horizontal, 14)

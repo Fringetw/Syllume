@@ -1,6 +1,12 @@
-# Syllume 0.3.16 · build 28
+# Syllume 0.3.17 · build 29
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
+
+## 0.3.17 音檔綁定與播放
+
+- 手動附加會綁定這次匯入的音檔，並排除舊版錯記為手動附加的下載綁定。原本的音檔仍可在本機曲庫找到。
+- 從 Spotify 返回後，可以從迷你或完整播放器續播。從佇列重選目前的 YouTube 原片會在影片可見後重新播放。
+- 當 YouTube 原片提供先前缺少的時長，Syllume 會重新查詢同步歌詞。音源診斷會保留授權、逾時、缺少時長等實際失敗原因與各來源的已知耗時。
 
 ## 0.3.16 播放、封面與診斷
 

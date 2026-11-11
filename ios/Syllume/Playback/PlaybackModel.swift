@@ -28,10 +28,12 @@ final class PlaybackModel {
     private(set) var offersVideoFallback = false
     private(set) var didAdvancePlayback = false
     private(set) var diagnosticPlaybackProblem: DiagnosticProblem?
+    private(set) var diagnosticPlaybackDetails: String?
     private var nativeReady = false
     private var nativeHasAdvanced = false
     private var videoHasAdvanced = false
     @ObservationIgnored private var videoDeadline: Task<Void, Never>?
+    @ObservationIgnored private var queuedVideoReplay: UUID?
     @ObservationIgnored private var lyricReferenceDuration: Double?
     @ObservationIgnored private var manualLyrics = false
 
@@ -122,7 +124,7 @@ final class PlaybackModel {
     @ObservationIgnored private var searchedCatalogue = false
     @ObservationIgnored private var attemptedCatalogueSources: Set<DiagnosticSource> = []
     @ObservationIgnored private var triedLocal = false
-    @ObservationIgnored private var sourceFailures: [String] = []
+    @ObservationIgnored private var sourceFailures: [(source: String, problem: DiagnosticProblem, elapsedMs: Int?)] = []
     @ObservationIgnored private var resumeAfterInterruption = false
 
     init(library: LocalLibrary) {
@@ -133,7 +135,6 @@ final class PlaybackModel {
 
     func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil) {
         guard let index = tracks.firstIndex(of: selected) else { return }
-        externalPlayback = false
         self.client = client
         queue = tracks
         load(index)
@@ -177,7 +178,16 @@ final class PlaybackModel {
         "folia.lyricOffset." + (track.playlistSong?.videoID ?? (track.source.rawValue + "." + track.id))
     }
 
-    func toggle() { wantsPlayback ? pause() : resume() }
+    func toggle(inApp: Bool = false) {
+        if inApp { reclaimPlayback() }
+        wantsPlayback ? pause() : resume()
+    }
+
+    private func reclaimPlayback() {
+        guard externalPlayback else { return }
+        externalPlayback = false
+        system?.updateCommands(model: self)
+    }
 
     func resume() {
         guard !externalPlayback else { return }
@@ -268,8 +278,14 @@ final class PlaybackModel {
 
     func selectQueueItem(_ selected: Int) {
         guard queue.indices.contains(selected) else { return }
-        if selected == index { seek(to: 0); resume() }
-        else { load(selected) }
+        guard selected == index else { load(selected); return }
+        reclaimPlayback()
+        if let video = embeddedVideo, !video.visible {
+            queuedVideoReplay = video.session
+            return
+        }
+        seek(to: 0)
+        resume()
     }
 
     func toggleRepeat() {
@@ -346,7 +362,7 @@ final class PlaybackModel {
             #if DEBUG
             if track.source == .catalogue, ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
                 guard let self, generation == revision else { return }
-                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression"), expected > 0 {
                     timeline = LyricTimeline(lrc: "[00:00.00]头发发现\n[00:01.00]\(track.title) 測試文字\n[00:03.00]風聲")
                     lyricReferenceDuration = expected
                 }
@@ -425,6 +441,7 @@ final class PlaybackModel {
                     nativeHasAdvanced = true
                     didAdvancePlayback = true
                     diagnosticPlaybackProblem = nil
+                    diagnosticPlaybackDetails = nil
                     DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
                 }
             }
@@ -454,7 +471,7 @@ final class PlaybackModel {
             else if let error = item.error { problem = DiagnosticProblem.classify(error, fallback: .invalidMedia) }
             else { problem = DiagnosticProblem(code: .timeout) }
             diagnosticPlaybackProblem = problem
-            sourceFailures.append((audioSource ?? "音源") + "：" + problem.code.title)
+            sourceFailures.append((audioSource ?? "音源", problem, nil))
             DiagnosticsEvents.shared.record(.playbackStalled, source: activeCatalogueSource, problem: problem)
             streamTimeout?.cancel(); streamTimeout = nil
             player.replaceCurrentItem(with: nil)
@@ -484,6 +501,7 @@ final class PlaybackModel {
 
     private func load(_ index: Int) {
         resetItem()
+        externalPlayback = false
         self.index = index
         let queued = queue[index]
         let track = queued.source == .local ? (library.tracks.first { $0.id == queued.id } ?? queued) : queued
@@ -645,9 +663,10 @@ final class PlaybackModel {
                             try check()
                             let problem = DiagnosticProblem.classify(error, fallback: .invalidMedia)
                             candidates.removeFirst()
-                            sourceFailures.append(candidate.source + "：" + problem.code.title)
+                            let elapsedMs = max(0, Int(Date().timeIntervalSince(started) * 1000))
+                            sourceFailures.append((candidate.source, problem, elapsedMs))
                             DiagnosticsEvents.shared.record(.assetRejected, source: candidate.diagnosticSource,
-                                problem: problem, since: started)
+                                problem: problem, elapsedMs: elapsedMs)
                         }
                     } else if !searchedCatalogue {
                         let attempts = try await service.streamingSearch(for: target, account: account,
@@ -661,12 +680,12 @@ final class PlaybackModel {
                             DiagnosticsEvents.shared.record(attempt.problem == nil ? .providerMatched : .providerUnavailable,
                                 source: attempt.source, problem: attempt.problem, elapsedMs: attempt.elapsedMs)
                             if let problem = attempt.problem {
-                                sourceFailures.append(attempt.source.title + "：" + problem.code.title)
+                                sourceFailures.append((attempt.source.title, problem, attempt.elapsedMs))
                             }
                         }
                         searchedCatalogue = attempts.isEmpty || candidates.isEmpty
                     } else {
-                        catalogueFailed(problem: DiagnosticProblem(code: .noMatch))
+                        catalogueFailed(problem: DiagnosticProblem.afterExhaustingAudioSources(sourceFailures.map(\.problem)))
                         return
                     }
                 }
@@ -697,8 +716,13 @@ final class PlaybackModel {
         DiagnosticsEvents.shared.record(.playbackFailed, source: activeCatalogueSource, problem: problem)
         let videoID = current?.playlistSong?.videoID
         offersVideoFallback = videoID.map(YouTubeVideo.validID) == true
-        let detail = Array(Set(sourceFailures)).sorted().joined(separator: "、")
-        error = detail.isEmpty ? problem.code.title : detail
+        let messages = sourceFailures.map { "\($0.source)：\($0.problem.code.title)" }
+        error = messages.isEmpty ? problem.code.title : Set(messages).sorted().joined(separator: "、")
+        let details = sourceFailures.map { failure in
+            let time = failure.elapsedMs.map { $0 == 0 ? "<1 ms" : "\($0) ms" }
+            return ["\(failure.source)：\(failure.problem.detail)", time].compactMap { $0 }.joined(separator: " · ")
+        }
+        diagnosticPlaybackDetails = details.isEmpty ? nil : Set(details).sorted().joined(separator: "\n")
         pause()
     }
 
@@ -717,6 +741,7 @@ final class PlaybackModel {
         videoHasAdvanced = false
         didAdvancePlayback = false
         diagnosticPlaybackProblem = nil
+        diagnosticPlaybackDetails = nil
         audioSource = "YouTube · 官方播放器"
         error = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -737,8 +762,16 @@ final class PlaybackModel {
 
     func setEmbeddedVideoVisible(_ visible: Bool) {
         guard let embeddedVideo else { return }
-        if visible, !embeddedVideo.visible, embeddedVideo.position > 0 {
-            embeddedVideo.seek(to: embeddedVideo.position)
+        if visible, !embeddedVideo.visible {
+            let replay = queuedVideoReplay == embeddedVideo.session
+            queuedVideoReplay = nil
+            if replay {
+                embeddedVideo.setVisible(true)
+                seek(to: 0)
+                resume()
+                return
+            }
+            if embeddedVideo.position > 0 { embeddedVideo.seek(to: embeddedVideo.position) }
         }
         embeddedVideo.setVisible(visible)
         refreshEmbeddedVideo()
@@ -753,12 +786,12 @@ final class PlaybackModel {
         if video.duration > 0, duration != video.duration {
             duration = video.duration
             resetLyricsIfClockChanged(to: duration)
-            if var song = catalogueTarget, let known = song.duration, abs(known - video.duration) > 2,
-               let track = current, !manualLyrics {
-                song.duration = video.duration
-                catalogueTarget = song
-                loadLyrics(track: track, recording: song.recordingMetadata)
-            }
+        }
+        if video.duration > 0, var song = catalogueTarget, let track = current, !manualLyrics,
+           song.duration.map({ abs($0 - video.duration) > 2 }) ?? true {
+            song.duration = video.duration
+            catalogueTarget = song
+            loadLyrics(track: track, recording: song.recordingMetadata)
         }
         wantsPlayback = video.wantsPlayback
         isPlaying = video.visible && video.isPlaying
@@ -893,6 +926,7 @@ final class PlaybackModel {
         if isPlaying { DiagnosticsEvents.shared.record(.playbackPaused) }
         embeddedVideo?.stop()
         embeddedVideo = nil
+        queuedVideoReplay = nil
         videoDeadline?.cancel(); videoDeadline = nil
         offersVideoFallback = false
         nativeReady = false
@@ -900,6 +934,7 @@ final class PlaybackModel {
         videoHasAdvanced = false
         didAdvancePlayback = false
         diagnosticPlaybackProblem = nil
+        diagnosticPlaybackDetails = nil
         generation = UUID()
         seekGeneration = UUID()
         seeking = false

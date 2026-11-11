@@ -116,6 +116,11 @@ enum YouTubeSyncChecks {
         precondition(pending.map(\.videoID) == [second.videoID, song.videoID])
         let legacy = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(#"{"choice":{"id":"liked","title":"喜歡的影片"},"songs":[],"bindings":{}}"#.utf8))
         precondition(legacy.attempts == nil && legacy.choice == .liked)
+        let downloadID = "download-" + UUID().uuidString
+        let manualQuality = YouTubeAudioBinding.manualAttachmentQuality
+        precondition(YouTubeAudioBinding(trackID: downloadID, quality: manualQuality).isDownloadMarkedAsManualAttachment)
+        precondition(!YouTubeAudioBinding(trackID: UUID().uuidString, quality: manualQuality).isDownloadMarkedAsManualAttachment)
+        precondition(!YouTubeAudioBinding(trackID: downloadID, quality: "本機音檔 · FLAC 無損").isDownloadMarkedAsManualAttachment)
         let legacySong = try JSONDecoder().decode(SyncedYouTubeSong.self, from: Data(
             #"{"id":"old-row","videoID":"z2tDtdHHAHg","title":"HELP!!","artist":"Kobo Kanaeru - Topic"}"#.utf8))
         precondition(legacySong.artworkURLs.first?.absoluteString == "https://i.ytimg.com/vi/z2tDtdHHAHg/mqdefault.jpg")

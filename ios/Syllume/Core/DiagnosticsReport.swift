@@ -97,6 +97,13 @@ struct DiagnosticProblem: Error, LocalizedError, Codable, Equatable, Sendable {
             .compactMap { $0 }.joined(separator: " · ")
     }
 
+    static func afterExhaustingAudioSources(_ problems: [Self]) -> Self {
+        problems.first { $0.code != .noMatch && $0.code != .providerAuthorizationRequired }
+            ?? problems.first { $0.code != .noMatch }
+            ?? problems.first
+            ?? Self(code: .noMatch)
+    }
+
     static func classify(_ error: Error, fallback: DiagnosticCode = .transport) -> Self {
         if let problem = error as? Self { return problem }
         if error is CancellationError { return Self(code: .cancelled) }

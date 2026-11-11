@@ -68,6 +68,9 @@ final class PlatformConnection {
             credential = Credential(clientID: "debug", accessToken: "debug", refreshToken: nil, expires: .distantFuture, libraryID: id)
             libraryID = id
         }
+        if platform == .spotify, ProcessInfo.processInfo.arguments.contains("--spotify-handoff-fixture") {
+            credential = Credential(clientID: "debug", accessToken: "debug", refreshToken: nil, expires: .distantFuture, libraryID: nil)
+        }
         #endif
     }
 
@@ -138,14 +141,18 @@ final class PlatformConnection {
 
     func page(_ collection: LibraryCollection, cursor: String?) async throws -> LibraryPage {
         #if DEBUG
+        if platform == .spotify, ProcessInfo.processInfo.arguments.contains("--spotify-handoff-fixture") {
+            return LibraryPage(entries: [], next: nil)
+        }
         if platform == .youtube, ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") {
             if collection == .playlists {
                 return LibraryPage(entries: [LibraryEntry(id: "fixture-list", title: "測試歌單", subtitle: "", url: URL(string: "https://music.youtube.com/playlist?list=fixture-list")!)], next: nil)
             }
             if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+                let missingDuration = ProcessInfo.processInfo.arguments.contains("--youtube-missing-duration-fixture")
                 return LibraryPage(entries: [
                     LibraryEntry(id: "recording-jane", title: "JANE DOE", subtitle: "Kenshi Yonezu - Topic",
-                        url: URL(string: "https://music.youtube.com/watch?v=6AR6Oc0-4NQ")!, duration: 236),
+                        url: URL(string: "https://music.youtube.com/watch?v=6AR6Oc0-4NQ")!, duration: missingDuration ? nil : 236),
                     LibraryEntry(id: "recording-lemon", title: "Lemon", subtitle: "Kenshi Yonezu - Topic",
                         url: URL(string: "https://music.youtube.com/watch?v=3NNhrqHZqlI")!, duration: 256)
                 ], next: nil)
@@ -205,6 +212,9 @@ final class PlatformConnection {
     }
 
     func videoDurations(_ ids: [String]) async throws -> [String: Double] {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture") { return [:] }
+        #endif
         let details = try await videoDetails(ids, includeMetadata: false)
         return Dictionary(details.compactMap { item in item.duration.map { (item.id, $0) } },
                           uniquingKeysWith: { first, _ in first })

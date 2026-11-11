@@ -76,7 +76,7 @@ final class PlaybackSystem {
             guard let model else { return .noActionableNowPlayingItem }
             let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
             Task { @MainActor [weak model] in
-                guard let model else { return }
+                guard let model, !model.externalPlayback, model.embeddedVideo == nil else { return }
                 action(model, time)
             }
             return .success

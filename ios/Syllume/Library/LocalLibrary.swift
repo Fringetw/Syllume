@@ -68,13 +68,14 @@ final class LocalLibrary {
         return try await lyricReader.timeline(at: folder(for: track.id).appending(path: name))
     }
 
-    func importFiles(_ urls: [URL]) async -> String? {
-        guard !importInProgress else { return nil }
-        if let storageError { return storageError }
+    func importFiles(_ urls: [URL]) async -> (tracks: [Track], warning: String?) {
+        guard !importInProgress else { return ([], nil) }
+        if let storageError { return ([], storageError) }
         importInProgress = true
         defer { importInProgress = false }
         let sidecars = urls.filter { ["lrc", "fia"].contains($0.pathExtension.lowercased()) }
         let audio = urls.filter { !sidecars.contains($0) }
+        var imported: [Track] = []
         var failures: [String] = []
         var usedSidecars = Set<URL>()
         for url in audio {
@@ -83,7 +84,8 @@ final class LocalLibrary {
             let preferred = matches.filter { $0.pathExtension.lowercased() == "fia" }
                 + matches.filter { $0.pathExtension.lowercased() != "fia" }
             do {
-                let invalidSidecar = try await importAudio(url, sidecars: preferred).1
+                let (track, invalidSidecar) = try await importAudio(url, sidecars: preferred)
+                imported.append(track)
                 usedSidecars.formUnion(matches)
                 if let invalidSidecar { failures.append(invalidSidecar) }
             } catch {
@@ -94,7 +96,7 @@ final class LocalLibrary {
         var messages: [String] = []
         if !failures.isEmpty { messages.append("無法匯入 " + failures.joined(separator: "、")) }
         if !unmatched.isEmpty { messages.append("歌詞檔請從歌曲的選單附加，或與同名音檔一起匯入。") }
-        return messages.isEmpty ? nil : messages.joined(separator: "\n")
+        return (imported, messages.isEmpty ? nil : messages.joined(separator: "\n"))
     }
 
     private func importAudio(_ url: URL, sidecars: [URL], download: DownloadAudioCandidate? = nil) async throws -> (Track, String?) {
@@ -106,6 +108,16 @@ final class LocalLibrary {
         let destination = folder.appending(path: name)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         do {
+            #if DEBUG
+            if download == nil, ProcessInfo.processInfo.arguments.contains("--youtube-attachment-race-fixture") {
+                let existing = Set(tracks.map(\.id))
+                let deadline = ContinuousClock.now.advanced(by: .seconds(25))
+                while !tracks.contains(where: { $0.id.hasPrefix("download-") && !existing.contains($0.id) }) {
+                    guard ContinuousClock.now < deadline else { throw DiagnosticProblem(code: .timeout) }
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+            }
+            #endif
             try await Task.detached(priority: .userInitiated) {
                 try Self.coordinatedRead(url) { readable in
                     try FileManager.default.copyItem(at: readable, to: destination)

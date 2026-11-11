@@ -48,8 +48,12 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct YouTubeAudioBinding: Codable, Equatable, Sendable {
+    static let manualAttachmentQuality = "手動附加音檔"
     let trackID: String
     let quality: String
+
+    // Manual imports always receive a plain UUID. Older attachment code could pick a concurrent download.
+    var isDownloadMarkedAsManualAttachment: Bool { quality == Self.manualAttachmentQuality && trackID.hasPrefix("download-") }
 }
 
 struct SyllumePlaylistEdits: Codable, Equatable {

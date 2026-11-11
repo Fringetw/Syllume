@@ -260,7 +260,7 @@ struct LibraryScreen: View {
                     } catch { message = "無法附加這份歌詞。請選取含時間軸的 LRC 或 Folia .fia 檔案。" }
                 }
             } else {
-                Task { if let warning = await library.importFiles(urls) { message = warning } }
+                Task { if let warning = await library.importFiles(urls).warning { message = warning } }
             }
         case .failure(let error):
             if (error as NSError).code != NSUserCancelledError { message = "無法從「檔案」讀取選取的內容。" }
