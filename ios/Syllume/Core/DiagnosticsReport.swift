@@ -46,7 +46,8 @@ enum DiagnosticEvidence: String, Codable, Sendable {
 enum DiagnosticCode: String, Codable, Sendable {
     case configuration, signedOut, reauthorize, permission, quota, rateLimit, offline, timeout, transport
     case verification, region, unavailable, noMatch, missingDuration, invalidResponse, invalidMedia, cancelled
-    case noData, authorizationRequired, appBusy, appBackgrounded, engine, timeline, systemUnavailable
+    case noData, authorizationRequired, providerAuthorizationRequired, appBusy, appBackgrounded, engine, timeline, systemUnavailable
+    case playbackInteractionRequired
 
     var title: String {
         switch self {
@@ -69,6 +70,8 @@ enum DiagnosticCode: String, Codable, Sendable {
         case .cancelled: "已取消"
         case .noData: "目前沒有足夠資料"
         case .authorizationRequired: "需要使用者授權"
+        case .providerAuthorizationRequired: "需要平台授權第三方音源"
+        case .playbackInteractionRequired: "需要在 YouTube 播放器按播放"
         case .appBusy: "主播放器正在播放"
         case .appBackgrounded: "App 已切到背景"
         case .engine: "動畫或字幕引擎錯誤"
@@ -90,6 +93,18 @@ struct DiagnosticProblem: Error, LocalizedError, Codable, Equatable, Sendable {
     var mediaIssue: DiagnosticMediaIssue? = nil
 
     var errorDescription: String? { code.title }
+    var detail: String {
+        [code.title + " [\(code.rawValue)]", mediaIssue?.rawValue,
+         httpStatus.map { "HTTP \($0)" }, nativeCode.map { "原生錯誤 \($0)" }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    static func afterExhaustingAudioSources(_ problems: [Self]) -> Self {
+        problems.first { $0.code != .noMatch && $0.code != .providerAuthorizationRequired }
+            ?? problems.first { $0.code != .noMatch }
+            ?? problems.first
+            ?? Self(code: .noMatch)
+    }
 
     static func classify(_ error: Error, fallback: DiagnosticCode = .transport) -> Self {
         if let problem = error as? Self { return problem }
@@ -173,6 +188,7 @@ struct DiagnosticCheck: Codable, Equatable, Identifiable, Sendable {
     let metrics: [String: Double]
     // Logical stack locations are compiled-in names. They cannot contain URLs or credentials.
     let checkpoints: [String]
+    var timeLabel: String { elapsedMs > 0 ? "\(elapsedMs) ms" : state == .unverifiable ? "—" : "<1 ms" }
 
     init(_ id: String, _ title: String, _ state: DiagnosticState, _ evidence: DiagnosticEvidence,
          since start: Date = Date(), problem: DiagnosticProblem? = nil, note: String? = nil,
@@ -190,10 +206,12 @@ struct DiagnosticResult: Codable, Equatable, Identifiable, Sendable {
     let elapsedMs: Int
     let state: DiagnosticState
     var id: String { area.id }
+    var measuredMs: Int { max(elapsedMs, checks.map(\.elapsedMs).max() ?? 0) }
+    var timeLabel: String { measuredMs > 0 ? "\(measuredMs) ms" : state == .unverifiable ? "—" : "<1 ms" }
 
     init(area: DiagnosticArea, checks: [DiagnosticCheck], since start: Date) {
         self.area = area; self.checks = checks
-        elapsedMs = max(0, Int(Date().timeIntervalSince(start) * 1000))
+        elapsedMs = max(0, Int(Date().timeIntervalSince(start) * 1000), checks.map(\.elapsedMs).max() ?? 0)
         if checks.contains(where: { $0.state == .failed }) { state = .failed }
         else if checks.allSatisfy({ $0.state == .unverifiable }) { state = .unverifiable }
         else if checks.contains(where: { $0.state != .passed }) { state = .partial }
@@ -203,8 +221,8 @@ struct DiagnosticResult: Codable, Equatable, Identifiable, Sendable {
 
 enum DiagnosticEventKind: String, Codable, Sendable {
     case lookupStarted, durationRead, durationUnavailable, providerMatched, providerUnavailable
-    case assetRejected, playbackStarted, playbackPaused, playbackStalled, seek, audioInterruption
-    case artworkLoaded, artworkUnavailable
+    case assetRejected, playbackStarted, playbackPaused, playbackStalled, playbackFailed, videoFallbackRequested, seek, audioInterruption
+    case artworkLoaded, artworkUnavailable, lyricsLoaded, lyricsUnavailable
     case foreground, background, playerOpened, playerClosed, immersiveOn, immersiveOff, stageReady, stageError
 }
 
@@ -293,9 +311,10 @@ struct DiagnosticReport: Codable, Identifiable, Sendable {
         let header = ["Syllume Diagnostics · \(appVersion)（build \(build)）", "\(deviceModel) · iOS \(operatingSystem) · \(environment.rawValue)",
                       "\(date.string(from: startedAt)) → \(date.string(from: endedAt)) · \(connection.rawValue)"]
         let sections = results.flatMap { result in
-            ["", "\(result.area.title)　\(result.state.title)"] + result.checks.flatMap { check in
-                var lines = ["• \(check.title)｜\(check.state.title)｜\(check.evidence.title)｜\(check.elapsedMs) ms"]
-                if let problem = check.problem { lines.append("  \(problem.code.title) [\(problem.code.rawValue)]" + (problem.httpStatus.map { " HTTP \($0)" } ?? "")) }
+            ["", "\(result.area.title)　\(result.state.title)　\(result.timeLabel)"] + result.checks.flatMap { check in
+                var lines = ["• \(check.title) [\(check.id)]｜\(check.state.title)｜\(check.evidence.title)｜\(check.timeLabel)"]
+                if let problem = check.problem { lines.append("  \(problem.detail)") }
+                if !check.checkpoints.isEmpty { lines.append("  \(check.checkpoints.joined(separator: " → "))") }
                 if let note = check.note { lines.append("  \(note)") }
                 for key in check.metrics.keys.sorted() { if let value = check.metrics[key] { lines.append("  \(key) = \(value.formatted(.number.precision(.fractionLength(0...3))))") } }
                 return lines

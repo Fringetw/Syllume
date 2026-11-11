@@ -1,6 +1,30 @@
-# Syllume 0.3.15 · build 26
+# Syllume 0.3.20 · build 32
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
+
+## 0.3.20 YouTube 點播、續播與 Syllume 圖示
+
+- 點選 YouTube 歌單曲目後，找不到可用的同版本音檔時，直接在前景播放可嵌入的 YouTube 原片。離開播放頁、顯示佇列或切到背景會暫停原片。
+- 重開播放畫面或關閉播放佇列後，可從先前的進度續播。播放器確認媒體時間前進後，才將狀態更新為播放中。
+- 若 YouTube 限制嵌入，或目前無法確認影片的嵌入狀態，播放頁會提供 YouTube Music 的原片連結。若系統要求手動起播，可直接點官方播放器內的播放鍵。
+- iPhone 主畫面圖示換成白色圓角 S 與青藍、淡紫漸層。
+
+## 0.3.17 音檔綁定與播放
+
+- 手動附加會綁定這次匯入的音檔，並排除舊版錯記為手動附加的下載綁定。原本的音檔仍可在本機曲庫找到。
+- 從 Spotify 返回後，可以從迷你或完整播放器續播。從佇列重選目前的 YouTube 原片會在影片可見後重新播放。
+- 當 YouTube 原片提供先前缺少的時長，Syllume 會重新查詢同步歌詞。音源診斷會保留授權、逾時、缺少時長等實際失敗原因與各來源的已知耗時。
+
+## 0.3.16 播放、封面與診斷
+
+- 優先播放已附加或配對到的完整同版本音訊。找不到可用音源時，可以在播放頁選「在 Syllume 播放 YouTube 原片」。這條路徑使用目前曲目的官方嵌入播放器，畫面保持可見。離開播放頁、開啟佇列或歌詞搜尋、切到背景時會暫停。本機與可用的同版本音訊支援原生背景播放。
+- 已匯入或附加的音檔與有權存取的 Navidrome 為預設原生音源。網易雲、QQ 音樂的直接串流和下載需先取得平台對 Syllume 使用這些端點的授權。獲授權的維護者可在 `ios/Syllume/Resources/Info.plist` 的 `SyllumeAuthorizedMediaProviders` 字串陣列填入對應的 `netease` 或 `qq`。診斷會將未設定平台授權的來源標為無法驗證。
+- 歌單曲目的封面資料會傳給播放佇列，並與迷你播放器、封面頁和原生鎖定畫面資訊共用快取。播放失敗時系統媒體資訊保留歌曲與封面，播放速率為 0。
+- 同步歌詞查詢在選歌時開始。歌名、演出者、錄音版本與時間戳都要符合，才會自動套用。專輯錄音的演出者優先讀取選定影片的官方標籤資料，歌詞可透過 LRCLIB 查詢。
+- 歌單長按下載時，會先開啟獨立的確認頁。選擇取消可直接回到歌單，確認後才尋找音源並驗證完整檔案。
+- 診斷分別呈現影片資料、音源配對、音軌、播放器時鐘、離線解碼與裝置取樣。裝置耗時採實際觀測區間。歌詞清單、商籟及繪光使用隨 App 打包的源泉圓體 JP Medium。
+
+《JANE DOE》與《Lemon》的回歸測試使用公開影片識別碼與歌曲資料，播放媒體為內建的測試音檔。實機的 YouTube 嵌入可用性、私人歌單及實際歌詞對齊由裝置診斷確認。
 
 ## 0.3.15 品牌名稱
 
@@ -199,4 +223,4 @@ Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/docume
 
 ## 授權
 
-原專案與圖示來自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)。此移植依 GNU AGPL v3 提供原始碼與授權全文，見 [LICENSE](../LICENSE)。內建示範音軌為本專案合成的音訊。
+原專案來自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)，Syllume 圖示取其漸層和圓角字形作為設計參考。此移植依 GNU AGPL v3 提供原始碼與授權全文，見 [LICENSE](../LICENSE)。內建示範音軌為本專案合成的音訊。

@@ -34,7 +34,11 @@ final class YouTubeSyncController {
         guard let id, UUID(uuidString: id) != nil else { return }
         let file = directory.appending(path: id + ".json")
         if FileManager.default.fileExists(atPath: file.path) {
-            do { snapshot = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(contentsOf: file)) }
+            do {
+                var stored = try JSONDecoder().decode(YouTubeSyncSnapshot.self, from: Data(contentsOf: file))
+                stored.bindings = stored.bindings.filter { !$0.value.isDownloadMarkedAsManualAttachment }
+                snapshot = stored
+            }
             catch { self.error = "無法讀取已儲存的歌單，請重新選擇。" }
         }
     }
@@ -150,6 +154,7 @@ final class YouTubeSyncController {
     func download(_ song: SyncedYouTubeSong, library: LocalLibrary, account: NavidromeAccount?, connection: PlatformConnection) {
         guard downloading == nil, let accountID, YouTubeVideo.validID(song.videoID) else { return }
         let ticket = UUID()
+        let previousBinding = snapshot.bindings[song.videoID]
         downloadRevision = ticket; downloading = song.videoID; statuses[song.videoID] = "正在搜尋最高可用音質…"
         downloadTask = Task { [weak self] in
             guard let self else { return }
@@ -160,6 +165,7 @@ final class YouTubeSyncController {
             }
             @MainActor func bind(_ track: Track, _ quality: String) throws {
                 try check()
+                guard snapshot.bindings[song.videoID] == previousBinding else { throw CancellationError() }
                 var next = snapshot
                 next.bindings[song.videoID] = YouTubeAudioBinding(trackID: track.id, quality: quality)
                 try save(next); statuses[song.videoID] = nil
@@ -194,8 +200,7 @@ final class YouTubeSyncController {
                     return
                 }
                 #endif
-                let identified = await connection.playlistSongWithDuration(song)
-                let target = await downloader.withDuration(identified)
+                let target = await connection.playlistSongWithMetadata(song)
                 try check()
                 var candidates = library.matchingAudio(for: target)
                 var failures: [String] = []
@@ -209,19 +214,19 @@ final class YouTubeSyncController {
                 }
                 try check()
                 statuses[song.videoID] = failures.last ?? "各來源沒有可儲存的完整音檔。可附加已有的音檔。"
-            } catch is CancellationError { }
+            } catch is CancellationError { if downloadRevision == ticket { statuses[song.videoID] = nil } }
             catch { if downloadRevision == ticket { statuses[song.videoID] = Self.message(error) } }
         }
     }
 
     func attach(_ url: URL, to song: SyncedYouTubeSong, library: LocalLibrary) async throws {
         guard !library.importInProgress else { throw PlatformError.message("請等目前音檔匯入完成後重試。") }
-        let id = accountID
-        let old = Set(library.tracks.map(\.id))
-        if let warning = await library.importFiles([url]) { throw PlatformError.message(warning) }
-        guard id == accountID, let track = library.tracks.first(where: { !old.contains($0.id) }) else { return }
+        guard let accountID else { throw DiagnosticProblem(code: .signedOut) }
+        let imported = await library.importFiles([url])
+        if let warning = imported.warning { throw PlatformError.message(warning) }
+        guard accountID == self.accountID, let track = imported.tracks.first else { return }
         var next = snapshot
-        next.bindings[song.videoID] = YouTubeAudioBinding(trackID: track.id, quality: "手動附加音檔")
+        next.bindings[song.videoID] = YouTubeAudioBinding(trackID: track.id, quality: YouTubeAudioBinding.manualAttachmentQuality)
         try save(next); statuses[song.videoID] = nil
     }
 

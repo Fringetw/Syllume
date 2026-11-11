@@ -2,6 +2,22 @@ import CryptoKit
 import Foundation
 import ImageIO
 
+struct SongArtworkSource: Hashable, Sendable {
+    var file: URL?
+    var videoID: String?
+    var candidates: [URL] = []
+
+    init(file: URL?, videoID: String?, candidates: [URL] = []) {
+        self.file = file
+        self.videoID = videoID
+        self.candidates = candidates
+    }
+
+    init(file: URL?, song: SyncedYouTubeSong) {
+        self.init(file: file, videoID: song.videoID, candidates: song.artworkURLs)
+    }
+}
+
 // Artwork has its own anonymous transport and cache. A failed image request
 // must not block other songs, catalogue lookup, or audio playback.
 actor YouTubeArtworkStore {
@@ -9,7 +25,7 @@ actor YouTubeArtworkStore {
 
     private let session: URLSession
     private let directory: URL
-    private var inFlight: [URL: Task<Data?, Never>] = [:]
+    private var inFlight: [URL: Task<ImageResponse?, Never>] = [:]
     private static let maximumBytes = 600_000
     private static let maximumAge: TimeInterval = 7 * 24 * 3600
     private static let maximumDiskBytes = 32_000_000
@@ -38,10 +54,18 @@ actor YouTubeArtworkStore {
         #endif
     }
 
-    func cover(for videoID: String, candidates: [URL]? = nil) async -> Data? {
+    func image(for source: SongArtworkSource) async -> Data? {
+        if let file = source.file, file.isFileURL, let data = try? Data(contentsOf: file),
+           CGImageSourceCreateWithData(data as CFData, nil) != nil { return data }
+        guard let videoID = source.videoID else { return nil }
+        return await cover(for: videoID, candidates: source.candidates)
+    }
+
+    private func cover(for videoID: String, candidates: [URL]) async -> Data? {
         let fallbacks = YouTubeArtwork.thumbnails(for: videoID)
         guard let key = fallbacks.first else { return nil }
-        return await load(candidates ?? fallbacks, cacheKey: key)
+        var seen = Set<URL>()
+        return await load((candidates + fallbacks).filter { seen.insert($0).inserted }, cacheKey: key)
     }
 
     func portrait(at url: URL) async -> Data? {
@@ -55,18 +79,23 @@ actor YouTubeArtworkStore {
         let name = digest.map { String(format: "%02x", $0) }.joined() + ".cover"
         let file = directory.appending(path: name)
         if let cached = cachedImage(at: file) { return cached }
-        if let pending = inFlight[cacheKey] { return await pending.value }
-
-        let task = Task<Data?, Never>(priority: .utility) {
-            for url in urls where YouTubeArtwork.allows(url) {
-                guard let response = await fetch(url) else { continue }
-                if response.canCache { persist(response.data, at: file) }
-                return response.data
-            }
-            return nil
+        // Deduplicate each request, not a whole list of candidates. A row with only
+        // a video ID cannot suppress a later row's working API-provided thumbnail.
+        for url in urls where YouTubeArtwork.allows(url) {
+            guard !Task.isCancelled else { return nil }
+            if let cached = cachedImage(at: file) { return cached }
+            guard let response = await fetchOnce(url) else { continue }
+            if response.canCache && cachedImage(at: file) == nil { persist(response.data, at: file) }
+            return response.data
         }
-        inFlight[cacheKey] = task
-        defer { inFlight[cacheKey] = nil }
+        return nil
+    }
+
+    private func fetchOnce(_ url: URL) async -> ImageResponse? {
+        if let pending = inFlight[url] { return await pending.value }
+        let task = Task(priority: .utility) { await fetch(url) }
+        inFlight[url] = task
+        defer { inFlight[url] = nil }
         return await task.value
     }
 
@@ -112,7 +141,7 @@ actor YouTubeArtworkStore {
         }
     }
 
-    private struct ImageResponse {
+    private struct ImageResponse: Sendable {
         let data: Data
         let canCache: Bool
     }
@@ -132,7 +161,8 @@ actor YouTubeArtworkStore {
         if arguments.contains("--youtube-sync-fixture") {
             // The first two renditions are unavailable. Tests can relaunch with
             // every rendition offline to exercise the disk cache independently.
-            guard !arguments.contains("--youtube-artwork-offline"), url.path == "/vi/M7lc1UVf-VE/default.jpg",
+            let ids = arguments.contains("--syllume-recording-regression") ? ["6AR6Oc0-4NQ", "3NNhrqHZqlI"] : ["M7lc1UVf-VE"]
+            guard !arguments.contains("--youtube-artwork-offline"), ids.contains(where: { url.path == "/vi/\($0)/default.jpg" }),
                   let fixture = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGNM37OWARtgwio6aCUAbbEB4B0QKzMAAAAASUVORK5CYII=") else { return nil }
             return ImageResponse(data: fixture, canCache: true)
         }

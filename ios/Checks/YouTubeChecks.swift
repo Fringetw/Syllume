@@ -22,6 +22,7 @@ enum YouTubeChecks {
         model.play([duplicateA, duplicateB], selected: duplicateB)
         precondition(model.index == 1 && !model.canAdvance)
         model.play([a, b], selected: a); model.setVisible(true)
+        precondition(model.seekRevision == nil, "Loading a new video must not issue a seek before playback")
         let session = model.session
         func sample(_ state: Int, _ time: Double, _ otherSession: UUID? = nil, _ otherID: String? = nil, command: Int? = nil) -> YouTubeSnapshot {
             YouTubeSnapshot(session: (otherSession ?? session).uuidString, videoID: otherID ?? id, state: state, time: time, duration: 60, title: nil, author: nil, commandRevision: command ?? model.playbackRevision)
@@ -36,6 +37,8 @@ enum YouTubeChecks {
         precondition(model.wantsPlayback && model.isPlaying)
         model.receive(sample(2, 3.3, command: oldCommand))
         precondition(model.isPlaying, "An old pause cannot undo a newer resume")
+        model.autoplayBlocked(revision: oldCommand)
+        precondition(model.isPlaying && model.failure == nil, "A stale blocked event cannot pause the current command")
         model.seek(to: 40); model.receive(sample(1, 3.3)); precondition(model.position == 40)
         model.receive(sample(1, 40.1)); precondition(model.position == 40.1)
         model.setVisible(false); model.receive(sample(1, 41)); precondition(!model.isPlaying && !model.wantsPlayback)
@@ -44,6 +47,16 @@ enum YouTubeChecks {
         model.receive(sample(1, .infinity, model.session, b.id)); precondition(model.position == 0)
         model.receive(sample(1, 0, model.session, b.id)); precondition(model.isPlaying)
         model.pause(); model.receive(sample(0, 60, model.session, b.id)); precondition(!model.wantsPlayback)
+        model.resume()
+        model.autoplayBlocked(revision: model.playbackRevision)
+        precondition(model.didBlockAutoplay && !model.wantsPlayback && model.failure?.code == .playbackInteractionRequired)
+        model.receive(sample(1, 0.2, model.session, b.id))
+        precondition(model.isPlaying && !model.didBlockAutoplay && model.failure == nil)
+        let status = try JSONDecoder().decode(YouTubeVideoDetails.Status.self, from: Data(#"{"embeddable":true,"madeForKids":false}"#.utf8))
+        precondition(status.allowsEmbeddedPlayback)
+        precondition(!YouTubeVideoDetails.Status(embeddable: false, madeForKids: false).allowsEmbeddedPlayback)
+        precondition(!YouTubeVideoDetails.Status(embeddable: true, madeForKids: true).allowsEmbeddedPlayback)
+        precondition(!YouTubeVideoDetails.Status(embeddable: true, madeForKids: nil).allowsEmbeddedPlayback)
         let record = LyricSearchRecord(id: 1, trackName: "A", artistName: "Artist", albumName: "", duration: 60,
                                      syncedLyrics: "[00:01]Hello")
         precondition(record.matches(title: "A", artist: "Artist", duration: 61))

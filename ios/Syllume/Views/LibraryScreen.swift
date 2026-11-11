@@ -96,6 +96,7 @@ struct LibraryScreen: View {
             if phase == .active {
                 DiagnosticsEvents.shared.record(.foreground)
                 subtitles.synchronize()
+                player.refreshArtworkIfNeeded()
                 refreshYouTubePlaylist()
             }
             if phase == .background {
@@ -259,7 +260,7 @@ struct LibraryScreen: View {
                     } catch { message = "無法附加這份歌詞。請選取含時間軸的 LRC 或 Folia .fia 檔案。" }
                 }
             } else {
-                Task { if let warning = await library.importFiles(urls) { message = warning } }
+                Task { if let warning = await library.importFiles(urls).warning { message = warning } }
             }
         case .failure(let error):
             if (error as NSError).code != NSUserCancelledError { message = "無法從「檔案」讀取選取的內容。" }
@@ -273,14 +274,18 @@ struct TrackRow: View {
     let track: Track
     var active = false
     var artworkFile: URL? = nil
+    @State private var hasArtwork = false
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             HStack(spacing: 12) {
-                SongArtworkView(source: .init(file: artworkFile, videoID: track.recording?.originVideoID),
+                SongArtworkView(source: SongArtworkSource(file: artworkFile,
+                                    videoID: track.playlistSong?.videoID ?? track.recording?.originVideoID,
+                                    candidates: track.playlistSong?.artworkURLs ?? []),
                                 placeholder: active ? "waveform" : "music.note",
-                                tint: active ? SyllumePalette.accent : .secondary, size: 42, cornerRadius: 10)
+                                tint: active ? SyllumePalette.accent : .secondary, size: 42, cornerRadius: 10,
+                                loaded: { hasArtwork = $0 })
                 VStack(alignment: .leading, spacing: 3) {
                     Text(track.title).foregroundStyle(active ? SyllumePalette.accent : .primary).lineLimit(2)
                     if !track.subtitle.isEmpty { Text(track.subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
@@ -294,26 +299,32 @@ struct TrackRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(SyllumePressStyle())
+        #if DEBUG
+        .accessibilityIdentifier("trackRow-" + track.id)
+        .accessibilityValue(ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") && hasArtwork ? "已載入歌曲封面" : "")
+        #endif
     }
 }
 
 struct SongArtworkView: View {
-    struct Source: Hashable {
-        let file: URL?
-        let videoID: String?
-        var candidates: [URL]? = nil
-    }
-
-    let source: Source
+    let source: SongArtworkSource
     var placeholder = "music.note"
     let tint: Color
     let size: CGFloat
     let cornerRadius: CGFloat
+    var loaded: (Bool) -> Void = { _ in }
+    @Environment(\.scenePhase) private var scenePhase
     @State private var image: UIImage?
+    @State private var imageSource: SongArtworkSource?
+
+    private struct Request: Hashable {
+        let source: SongArtworkSource
+        let active: Bool
+    }
 
     var body: some View {
         Group {
-            if let image {
+            if imageSource == source, let image {
                 Image(uiImage: image).resizable().scaledToFill()
             } else {
                 Image(systemName: placeholder).font(.callout.weight(.semibold)).foregroundStyle(tint)
@@ -323,12 +334,15 @@ struct SongArtworkView: View {
         .background(.white.opacity(0.06), in: .rect(cornerRadius: cornerRadius))
         .clipShape(.rect(cornerRadius: cornerRadius))
         .accessibilityHidden(true)
-        .task(id: source, priority: .utility) {
-            image = source.file.flatMap { UIImage(contentsOfFile: $0.path) }
-            guard image == nil, let videoID = source.videoID,
-                  let data = await YouTubeArtworkStore.shared.cover(for: videoID, candidates: source.candidates),
-                  !Task.isCancelled else { return }
-            image = UIImage(data: data)
+        .task(id: Request(source: source, active: scenePhase == .active), priority: .utility) {
+            guard scenePhase == .active else { return }
+            if imageSource != source { image = nil; loaded(false) }
+            guard image == nil else { return }
+            let data = await YouTubeArtworkStore.shared.image(for: source)
+            guard !Task.isCancelled else { return }
+            image = data.flatMap(UIImage.init(data:))
+            imageSource = source
+            loaded(image != nil)
         }
     }
 }

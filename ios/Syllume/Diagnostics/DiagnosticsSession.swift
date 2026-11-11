@@ -11,7 +11,6 @@ final class DiagnosticsEvents {
     nonisolated static let enabledKey = "Folia.Diagnostics.Enabled"
     nonisolated static let captureKey = "Folia.Diagnostics.Capture"
     private var entries: [DiagnosticEvent] = []
-    private var advancingSince: TimeInterval?
     private var advancingSeconds: TimeInterval = 0
     private var appInitialization: TimeInterval?
     private(set) var firstViewMs: Double?
@@ -39,25 +38,19 @@ final class DiagnosticsEvents {
                 since: Date? = nil, elapsedMs: Int? = nil) {
         guard capturing else { return }
         let now = Date()
-        let uptime = ProcessInfo.processInfo.systemUptime
-        switch kind {
-        case .playbackStarted: if advancingSince == nil { advancingSince = uptime }
-        case .playbackPaused, .playbackStalled, .audioInterruption, .lookupStarted:
-            if let advancingSince { advancingSeconds += max(0, uptime - advancingSince) }
-            advancingSince = nil
-        default: break
-        }
         entries.append(DiagnosticEvent(at: now, kind: kind, source: source, problem: problem,
             elapsedMs: elapsedMs ?? since.map { max(0, Int(now.timeIntervalSince($0) * 1000)) }))
         entries.removeFirst(max(0, entries.count - 96))
     }
 
     var snapshot: [DiagnosticEvent] { entries }
-    var observedPlaybackSeconds: TimeInterval {
-        advancingSeconds + (advancingSince.map { max(0, ProcessInfo.processInfo.systemUptime - $0) } ?? 0)
+    var observedPlaybackSeconds: TimeInterval { advancingSeconds }
+
+    func observeAdvance(_ seconds: Double) {
+        if capturing, seconds.isFinite, seconds > 0, seconds <= 1.5 { advancingSeconds += seconds }
     }
 
-    func clear() { entries.removeAll(); advancingSince = nil; advancingSeconds = 0 }
+    func clear() { entries.removeAll(); advancingSeconds = 0 }
 }
 
 @MainActor
@@ -232,11 +225,11 @@ final class DiagnosticsSession {
                 case .device: checks = probes.device(since: start, counters: before)
                 }
                 if Task.isCancelled { break }
-                results.append(DiagnosticResult(area: area, checks: checks, since: began))
+                results.append(DiagnosticResult(area: area, checks: checks, since: area == .device ? start : began))
             }
             let stopped = stopReason
             let pending = DiagnosticArea.allCases.filter { area in !results.contains { $0.area == area } }
-            let unverified = results.flatMap(\.checks).filter { $0.state != .passed }.map(\.title)
+            let unverified = results.flatMap(\.checks).filter { $0.state == .partial || $0.state == .unverifiable }.map(\.title)
             let info = Bundle.main.infoDictionary
             let environment: DiagnosticEnvironment
             #if targetEnvironment(simulator)

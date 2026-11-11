@@ -14,19 +14,19 @@ struct SonnetStage: View {
     var rendering: Bool = true
     var showsTranslation: Bool = true
     var diagnosticProbe: DiagnosticStageProbe? = nil
+    var clockProbe: Binding<String>? = nil
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var ready = false
     @State private var failed = false
     @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
-
     var body: some View {
         ZStack(alignment: .bottom) {
             SonnetWebView(songID: songID, title: title, artist: artist, timeline: timeline, revision: revision,
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
                           style: style, energySaving: energySaving || lowPower, rendering: rendering && scenePhase == .active,
-                          diagnosticProbe: diagnosticProbe, ready: $ready, failed: $failed)
+                          diagnosticProbe: diagnosticProbe, clockProbe: clockProbe, ready: $ready, failed: $failed)
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
@@ -55,6 +55,7 @@ private struct SonnetWebView: UIViewRepresentable {
     let energySaving: Bool
     let rendering: Bool
     let diagnosticProbe: DiagnosticStageProbe?
+    let clockProbe: Binding<String>?
     @Binding var ready: Bool
     @Binding var failed: Bool
 
@@ -79,6 +80,7 @@ private struct SonnetWebView: UIViewRepresentable {
         context.coordinator.parent = self; context.coordinator.update()
         var state = failed ? "載入失敗：" + context.coordinator.failureDetail : ready ? "已就緒" : "載入中"
         #if DEBUG
+        if ready, clockProbe != nil { context.coordinator.sampleClock() }
         if ready, ProcessInfo.processInfo.arguments.contains("--playback-probe") {
             state += " · " + context.coordinator.lyricFont
         }
@@ -108,6 +110,31 @@ private struct SonnetWebView: UIViewRepresentable {
         var lastStamp = Date.distantPast
         var lastPlaying = false
         var lastRendering = true
+        #if DEBUG
+        private var lastClockProbe = ""
+        private var samplingClock = false
+
+        func sampleClock() {
+            guard let view, let probe = parent.clockProbe, !samplingClock else { return }
+            let key = "\(parent.revision)|\(parent.playing)|\(Int(parent.time * 2))|\(lyricFont)"
+            guard key != lastClockProbe else { return }
+            lastClockProbe = key
+            samplingClock = true
+            let songID = parent.songID
+            let style = parent.style
+            view.callAsyncJavaScript("return window.FoliaStage?.diagnostics() ?? null", arguments: [:],
+                                     in: nil, in: .page) { [weak self] result in
+                guard let self else { return }
+                samplingClock = false
+                guard parent.songID == songID, parent.style == style else { return }
+                guard case .success(let value) = result, let state = value as? [String: Any],
+                      state["canvas"] as? Bool == true, let time = state["time"] as? Double,
+                      let playing = state["playing"] as? Bool else { lastClockProbe = ""; return }
+                let sample = String(format: "%.3f|%@|%@", time, playing ? "playing" : "paused", lyricFont)
+                if probe.wrappedValue != sample { probe.wrappedValue = sample }
+            }
+        }
+        #endif
         init(_ parent: SonnetWebView) { self.parent = parent }
         func update() {
             guard loaded, let view else { return }

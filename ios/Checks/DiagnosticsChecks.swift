@@ -23,6 +23,16 @@ enum DiagnosticsChecks {
         precondition(DiagnosticProblem.classify(SubtitleReadError("region-restricted")).code == .region)
         precondition(DiagnosticProblem.classify(SubtitleReadError("verification-required")).code == .verification)
 
+        let noMatch = DiagnosticProblem(code: .noMatch)
+        let unauthorized = DiagnosticProblem(code: .providerAuthorizationRequired)
+        let timeout = DiagnosticProblem(code: .timeout, nativeCode: NSURLErrorTimedOut)
+        let missingDuration = DiagnosticProblem(code: .missingDuration)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([noMatch, noMatch]) == noMatch)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([noMatch, unauthorized]) == unauthorized)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([unauthorized, noMatch, timeout]) == timeout)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([missingDuration, missingDuration]) == missingDuration)
+        precondition(DiagnosticProblem.afterExhaustingAudioSources([noMatch, media]) == media)
+
         let start = ContinuousClock.now
         let operations: [@Sendable () async -> Int?] = [
             { @Sendable in try? await Task.sleep(for: .seconds(10)); return nil },
@@ -53,13 +63,22 @@ enum DiagnosticsChecks {
         ]
         let result = DiagnosticResult(area: .google, checks: checks, since: now)
         precondition(result.state == .partial)
+        let unavailable = DiagnosticCheck("device.transport", "缺少播放時鐘", .unverifiable, .observedPlayback,
+            problem: DiagnosticProblem(code: .noData))
+        precondition(DiagnosticResult(area: .device, checks: [unavailable], since: Date()).state == .unverifiable)
+        let process = DiagnosticCheck("device.process", "取樣", .passed, .operatingSystem, since: now.addingTimeInterval(-1))
+        let device = DiagnosticResult(area: .device, checks: [process, unavailable], since: Date())
+        precondition(device.state == .partial && device.measuredMs >= 1_000)
+        let legacyDevice = try JSONDecoder().decode(DiagnosticResult.self, from: Data(
+            #"{"area":"device","state":"partial","elapsedMs":0,"checks":[{"id":"device.process","title":"取樣","state":"passed","evidence":"operatingSystem","elapsedMs":13156,"metrics":{},"checkpoints":[]}]}"#.utf8))
+        precondition(legacyDevice.timeLabel == "13156 ms")
         let events = [
             DiagnosticEvent(at: now, kind: .artworkLoaded, source: .youtube),
             DiagnosticEvent(at: now, kind: .assetRejected, source: .youtube,
                 problem: DiagnosticProblem(code: .permission, httpStatus: 403, nativeCode: -11828,
                                            mediaIssue: .durationUnavailable))
         ]
-        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.14", build: "25",
+        let report = DiagnosticReport(schemaVersion: 1, id: UUID(), appVersion: "0.3.16", build: "27",
             operatingSystem: "CI", deviceModel: "CI", environment: .ciFixture, startedAt: now, endedAt: Date(),
             connection: .unknown, stopReason: nil, requestedAreas: [.google, .device], results: [result], events: events,
             systemTraces: [DiagnosticSystemTrace(kind: .crash, foliaOffsets: offsets)],

@@ -171,6 +171,9 @@ private struct PlatformEntries: View {
 
     private func open(_ url: URL) {
         pauseLocalPlayback()
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--spotify-handoff-fixture") { return }
+        #endif
         openURL(url)
     }
 

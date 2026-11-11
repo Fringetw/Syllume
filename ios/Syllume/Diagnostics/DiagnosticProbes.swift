@@ -107,12 +107,13 @@ struct DiagnosticProbes {
                                          problem: DiagnosticProblem.classify(error, fallback: .engine)))
         }
 
+        let offsetStarted = Date()
         let offset = LyricTimingOffset.adjusted(0, by: 0.4)
         let timed = LyricTimeline(lines: aligned.lines)
         let moved = timed.activeIndex(at: LyricTimingOffset.displayed(position: 1.2, offset: offset)) == 0
             && timed.activeIndex(at: 1.2) == nil
         checks.append(DiagnosticCheck("captions.offset", "手動偏移與播放時間對照", moved ? .passed : .failed, .simulatedInput,
-                                      problem: moved ? nil : DiagnosticProblem(code: .timeline)))
+                                      since: offsetStarted, problem: moved ? nil : DiagnosticProblem(code: .timeline)))
         guard !inputs.fixture else {
             return checks + [skipped("captions.live", "JANE DOE 真實 CC", .liveNetwork, .noData)]
         }
@@ -146,10 +147,10 @@ struct DiagnosticProbes {
     }
 
     func audio() async -> [DiagnosticCheck] {
-        if inputs.player.isPlaying {
-            return [skipped("audio.busy", "音訊與解碼檢查", .observedPlayback, .appBusy, note: "暫停主播放器後可重試。")]
+        var checks = [currentTransport()]
+        if inputs.player.wantsPlayback {
+            return checks + [skipped("audio.busy", "音訊與解碼檢查", .observedPlayback, .appBusy, note: "暫停主播放器後可重試。")]
         }
-        var checks: [DiagnosticCheck] = []
         if let demo = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
             checks.append(await audioCheck("audio.bundled", "內建音檔的解碼與播放", url: demo, duration: 30, evidence: .bundledSample))
             checks.append(await interruptedCopy(demo))
@@ -177,18 +178,34 @@ struct DiagnosticProbes {
                   subtitle: selected?.artist ?? "Kobo Kanaeru - Topic", url: url,
                   duration: selected?.duration ?? (videoID == Self.helpVideo ? 187 : nil))) else { return checks }
         let began = Date()
+        let connection = inputs.youtube
         do {
-            let metadata = try await PlaybackLookup.within(.seconds(8)) {
-                try await AudioDownloadService.shared.publicVideo(videoID)
-            }
-            if song.duration == nil { song.duration = metadata.duration }
-            let comparable = DownloadSongMatch.sameDuration(song.duration, metadata.duration)
-            checks.append(DiagnosticCheck("audio.youtube", "YouTube 影片的公開播放資料", comparable ? .passed : .partial, .liveNetwork,
-                since: began, problem: comparable ? nil : DiagnosticProblem(code: .missingDuration),
-                note: "此項檢查公開影片資訊與時長。App 內的同版本音源由本機或其他可用服務提供。",
-                metrics: ["sourceDuration_s": metadata.duration]))
-        } catch { checks.append(externalFailure("audio.youtube", "YouTube 影片的公開播放資料", error, since: began)) }
-        if song.duration == nil { song = await inputs.youtube.playlistSongWithDuration(song) }
+            guard connection.connected else { throw DiagnosticProblem(code: .signedOut) }
+            guard let metadata = try await PlaybackLookup.within(.seconds(8), operation: {
+                try await connection.videoDetails([videoID], includeMetadata: true).first
+            }), let length = metadata.duration else { throw DiagnosticProblem(code: .noData) }
+            let comparable = song.duration == nil || DownloadSongMatch.sameDuration(song.duration, length)
+            song = metadata.enrich(song)
+            var metrics = ["sourceDuration_s": length]
+            if let embeddable = metadata.status?.embeddable { metrics["embedAllowedByVideo"] = embeddable ? 1 : 0 }
+            checks.append(DiagnosticCheck("audio.youtube", "YouTube Data API 影片資料", comparable ? .passed : .failed, .liveNetwork,
+                since: began, problem: comparable ? nil : DiagnosticProblem(code: .timeline),
+                note: "這一步只核對官方影片資料。實際播放須觀測目前歌曲的播放器時間推進。", metrics: metrics))
+        } catch { checks.append(externalFailure("audio.youtube", "YouTube Data API 影片資料", error, since: began)) }
+
+        let lyrics = song.recordingMetadata
+        let lyricStart = Date()
+        do {
+            guard let length = song.duration else { throw DiagnosticProblem(code: .missingDuration) }
+            guard let result = try await PlaybackLookup.within(.seconds(12), operation: {
+                try await OnlineLyrics.shared.exact(title: lyrics.title, artist: lyrics.artist, duration: length)
+            }), let text = result.syncedLyrics else { throw DiagnosticProblem(code: .noMatch) }
+            checks.append(DiagnosticCheck("audio.lyrics", "LRCLIB 同版本與同步時間戳", .passed, .liveNetwork, since: lyricStart,
+                note: "核對歌名、演出者、版本、時長與時間戳範圍。實際唱詞對齊需對照同版本音訊。",
+                metrics: ["lyricCueCount": Double(LyricTimeline(lrc: text).lines.count), "durationDifference_s": abs(length - result.duration)]))
+        } catch {
+            checks.append(externalFailure("audio.lyrics", "LRCLIB 同版本與同步時間戳", error, since: lyricStart))
+        }
 
         let sources: [DiagnosticSource] = [.navidrome, .netease, .qq]
         for source in sources {
@@ -202,6 +219,24 @@ struct DiagnosticProbes {
         return checks
     }
 
+    private func currentTransport() -> DiagnosticCheck {
+        let key = "audio.currentClock", title = "目前歌曲的實際播放時間軸"
+        let player = inputs.player
+        let metrics = player.diagnosticTransportMetrics
+        if let problem = player.diagnosticPlaybackProblem {
+            let note = ["目前歌曲的播放已失敗。", player.diagnosticPlaybackDetails].compactMap { $0 }.joined(separator: "\n")
+            return DiagnosticCheck(key, title, .failed, .observedPlayback, problem: problem,
+                note: note, metrics: metrics)
+        }
+        guard player.didAdvancePlayback, let difference = metrics["displayClockDifference_s"] else {
+            return skipped(key, title, .observedPlayback, .noData, note: "需要選定歌曲實際起播並觀測時間推進。")
+        }
+        let aligned = difference <= 0.5
+        return DiagnosticCheck(key, title, aligned ? .passed : .failed, .observedPlayback,
+            problem: aligned ? nil : DiagnosticProblem(code: .timeline),
+            note: "播放器已觀測到時間推進。比對目前介面時間與播放引擎讀數。", metrics: metrics)
+    }
+
     private func provider(_ source: DiagnosticSource, song: SyncedYouTubeSong) async -> [DiagnosticCheck] {
         let start = Date()
         let key = "audio." + source.rawValue
@@ -211,18 +246,32 @@ struct DiagnosticProbes {
             let attempt = try await PlaybackLookup.within(.seconds(14)) {
                 await AudioDownloadService.shared.streamingSource(source, song: song, account: account)
             }
-            if let problem = attempt.problem { return [externalFailure(key, title, problem, since: start)] }
-            guard let best = attempt.candidates.sorted(by: DownloadAudioCandidate.preferredForStreaming).first else {
-                return [skipped(key, title, .liveNetwork, .noMatch)]
+            if let problem = attempt.problem {
+                return [externalFailure(key, title, problem, since: start),
+                        skipped(key + ".media", source.title + "實際音訊播放", .liveNetwork, problem.code),
+                        skipped(key + ".download", source.title + "下載與離線重播", .liveNetwork, problem.code)]
             }
+            let options = attempt.candidates.sorted(by: DownloadAudioCandidate.preferredForStreaming)
+            guard let first = options.first else { return [skipped(key, title, .liveNetwork, .noMatch)] }
             var checks = [DiagnosticCheck(key, title, .passed, .liveNetwork, since: start,
                 note: "沿用正式播放器的歌名、演出者、時長與版本比對。",
-                metrics: ["matchedCandidates": Double(attempt.candidates.count), "expectedDuration_s": best.duration])]
+                metrics: ["matchedCandidates": Double(options.count), "expectedDuration_s": first.duration])]
             guard inputs.allowMedia else {
-                return checks + [skipped(key + ".media", source.title + "實際音訊與下載", .liveNetwork, .authorizationRequired)]
+                return checks + [skipped(key + ".media", source.title + "實際音訊播放", .liveNetwork, .authorizationRequired),
+                                 skipped(key + ".download", source.title + "下載與離線重播", .liveNetwork, .authorizationRequired)]
             }
-            checks.append(await audioCheck(key + ".media", source.title + "實際音訊播放",
-                                           url: best.streamingURL ?? best.url, duration: best.duration, evidence: .liveNetwork))
+            var playable: DownloadAudioCandidate?
+            for (index, candidate) in options.prefix(4).enumerated() {
+                guard !Task.isCancelled else { break }
+                let check = await audioCheck(key + ".media.\(index + 1)", "\(candidate.quality) 實際播放",
+                    url: candidate.streamingURL ?? candidate.url, duration: candidate.duration, evidence: .liveNetwork)
+                checks.append(check)
+                if check.state == .passed { playable = candidate; break }
+            }
+            guard let best = playable else {
+                return checks + [skipped(key + ".download", source.title + "下載與離線重播", .liveNetwork, .noData,
+                                         note: "沒有先通過播放時鐘與音軌驗證的同版本音源。")]
+            }
             let downloadedAt = Date()
             do {
                 let local = try await PlaybackLookup.within(.seconds(18)) {
@@ -278,7 +327,7 @@ struct DiagnosticProbes {
                     if info.mBitsPerChannel > 0 { metrics["bitsPerChannel"] = Double(info.mBitsPerChannel) }
                 }
             }
-            metrics.merge(try await mutedPlayback(asset)) { _, latest in latest }
+            metrics.merge(try await mutedPlayback(asset, duration: length)) { _, latest in latest }
             let extensionName = url.pathExtension.lowercased()
             let formatNote = ["m4a", "flac", "mp3", "aac", "wav", "aiff", "aif", "alac"].contains(extensionName) ? "容器副檔名 \(extensionName.uppercased())。" : nil
             return DiagnosticCheck(key, title, .passed, evidence, since: start, note: formatNote, metrics: metrics)
@@ -289,7 +338,7 @@ struct DiagnosticProbes {
         }
     }
 
-    private func mutedPlayback(_ asset: AVURLAsset) async throws -> [String: Double] {
+    private func mutedPlayback(_ asset: AVURLAsset, duration: Double) async throws -> [String: Double] {
         let item = AVPlayerItem(asset: asset)
         let player = AVPlayer(playerItem: item)
         player.isMuted = true
@@ -299,10 +348,31 @@ struct DiagnosticProbes {
         while ProcessInfo.processInfo.systemUptime - start < 7 {
             try Task.checkCancellation()
             if let error = item.error { throw error }
-            if player.currentTime().seconds > 0.12 && player.timeControlStatus == .playing {
+            let played = player.currentTime().seconds
+            if played > 0.12 && player.timeControlStatus == .playing {
                 var metrics = ["playerFirstAudioClock_ms": (ProcessInfo.processInfo.systemUptime - start) * 1000]
+                metrics["observedClock_s"] = played
                 if let event = item.accessLog()?.events.last, event.numberOfStalls >= 0 {
                     metrics["stalls"] = Double(event.numberOfStalls)
+                }
+                player.pause()
+                let paused = player.currentTime().seconds
+                try await Task.sleep(for: .milliseconds(150))
+                let drift = abs(player.currentTime().seconds - paused)
+                guard drift.isFinite, drift <= 0.1 else { throw DiagnosticProblem(code: .timeline) }
+                metrics["pauseDrift_s"] = drift
+                if asset.url.isFileURL {
+                    let target = min(1.5, duration / 3)
+                    player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero,
+                                toleranceAfter: .zero, completionHandler: { _ in })
+                    let seekStarted = ProcessInfo.processInfo.systemUptime
+                    while ProcessInfo.processInfo.systemUptime - seekStarted < 2,
+                          abs(player.currentTime().seconds - target) > 0.08 {
+                        try await Task.sleep(for: .milliseconds(50))
+                    }
+                    let difference = abs(player.currentTime().seconds - target)
+                    guard difference.isFinite, difference <= 0.08 else { throw DiagnosticProblem(code: .timeline) }
+                    metrics["seekError_s"] = difference
                 }
                 return metrics
             }
@@ -312,14 +382,18 @@ struct DiagnosticProbes {
     }
 
     func animation(_ stage: DiagnosticStageProbe) async -> [DiagnosticCheck] {
-        if inputs.player.isPlaying { return [skipped("animation.busy", "商籟與繪光", .observedPlayback, .appBusy)] }
+        if inputs.player.wantsPlayback { return [skipped("animation.busy", "商籟與繪光", .observedPlayback, .appBusy)] }
         guard let file = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
               let text = try? String(contentsOf: file, encoding: .utf8) else {
             return [DiagnosticCheck("animation.resources", "動畫測試資源", .failed, .bundledSample,
                                     problem: DiagnosticProblem(code: .engine))]
         }
         let timeline = LyricTimeline(lrc: text)
-        var checks = await stage.inspect(.sonnet, timeline: timeline)
+        let font = SyllumeLyricFont.registeredName
+        let validFont = font == "GenSenRounded2JP-M"
+        var checks = [DiagnosticCheck("animation.nativeFont", "歌詞清單源泉圓體 JP", validFont ? .passed : .failed,
+            .bundledSample, problem: validFont ? nil : DiagnosticProblem(code: .engine), note: font)]
+        checks += await stage.inspect(.sonnet, timeline: timeline)
         if !Task.isCancelled { checks += await stage.inspect(.lumiere, timeline: timeline) }
         checks.append(skipped("animation.interactions", "真實音源同步、弱網與沉浸／背景切換", .observedPlayback, .noData,
                               note: "控制時鐘已取樣。要核對真實歌曲與系統切換，請開啟播放事件紀錄後操作。"))
@@ -341,19 +415,18 @@ struct DiagnosticProbes {
             since: start, note: "啟動取樣從 App 初始化算到首頁出現；CPU 為本次觀測期間、記憶體為進程常駐量。", metrics: counters)]
         let events = DiagnosticsEvents.shared.snapshot
         let transport = inputs.player.diagnosticTransportMetrics
-        let observed = !events.isEmpty || !transport.isEmpty
-        let begin = events.filter { $0.kind == .playbackStarted }.first?.at
-        let elapsed = begin.flatMap { first in events.last.map { $0.at.timeIntervalSince(first) } } ?? 0
+        let playing = DiagnosticsEvents.shared.observedPlaybackSeconds
+        let observed = playing > 0.12
         checks.append(DiagnosticCheck("device.transport", "實際播放緩衝與前後景事件", observed ? .partial : .unverifiable, .observedPlayback,
-            problem: observed ? nil : DiagnosticProblem(code: .noData), note: "事件最多保留最近 96 筆。長時間穩定性以實際播放紀錄分析。",
-            metrics: transport.merging(["events": Double(events.count), "observedSpan_s": elapsed,
+            problem: observed ? nil : DiagnosticProblem(code: .noData),
+            note: observed ? "依實際推進的播放器時鐘與已記錄事件取樣。" : "只有操作或失敗事件，尚未觀測到可驗證的播放時間推進。",
+            metrics: transport.merging(["events": Double(events.count), "observedPlaying_s": playing,
                 "backgroundTransitions": Double(events.filter { $0.kind == .background }.count),
                 "interruptions": Double(events.filter { $0.kind == .audioInterruption }.count)]) { first, _ in first }))
         let system = DiagnosticsSystemMetrics.shared.metrics
         checks.append(DiagnosticCheck("device.metricKit", "MetricKit 系統效能與異常報告", system.isEmpty ? .unverifiable : .partial, .operatingSystem,
             problem: system.isEmpty ? DiagnosticProblem(code: .systemUnavailable) : nil,
             note: "需先開啟播放事件紀錄，系統提供資料後才可讀取。僅保留 Syllume 的堆疊位移。", metrics: system))
-        let playing = DiagnosticsEvents.shared.observedPlaybackSeconds
         checks.append(DiagnosticCheck("device.longRun", "長時間播放觀測", playing >= 600 ? .partial : .unverifiable, .observedPlayback,
             problem: playing >= 600 ? nil : DiagnosticProblem(code: .noData),
             note: "開啟紀錄並正常播放至少 10 分鐘可比較播放秒數與中斷事件。這些取樣無法證明沒有卡頓或記憶體洩漏。",
@@ -368,7 +441,9 @@ struct DiagnosticProbes {
 
     private func externalFailure(_ key: String, _ title: String, _ error: Error, since start: Date,
                                  fallback: DiagnosticCode = .transport) -> DiagnosticCheck {
-        DiagnosticCheck(key, title, .unverifiable, .liveNetwork, since: start,
-                        problem: DiagnosticProblem.classify(error, fallback: fallback))
+        let problem = DiagnosticProblem.classify(error, fallback: fallback)
+        let failed: Set<DiagnosticCode> = [.noMatch, .invalidResponse, .invalidMedia, .timeline]
+        return DiagnosticCheck(key, title, failed.contains(problem.code) ? .failed : .unverifiable, .liveNetwork,
+                               since: start, problem: problem)
     }
 }

@@ -124,7 +124,8 @@ actor SubtitleNetwork {
                 body: JSONSerialization.data(withJSONObject: payload))
             lines = try SubtitleSourceDecoders.qqLyrics(data)
         case "ytm":
-            let sameVideo = current?.source == "ytm" && current?.id == song.id
+            let sameVideo = (current?.source == "ytm" && current?.id == song.id)
+                || (current?.usesVideoClock == true && current?.originVideoID == song.id)
             lines = try await youtubeLyrics(id: song.id, baseline: original, sameVideo: sameVideo)
         case "lrclib": lines = record.lines ?? []
         default: throw SubtitleReadError("unsupported")

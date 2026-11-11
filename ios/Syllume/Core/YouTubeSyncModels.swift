@@ -19,6 +19,14 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
     var avatarURL: URL? = nil
     var thumbnailURL: URL? = nil
     var localTrackID: String? = nil
+    var creditedArtist: String? = nil
+
+    var recordingMetadata: SubtitleSong {
+        let details = YouTubeCaptionDecoders.metadata(id: videoID, title: title, artist: artist, duration: duration ?? 0)
+        return SubtitleSong(id: details.id, source: details.source, title: details.title,
+            artist: creditedArtist ?? details.artist, durationMs: details.durationMs,
+            originVideoID: YouTubeVideo.validID(videoID) ? videoID : nil)
+    }
 
     var artworkURLs: [URL] {
         let preferred = thumbnailURL.flatMap { YouTubeArtwork.thumbnailURL($0.absoluteString) }
@@ -40,8 +48,12 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
 }
 
 struct YouTubeAudioBinding: Codable, Equatable, Sendable {
+    static let manualAttachmentQuality = "手動附加音檔"
     let trackID: String
     let quality: String
+
+    // Manual imports always receive a plain UUID. Older attachment code could pick a concurrent download.
+    var isDownloadMarkedAsManualAttachment: Bool { quality == Self.manualAttachmentQuality && trackID.hasPrefix("download-") }
 }
 
 struct SyllumePlaylistEdits: Codable, Equatable {
@@ -202,8 +214,16 @@ enum DownloadSongMatch {
         return clean.components(separatedBy: CharacterSet(charactersIn: "/／、,，&＆;；×"))
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
-    // QQ uses the Chinese credit for this artist on releases also listed under the Japanese name.
-    private static let utadaKeys = Set(["宇多田光", "宇多田ヒカル", "Hikaru Utada"].map(normalized))
+    private static let artistAliases = [
+        ["宇多田ヒカル", "宇多田光", "Hikaru Utada"],
+        ["米津玄師", "Kenshi Yonezu"]
+    ].map { (names: $0, keys: Set($0.map(normalized))) }
+
+    static func queryNames(for name: String) -> [String] {
+        let key = normalized(name)
+        let aliases = artistAliases.first { $0.keys.contains(key) }?.names ?? []
+        return [name] + aliases.filter { normalized($0) != key }
+    }
 
     static func artistKeys(_ text: String) -> Set<String> {
         var keys = Set<String>()
@@ -219,14 +239,22 @@ enum DownloadSongMatch {
                 }
             }
         }
-        if !keys.isDisjoint(with: utadaKeys) { keys.formUnion(utadaKeys) }
+        for aliases in artistAliases where !keys.isDisjoint(with: aliases.keys) { keys.formUnion(aliases.keys) }
         return keys
     }
+
+    static func samePerformers(_ lhs: String, _ rhs: String) -> Bool {
+        let a = artistNames(lhs).map(artistKeys), b = artistNames(rhs).map(artistKeys)
+        return !a.isEmpty && a.count == b.count
+            && a.allSatisfy { one in b.contains { !$0.isDisjoint(with: one) } }
+            && b.allSatisfy { one in a.contains { !$0.isDisjoint(with: one) } }
+    }
+
     static func matches(_ song: SyncedYouTubeSong, title: String, artists: [String], duration: Double?) -> Bool {
         let versionTags = versions(song.title)
         guard let expected = song.duration, let duration, expected.isFinite, duration.isFinite,
               expected > 0, duration > 0, duration <= 5400, versionTags == versions(title) else { return false }
-        let metadata = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title, artist: song.artist, duration: expected)
+        let metadata = song.recordingMetadata
         let performers = artistNames(metadata.artist)
         let videoPresentation = song.title.range(of: #"(?i)music video|official mv|\bmv\b|【AMV|「[^」]+」"#, options: .regularExpression) != nil
         // A duet video can have an intro even if the uploader omits "MV" from "Artists - Song".
@@ -241,6 +269,7 @@ enum DownloadSongMatch {
         let keys = artists.reduce(into: Set<String>()) { $0.formUnion(artistKeys($1)) }
         let requested = artistKeys(metadata.artist).union(artistKeys(song.artist))
         guard !keys.isDisjoint(with: requested) else { return false }
+        if let credit = song.creditedArtist, !samePerformers(credit, artists.joined(separator: "、")) { return false }
         if performers.count > 1 {
             guard performers.allSatisfy({ !keys.isDisjoint(with: artistKeys($0)) }) else { return false }
         }

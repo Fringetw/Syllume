@@ -114,15 +114,18 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     func load(_ next: SubtitleInput?, timeline rawTimeline: LyricTimeline) {
         guard input != next else { return }
         let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
+        let oldDuration = input?.song.durationMs ?? 0
+        let newDuration = next?.song.durationMs ?? 0
+        let sameClock = sameSong && (oldDuration <= 0 || newDuration <= 0 || abs(oldDuration - newDuration) <= 2_000)
         let previousRaw = raw.lines
         let previousManual = manual?.lines
         cancelRequests()
-        if !sameSong {
+        if !sameClock {
             cancelTranslationRead(); translationPreview = nil; manual = nil
             sourceStatus.removeAll(); sourceDiagnostics.removeAll()
         }
         input = next; token = UUID().uuidString
-        if !sameSong || !rawTimeline.lines.isEmpty || next?.loading != true {
+        if !sameClock || !rawTimeline.lines.isEmpty || next?.loading != true {
             raw = rawTimeline.prepared(for: (next?.song.durationMs ?? 0) / 1000)
         }
         #if DEBUG
@@ -138,8 +141,8 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                let data = try? Data(contentsOf: file), let stored = try? JSONDecoder().decode(SavedTranslation.self, from: data),
                matches(stored, song) { manual = stored }
         }
-        if !sameSong { apply(LyricTimeline(lines: [])) }
-        if !sameSong || previousRaw != raw.lines || previousManual != manual?.lines { displayBase() }
+        if !sameClock { apply(LyricTimeline(lines: [])) }
+        if !sameClock || previousRaw != raw.lines || previousManual != manual?.lines { displayBase() }
         engineReport = [:]; engineReportText = ""
         updateReport(); sendInput()
     }
@@ -236,7 +239,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     }
 
     private func matches(_ stored: SavedTranslation, _ song: SubtitleSong) -> Bool {
-        DownloadSongMatch.sameDuration(stored.duration, song.durationMs / 1000)
+        stored.duration > 0 && song.durationMs > 0 && abs(stored.duration - song.durationMs / 1000) <= 2
             && DownloadSongMatch.normalized(stored.title) == DownloadSongMatch.normalized(song.title)
     }
 
@@ -370,7 +373,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         let translated = timeline.lines.filter { $0.translation?.isEmpty == false || $0.extra["displayTranslation"] != nil }.count
         let summary = ["繁體字幕：\(engine)", conversion, "歌曲：\(song)",
             "原字幕 \(raw.lines.count) 行 · 顯示 \(timeline.lines.count) 行 · 附譯文 \(translated) 行",
-            manual.map { "已套用：\($0.source)" } ?? (input?.loading == true ? "等待目前音源與原字幕。" : "")]
+            manual.map { "已套用：\($0.source)" } ?? (input?.loading == true ? "正在核對同步歌詞版本。" : "")]
             .filter { !$0.isEmpty }.joined(separator: "\n")
         let readable = engineReportText.components(separatedBy: "── 完整結構化紀錄 ──").first?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""

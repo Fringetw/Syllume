@@ -97,11 +97,27 @@ struct YouTubeMusicScreen: View {
             Button("儲存") { sync.rename(name) }
             Button("取消", role: .cancel) { }
         }
-        .confirmationDialog("下載音樂到「檔案」？", isPresented: Binding(
-            get: { downloadTarget != nil }, set: { if !$0 { downloadTarget = nil } }), presenting: downloadTarget) { song in
-            Button("下載音樂") { sync.download(song, library: library, account: account, connection: connection); downloadTarget = nil }
-        } message: { song in
-            Text("「\(song.title)」會尋找可用的同版本音檔，優先選擇較高音質，並在儲存前完整解碼。請確認你有權下載這份音檔。")
+        .sheet(item: $downloadTarget) { song in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("下載音樂到「檔案」？").font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("「\(song.title)」會尋找可用的同版本音檔，優先選擇較高音質，並在儲存前完整解碼。請確認你有權下載這份音檔。")
+                        .foregroundStyle(.secondary)
+                    Button("下載音樂") {
+                        downloadTarget = nil
+                        sync.download(song, library: library, account: account, connection: connection)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("confirmPlaylistDownload")
+                    Button("取消", role: .cancel) { downloadTarget = nil }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("cancelPlaylistDownload")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+            }
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -145,6 +161,26 @@ struct YouTubeMusicScreen: View {
                 if sync.downloading != nil {
                     Button("取消下載", systemImage: "xmark.circle") { sync.cancelDownload() }
                 }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-attachment-race-fixture"),
+                   let download = songs.first, let target = songs.dropFirst().first,
+                   let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
+                    Button("同時下載與附加音檔") {
+                        Task {
+                            let attachment = Task { try await sync.attach(file, to: target, library: library) }
+                            let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                            while !library.importInProgress, ContinuousClock.now < deadline {
+                                try? await Task.sleep(for: .milliseconds(25))
+                            }
+                            sync.download(download, library: library, account: account, connection: connection)
+                            do { try await attachment.value }
+                            catch { message = "測試音檔附加失敗。" }
+                        }
+                    }
+                    .accessibilityIdentifier("attachWhileDownloadingFixture")
+                    .accessibilityValue(sync.localTrack(for: target, library: library)?.id ?? "")
+                }
+                #endif
                 if let error = sync.error { Text(error).foregroundStyle(.orange).font(.footnote) }
             }
             Section("歌曲") {
@@ -172,7 +208,7 @@ struct YouTubeMusicScreen: View {
         let file = sync.localTrack(for: song, library: library).flatMap(library.artworkURL)
         return Button { if !editing.isEditing { play(song, songs) } } label: {
             HStack(spacing: 12) {
-                SongArtworkView(source: .init(file: file, videoID: song.videoID, candidates: song.artworkURLs),
+                SongArtworkView(source: SongArtworkSource(file: file, song: song),
                                 tint: SyllumePalette.accent, size: 32, cornerRadius: 16)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(song.title).foregroundStyle(.primary).lineLimit(2)
@@ -193,7 +229,13 @@ struct YouTubeMusicScreen: View {
             }
             if let url = YouTubeVideo.musicURL(for: song.videoID) {
                 Link(destination: url) { Label("在 YouTube Music 開啟", systemImage: "arrow.up.right.square") }
-                Button("下載音樂", systemImage: "arrow.down.circle") { downloadTarget = song }.disabled(sync.downloading != nil)
+                Button("下載音樂", systemImage: "arrow.down.circle") {
+                    Task { @MainActor in
+                        await Task.yield()
+                        downloadTarget = song
+                    }
+                }
+                .disabled(sync.downloading != nil)
                 Button("附加音檔", systemImage: "folder.badge.plus") { attachment = song; importing = true }
             }
             Button("從清單移除", systemImage: "minus.circle", role: .destructive) { sync.remove(song) }

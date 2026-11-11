@@ -12,17 +12,22 @@ final class YouTubePlayback {
     private(set) var isBuffering = false
     private(set) var position = 0.0
     private(set) var duration = 0.0
+    private(set) var sampledTime: Double?
     private(set) var timeline = LyricTimeline(lines: [])
     private(set) var timelineRevision = UUID()
     private(set) var lyricsLoading = false
     private(set) var lyricsSource: String?
     private(set) var error: String?
     private(set) var seekTime = 0.0
-    private(set) var seekRevision = UUID()
+    private(set) var seekRevision: UUID?
     private(set) var visible = false
     private(set) var playbackRevision = 0
+    private(set) var didReachEnd = false
+    private(set) var didBlockAutoplay = false
+    private(set) var failure: DiagnosticProblem?
+    var isSeeking: Bool { pendingSeek != nil }
     #if DEBUG
-    private(set) var mediaSampleTime = 0.0
+    var mediaSampleTime: Double { sampledTime ?? 0 }
     private(set) var mediaPlaybackState = "unknown"
     func recordMediaState(_ state: String, session: UUID, revision: Int) {
         guard session == self.session, revision == playbackRevision else { return }
@@ -36,14 +41,16 @@ final class YouTubePlayback {
     @ObservationIgnored private var pendingSeek: (time: Double, date: Date)?
     @ObservationIgnored private let manualLyricRoot: URL?
     @ObservationIgnored private let lookup: @Sendable (String, String, Double) async throws -> LyricSearchRecord?
+    @ObservationIgnored private let automaticallyMatchesLyrics: Bool
     var current: YouTubeVideo? { queue.indices.contains(index) ? queue[index] : nil }
     var canAdvance: Bool { index + 1 < queue.count }
 
-    init(lyricDirectory: URL? = nil,
+    init(lyricDirectory: URL? = nil, automaticallyMatchesLyrics: Bool = true,
          lookup: @escaping @Sendable (String, String, Double) async throws -> LyricSearchRecord? = {
              try await OnlineLyrics.shared.exact(title: $0, artist: $1, duration: $2)
          }) {
         manualLyricRoot = lyricDirectory; self.lookup = lookup
+        self.automaticallyMatchesLyrics = automaticallyMatchesLyrics
     }
 
     func play(_ videos: [YouTubeVideo], selected: YouTubeVideo) {
@@ -58,18 +65,33 @@ final class YouTubePlayback {
     }
 
     func setVisible(_ value: Bool) {
-        guard visible != value else { return }
+        guard visible != value else {
+            if !value, wantsPlayback { pause() }
+            return
+        }
         visible = value
         if !value { pause() }
         else if wantsPlayback { playbackRevision += 1; pendingPlayback = true }
     }
-    func prepareToPlay() { guard current != nil else { return }; playbackRevision += 1; wantsPlayback = true; pendingPlayback = true }
+    func prepareToPlay() {
+        guard current != nil else { return }
+        playbackRevision += 1
+        wantsPlayback = true
+        isBuffering = !isPlaying
+        didReachEnd = false
+        didBlockAutoplay = false
+        failure = nil
+        pendingPlayback = true
+    }
     func retry() { guard current != nil else { return }; load() }
     func toggle() { wantsPlayback ? pause() : resume() }
     func resume() { guard current != nil, visible else { return }; error = nil; prepareToPlay() }
     func pause() { playbackRevision += 1; wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = false }
-    func autoplayBlocked() {
+    func autoplayBlocked(revision: Int?) {
+        guard visible, wantsPlayback, revision == playbackRevision else { return }
         wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = nil
+        didBlockAutoplay = true
+        failure = DiagnosticProblem(code: .playbackInteractionRequired)
         error = "請點上方 YouTube 播放器的播放鍵，開始播放。"
     }
     func next() { guard canAdvance else { return }; index += 1; load() }
@@ -84,9 +106,7 @@ final class YouTubePlayback {
         guard let track = current, snapshot.belongs(to: session, videoID: track.id) else { return }
         guard visible else { if wantsPlayback || isPlaying { pause() }; return }
         guard snapshot.commandRevision == playbackRevision else { return }
-        #if DEBUG
-        mediaSampleTime = snapshot.time
-        #endif
+        sampledTime = snapshot.time
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
         if let seek = pendingSeek, abs(snapshot.time - seek.time) > 1.5, Date().timeIntervalSince(seek.date) < 2 {
@@ -95,23 +115,30 @@ final class YouTubePlayback {
             if abs(position - snapshot.time) > 0.001 { position = snapshot.time }
             pendingSeek = nil
         }
-        if duration != snapshot.duration { duration = snapshot.duration }
+        if snapshot.duration > 0, duration != snapshot.duration { duration = snapshot.duration }
         if !stalePlay && !stalePause {
-            let playing = snapshot.state == 1, buffering = wantsPlayback && snapshot.state == 3
+            let playing = snapshot.state == 1, buffering = wantsPlayback && [-1, 3, 5].contains(snapshot.state)
             if isPlaying != playing { isPlaying = playing }
             if isBuffering != buffering { isBuffering = buffering }
-            if snapshot.state == 1 { if !wantsPlayback { wantsPlayback = true }; pendingPlayback = nil }
+            if snapshot.state == 1 {
+                if !wantsPlayback { wantsPlayback = true }
+                pendingPlayback = nil
+                didReachEnd = false
+                didBlockAutoplay = false
+                error = nil
+                failure = nil
+            }
             if snapshot.state == 2 { if wantsPlayback { wantsPlayback = false }; pendingPlayback = nil }
             if pendingPlayback == false, [-1, 0, 5].contains(snapshot.state) { pendingPlayback = nil }
         }
         if let title = snapshot.title, !title.isEmpty, title != queue[index].title { queue[index].title = title }
         if let author = snapshot.author, !author.isEmpty, author != queue[index].artist { queue[index].artist = author }
-        if snapshot.state == 0, pendingSeek == nil {
+        if snapshot.state == 0, pendingSeek == nil, wantsPlayback, duration > 0, position >= duration - 1 {
             if wantsPlayback && canAdvance { next() }
-            else if wantsPlayback || isPlaying { pause() }
+            else { didReachEnd = true; pause() }
             return
         }
-        if attemptedMatch != "manual", matchAttempts < 4, duration > 0, let track = current {
+        if automaticallyMatchesLyrics, attemptedMatch != "manual", matchAttempts < 4, duration > 0, let track = current {
             let signature = [track.title, track.artist, String(Int(duration.rounded()))].joined(separator: "|")
             if signature != attemptedMatch {
                 attemptedMatch = signature
@@ -124,10 +151,20 @@ final class YouTubePlayback {
     func failed(_ code: Int, session: String) {
         guard self.session.uuidString == session else { return }
         pause()
+        didBlockAutoplay = false
+        let reason: DiagnosticCode = switch code {
+        case 101, 150: .permission
+        case 100: .unavailable
+        case 153: .configuration
+        case -2: .timeout
+        default: .transport
+        }
+        failure = DiagnosticProblem(code: reason, nativeCode: code)
         switch code {
-        case 101, 150: error = "這支影片不允許嵌入播放，請選擇其他版本。"
+        case 101, 150: error = "原片限制嵌入播放。可在 YouTube Music 開啟。"
         case 100: error = "這支影片已移除、設為私人或無法提供播放。"
         case 153: error = "YouTube 無法辨識此安裝版本的播放來源。"
+        case -2: error = "YouTube 尚未開始播放。可重試或在 YouTube Music 開啟。"
         default: error = "YouTube 播放未完成。請檢查網路後重試。"
         }
     }
@@ -158,6 +195,8 @@ final class YouTubePlayback {
 
     private func load() {
         lyricTask?.cancel(); session = UUID(); error = nil; position = 0; duration = 0
+        sampledTime = nil
+        didReachEnd = false; didBlockAutoplay = false; failure = nil; seekTime = 0; seekRevision = nil
         isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
         matchAttempts = 0
         playbackRevision += 1; pendingPlayback = true; pendingSeek = nil

@@ -61,13 +61,13 @@ final class PlaybackSystem {
 
     func updateCommands(model: PlaybackModel) {
         let remote = MPRemoteCommandCenter.shared()
-        let hasTrack = model.current != nil && !model.externalPlayback
+        let hasTrack = model.handlesRemoteCommands
         remote.playCommand.isEnabled = hasTrack
         remote.pauseCommand.isEnabled = hasTrack
         remote.togglePlayPauseCommand.isEnabled = hasTrack
         remote.nextTrackCommand.isEnabled = hasTrack && model.canAdvance
         remote.previousTrackCommand.isEnabled = hasTrack
-        remote.changePlaybackPositionCommand.isEnabled = hasTrack && model.duration > 0
+        remote.changePlaybackPositionCommand.isEnabled = hasTrack && model.canSeek
     }
 
     private func add(_ command: MPRemoteCommand, model: PlaybackModel,
@@ -76,7 +76,7 @@ final class PlaybackSystem {
             guard let model else { return .noActionableNowPlayingItem }
             let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
             Task { @MainActor [weak model] in
-                guard let model else { return }
+                guard let model, model.handlesRemoteCommands else { return }
                 action(model, time)
             }
             return .success

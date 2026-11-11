@@ -97,13 +97,14 @@ jobs:
               -resultBundlePath "$RUNNER_TEMP/$1.xcresult" \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeCoverFallbackAndOfflineCacheWhenAudioUnavailable \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
+              -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistDownloadRequiresConfirmation \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
               -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
           }
           set -o pipefail
           playlist_log="$RUNNER_TEMP/SyllumePlaylistUI.log"
           if ! run_playlist_ui SyllumePlaylistUI 2>&1 | tee "$playlist_log"; then
-            if grep -q 'Timed out waiting for AX loaded notification' "$playlist_log" && ! grep -q 'Test Case .* failed (' "$playlist_log"; then
+            if grep -Eq 'Timed out waiting for AX loaded notification|Timed out while loading Accessibility' "$playlist_log" && ! grep -q 'Test Case .* failed (' "$playlist_log"; then
               echo "::warning::Simulator accessibility initialization failed. Retrying the same tests once."
               xcrun simctl bootstatus "$simulator_id" -b
               run_playlist_ui SyllumePlaylistUIRetry
@@ -111,6 +112,16 @@ jobs:
               exit 1
             fi
           fi
+      - name: Exercise recorded-song playback, artwork and lyric clocks on iPhone Simulator
+        if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
+        timeout-minutes: 12
+        run: |
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+            -destination "platform=iOS Simulator,id=$FOLIA_SIMULATOR_ID" \
+            -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" \
+            -resultBundlePath "$RUNNER_TEMP/SyllumeRecordedSongsUI.xcresult" \
+            -only-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
+            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
         if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
         timeout-minutes: 32
@@ -121,13 +132,15 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/SyllumeUI.xcresult" \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeCoverFallbackAndOfflineCacheWhenAudioUnavailable \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistDownloadRequiresConfirmation \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator screenshots and diagnostic reports
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
-          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeUI; do
+          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeRecordedSongsUI SyllumeUI; do
             if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
               if ! xcrun xcresulttool export attachments --path "$RUNNER_TEMP/$result.xcresult" \
                 --output-path "$RUNNER_TEMP/SyllumeUIScreenshots/$result"; then

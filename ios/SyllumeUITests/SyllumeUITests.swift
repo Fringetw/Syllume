@@ -203,10 +203,14 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let song = app.buttons["youtubeSong-fixture-row"]
         XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
-        XCTAssertTrue(app.staticTexts["測試音源目前無法播放。"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["YouTube 限制這部影片的內嵌播放。"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["openYouTubeMusic"].firstMatch.exists)
         let artwork = app.descendants(matching: .any)["playerArtwork"].firstMatch
         XCTAssertTrue(artwork.waitForExistence(timeout: 10))
+        let nowPlaying = app.staticTexts["systemNowPlayingProbe"]
+        let published = expectation(for: NSPredicate(format: "value == %@", "0.0|0.0|artwork"), evaluatedWith: nowPlaying)
+        XCTAssertEqual(XCTWaiter.wait(for: [published], timeout: 10), .completed)
         capture(app, name: "Syllume-cover-with-unavailable-audio")
         app.terminate()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-artwork-offline", "--youtube-unavailable-audio-fixture",
@@ -271,16 +275,239 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(playlistSync.value as? String, "已暫停")
         closePlayer.tap()
         XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
-        audio.press(forDuration: 1)
-        let download = app.buttons["下載音樂"].firstMatch
-        XCTAssertTrue(download.waitForExistence(timeout: 10))
-        download.tap()
-        let confirm = app.sheets.buttons["下載音樂"].firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
+    }
+
+    func testYouTubePlaylistDownloadRequiresConfirmation() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--subtitle-fixture"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let audio = app.buttons["youtubeSong-fixture-row"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["syncYouTubePlaylist"].waitForExistence(timeout: 15))
         XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
+        let confirm = app.buttons["confirmPlaylistDownload"]
+        func openConfirmation() {
+            audio.press(forDuration: 1)
+            let download = app.buttons["下載音樂"].firstMatch
+            XCTAssertTrue(download.waitForExistence(timeout: 15))
+            download.tap()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 20))
+        }
+        openConfirmation()
+        app.buttons["cancelPlaylistDownload"].tap()
+        let cancelled = expectation(for: NSPredicate(format: "hittable == true AND value == %@", "點歌時搜尋音源"),
+                                    evaluatedWith: audio)
+        XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 15), .completed)
+        openConfirmation()
         confirm.tap()
         let saved = expectation(for: NSPredicate(format: "value CONTAINS %@", "示範音軌"), evaluatedWith: audio)
         XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 20), .completed)
+    }
+
+    func testAttachmentUsesItsOwnImportWhileDownloading() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--syllume-recording-regression",
+                               "--youtube-attachment-race-fixture", "--subtitle-fixture"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let attach = app.buttons["attachWhileDownloadingFixture"]
+        XCTAssertTrue(attach.waitForExistence(timeout: 15)); attach.tap()
+        let attached = expectation(for: NSPredicate(format: "value MATCHES %@", "[A-Fa-f0-9-]{36}"), evaluatedWith: attach)
+        XCTAssertEqual(XCTWaiter.wait(for: [attached], timeout: 35), .completed,
+                       "The manual import must bind a plain UUID even when the earlier catalogue entry is a download.")
+        let download = app.buttons["youtubeSong-recording-jane"]
+        XCTAssertTrue(download.waitForExistence(timeout: 10))
+        XCTAssertTrue((download.value as? String ?? "").contains("示範音軌"))
+        let manual = app.buttons["youtubeSong-recording-lemon"]
+        XCTAssertTrue(manual.waitForExistence(timeout: 10))
+        XCTAssertEqual(manual.value as? String, "手動附加音檔")
+    }
+
+    func testSpotifyHandoffAllowsPlaybackFromEitherPlayer() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--spotify-handoff-fixture", "--playback-probe", "--subtitle-fixture",
+                               "-Folia.LyricDisplayMode", "cover"]
+        app.launch()
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15)); demo.tap()
+        let close = app.buttons["關閉播放畫面"]
+        XCTAssertTrue(close.waitForExistence(timeout: 10))
+        app.buttons["循環佇列"].tap()
+        close.tap()
+        app.segmentedControls.buttons["Spotify"].tap()
+        let external = app.buttons["在 Spotify 查看曲庫"]
+        XCTAssertTrue(external.waitForExistence(timeout: 10))
+        let mini = app.buttons["openMiniPlayer"]
+        let miniToggle = app.buttons["miniPlayerToggle"]
+        let fullToggle = app.buttons["playerToggle"]
+        let probe = app.staticTexts["localTransportProbe"]
+        for fromMini in [false, true] {
+            XCTAssertTrue(external.waitForExistence(timeout: 10)); external.tap()
+            XCUIDevice.shared.press(.home)
+            app.activate()
+            XCTAssertTrue(miniToggle.waitForExistence(timeout: 10))
+            XCTAssertEqual(miniToggle.label, "播放")
+            if fromMini { miniToggle.tap() }
+            mini.tap()
+            XCTAssertTrue(probe.waitForExistence(timeout: 10))
+            if !fromMini {
+                let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|0.0"), evaluatedWith: probe)
+                XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
+                fullToggle.tap()
+            }
+            let playing = expectation(for: NSPredicate { _, _ in
+                self.probeTime(probe) > 0.2 && (probe.value as? String ?? "").hasSuffix("|1.0")
+            }, evaluatedWith: probe)
+            XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 15), .completed,
+                           "Expected AVPlayer playback after returning from the external handoff.")
+            close.tap()
+        }
+    }
+
+    func testLateYouTubeDurationLoadsLyricsAndQueueRestartsVideo() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--syllume-recording-regression",
+                               "--youtube-playback-fixture", "--youtube-missing-duration-fixture", "--subtitle-fixture", "--subtitle-reset",
+                               "-Folia.LyricDisplayMode", "lyrics"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let jane = app.buttons["youtubeSong-recording-jane"]
+        XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.waitForExistence(timeout: 15))
+        let transport = app.staticTexts["youtubeTransportProbe"]
+        let beforeQueue = expectation(for: NSPredicate { _, _ in
+            self.probeTime(transport) >= 8 && (transport.value as? String ?? "").hasSuffix("|playing")
+        }, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [beforeQueue], timeout: 45), .completed,
+                       "Expected actual playback before restarting the current queue row.")
+        assertLyric("頭髮發現", in: app, timeout: 30)
+        app.buttons["播放佇列"].tap()
+        let current = app.buttons["trackRow-recording-jane"]
+        XCTAssertTrue(current.waitForExistence(timeout: 10)); current.tap()
+        let restarted = expectation(for: NSPredicate { _, _ in
+            let time = self.probeTime(transport)
+            return time > 0.1 && time < 7 && (transport.value as? String ?? "").hasSuffix("|playing")
+        }, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [restarted], timeout: 20), .completed,
+                       "Selecting the visible video's own queue row must restart its media clock.")
+    }
+
+    func testYouTubeSongAutomaticallyPlaysVisibleOriginal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-device-playback-regression",
+                               "--youtube-playback-fixture", "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let help = app.buttons["youtubeSong-recording-help"]
+        XCTAssertTrue(help.waitForExistence(timeout: 15)); help.tap()
+        let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+        let transport = app.staticTexts["youtubeTransportProbe"]
+        let moving = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing"#)
+        XCTAssertTrue(video.waitForExistence(timeout: 15))
+        XCTAssertGreaterThanOrEqual(video.frame.width, 200)
+        XCTAssertGreaterThanOrEqual(video.frame.height, 200)
+        let started = expectation(for: moving, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 25), .completed, "The song tap must start the official player without a second action.")
+        XCTAssertTrue(app.staticTexts["YouTube · 官方播放器"].exists)
+
+        app.buttons["關閉播放畫面"].tap()
+        let mini = app.buttons["miniPlayerToggle"]
+        XCTAssertTrue(mini.waitForExistence(timeout: 10))
+        let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: mini)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
+        mini.tap()
+        XCTAssertTrue(video.waitForExistence(timeout: 15))
+        let resumed = expectation(for: moving, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 25), .completed)
+        capture(app, name: "HELP-YouTube-visible-playback")
+    }
+
+    func testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-artwork-reset",
+                               "--syllume-recording-regression", "--youtube-playback-fixture", "--subtitle-fixture", "--subtitle-reset",
+                               "--presentation-reset"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let jane = app.buttons["youtubeSong-recording-jane"]
+        XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
+        let toggle = app.buttons["playerToggle"]
+        let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+        XCTAssertTrue(video.waitForExistence(timeout: 15))
+        // Select each mode in the UI so UserDefaults' launch-argument domain cannot pin the picker.
+        app.segmentedControls.buttons["封面"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["playerArtwork"].firstMatch.waitForExistence(timeout: 10))
+
+        app.buttons["關閉播放畫面"].tap()
+        let mini = app.buttons["openMiniPlayer"]
+        XCTAssertTrue(mini.waitForExistence(timeout: 10))
+        XCTAssertEqual(mini.value as? String, "已載入歌曲封面")
+        mini.tap()
+        app.buttons["播放佇列"].tap()
+        let janeQueue = app.buttons["trackRow-recording-jane"], lemonQueue = app.buttons["trackRow-recording-lemon"]
+        for row in [janeQueue, lemonQueue] {
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            let cover = expectation(for: NSPredicate(format: "value == %@", "已載入歌曲封面"), evaluatedWith: row)
+            XCTAssertEqual(XCTWaiter.wait(for: [cover], timeout: 10), .completed)
+        }
+        capture(app, name: "Recorded-songs-queue-artwork")
+        app.buttons["完成"].tap()
+        app.segmentedControls.buttons["歌詞"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["nowPlayingThumbnail"].firstMatch.waitForExistence(timeout: 10))
+        assertLyric("頭髮發現", in: app)
+        XCTAssertEqual(app.buttons["lyricLine-0"].value as? String, "GenSenRounded2JP-M")
+
+        let transport = app.staticTexts["youtubeTransportProbe"]
+        func playAndVerify(_ song: String, mode: String, stageID: String) {
+            XCTAssertTrue(video.waitForExistence(timeout: 15), song)
+            if toggle.label == "播放" { toggle.tap() }
+            XCTAssertGreaterThanOrEqual(video.frame.width, 200, song)
+            XCTAssertGreaterThanOrEqual(video.frame.height, 200, song)
+            // Use one accessibility snapshot for both the real media time and the play state.
+            let hasAdvanced = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing"#)
+            let advancing = expectation(for: hasAdvanced, evaluatedWith: transport)
+            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 90), .completed, "\(song): \(String(describing: transport.value))")
+            app.segmentedControls.buttons[mode].tap()
+            let stage = app.staticTexts[stageID]
+            let renderedTime = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing\|GenSenRounded2JP-M"#)
+            let rendering = expectation(for: renderedTime, evaluatedWith: stage)
+            XCTAssertEqual(XCTWaiter.wait(for: [rendering], timeout: 120), .completed, "\(song) \(mode): \(String(describing: stage.value))")
+            XCTAssertGreaterThan(probeTime(stage), 0.5, song)
+            let button = toggle.frame
+            let screen = app.frame
+            app.coordinate(withNormalizedOffset: .zero).withOffset(
+                CGVector(dx: button.midX - screen.minX, dy: button.midY - screen.minY)).tap()
+            let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|paused|GenSenRounded2JP-M"), evaluatedWith: stage)
+            XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
+            let audio = probeTime(transport), animation = probeTime(stage)
+            XCTAssertEqual(animation, audio, accuracy: 0.65, "\(song) \(mode) follows the video clock")
+            wait(0.7)
+            XCTAssertEqual(probeTime(transport), audio, accuracy: 0.20)
+            XCTAssertEqual(probeTime(stage), animation, accuracy: 0.12)
+        }
+        playAndVerify("JANE DOE", mode: "商籟", stageID: "syllumeSonnetClockProbe")
+        app.buttons["播放佇列"].tap()
+        XCTAssertTrue(lemonQueue.waitForExistence(timeout: 10)); lemonQueue.tap()
+        XCTAssertTrue(video.waitForExistence(timeout: 15), "Lemon rejects the short sample and switches to the original video")
+        playAndVerify("Lemon", mode: "繪光", stageID: "syllumeLumiereClockProbe")
+        capture(app, name: "Recorded-songs-Lemon-visible-fallback")
     }
 
     func testDeveloperDiagnosticsProducesEvidenceAndReport() throws {
@@ -311,11 +538,20 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(Set(areas.compactMap { $0["area"] as? String }), ["google", "captions", "audio", "animation", "device"])
         let checks = areas.flatMap { $0["checks"] as? [[String: Any]] ?? [] }
         for id in ["google.fixture", "captions.opencc", "captions.offset", "audio.bundled", "audio.retry",
-                   "animation.sonnet.init", "animation.sonnet.font", "animation.sonnet.clock",
+                   "animation.nativeFont", "animation.sonnet.init", "animation.sonnet.font", "animation.sonnet.clock",
                    "animation.lumiere.init", "animation.lumiere.font", "animation.lumiere.clock"] {
             let check = checks.first { $0["id"] as? String == id }
             XCTAssertEqual(check?["state"] as? String, "passed", "\(id): \(String(describing: check))")
         }
+        let device = areas.first { $0["area"] as? String == "device" }
+        XCTAssertGreaterThan(device?["elapsedMs"] as? Int ?? 0, 0)
+        for id in ["audio.currentClock", "device.transport", "captions.live"] {
+            XCTAssertEqual(checks.first { $0["id"] as? String == id }?["state"] as? String, "unverifiable", id)
+        }
+        let sample = checks.first { $0["id"] as? String == "audio.bundled" }?["metrics"] as? [String: Double]
+        XCTAssertGreaterThan(sample?["observedClock_s"] ?? 0, 0)
+        XCTAssertLessThanOrEqual(sample?["pauseDrift_s"] ?? 1, 0.1)
+        XCTAssertLessThanOrEqual(sample?["seekError_s"] ?? 1, 0.08)
         XCTAssertFalse(checks.contains { $0["evidence"] as? String == "liveNetwork" && $0["state"] as? String == "passed" })
         capture(app, name: "Diagnostics-complete")
     }
@@ -363,13 +599,15 @@ final class SyllumeUITests: XCTestCase {
             control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         }
         let changed = expectation(for: NSPredicate(format: "value == %@", target), evaluatedWith: control)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed,
+                       "\(identifier): expected \(target), got \(String(describing: control.value))")
     }
 
-    private func assertLyric(_ text: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertLyric(_ text: String, in app: XCUIApplication, timeout: TimeInterval = 15,
+                             file: StaticString = #filePath, line: UInt = #line) {
         let row = app.buttons["lyricLine-0"]
         let matches = expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: row)
-        let result = XCTWaiter.wait(for: [matches], timeout: 15)
+        let result = XCTWaiter.wait(for: [matches], timeout: timeout)
         if result != .completed {
             print("Subtitle display failure: \(app.debugDescription)")
             capture(app, name: "Subtitle-display-failure")

@@ -76,19 +76,26 @@ test('reduced motion stops the ticker while accepting new word positions', async
     assert.equal(h.calls.length, before + 1); assert.deepEqual(h.calls.at(-1), ['render']);
 });
 
-function youtubeHarness() {
-    const messages = [], calls = []; let now = 0, tick, events;
+function youtubeHarness({ seekStartsPlayback = false, startSeconds = 0 } = {}) {
+    const messages = [], calls = []; let now = 0, tick, playerOptions, visibilityChanged;
+    const document = { hidden: false, addEventListener(_, callback) { visibilityChanged = callback; } };
     const media = { state: 2, time: 4 };
     const controls = { playVideo() { calls.push('play'); media.state = 1; }, pauseVideo() { calls.push('pause'); media.state = 2; },
-        seekTo(time) { calls.push(['seek', time]); media.time = time; }, destroy() { calls.push('destroy'); },
+        seekTo(time) { calls.push(['seek', time]); media.time = time; if (seekStartsPlayback) media.state = 1; },
+        destroy() { calls.push('destroy'); },
         getPlayerState: () => media.state, getVideoData: () => ({ video_id: 'M7lc1UVf-VE' }), getCurrentTime: () => media.time, getDuration: () => 60 };
     const window = { webkit: { messageHandlers: { youtube: { postMessage: m => messages.push(m) } } } };
-    const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios',
-        performance: { now: () => now }, document: { hidden: false, addEventListener() {} },
+    const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios', startSeconds,
+        performance: { now: () => now }, document,
         setTimeout: () => 1, clearTimeout() {}, setInterval: fn => { tick = fn; return 2; }, clearInterval() {},
-        YT: { Player: function (_, options) { events = options.events; return controls; } } };
+        YT: { Player: function (_, options) { playerOptions = options; return controls; } } };
     vm.runInNewContext(fs.readFileSync(new URL('../../Syllume/Resources/SyllumeYouTube/player.js', import.meta.url), 'utf8'), context);
-    return { messages, calls, media, api: window.FoliaYouTube, ready() { window.onYouTubeIframeAPIReady(); events.onReady(); }, tick() { now += 250; tick(); } };
+    return { messages, calls, media, api: window.FoliaYouTube,
+        create() { window.onYouTubeIframeAPIReady(); }, didLoad() { playerOptions.events.onReady(); },
+        fail(code) { playerOptions.events.onError({ data: code }); },
+        playerVars() { return playerOptions.playerVars; },
+        setHidden(hidden) { document.hidden = hidden; visibilityChanged(); },
+        ready() { this.create(); this.didLoad(); }, tick() { now += 250; tick(); } };
 }
 
 test('YouTube pause calls the real player and wins over a delayed older play command', () => {
@@ -99,9 +106,49 @@ test('YouTube pause calls the real player and wins over a delayed older play com
 });
 
 test('a pause before YouTube readiness prevents autoplay and retains a pending seek', () => {
-    const h = youtubeHarness(); h.api.setPlayback(true, 1); h.api.seek(12); h.api.setPlayback(false, 2); h.ready();
+    const h = youtubeHarness({ seekStartsPlayback: true });
+    h.api.setPlayback(true, 1); h.api.seek(12); h.api.setPlayback(false, 2); h.ready();
     assert.equal(h.media.state, 2); assert.equal(h.media.time, 12); assert.equal(h.calls.includes('play'), false);
+    h.api.seek(15); assert.equal(h.media.state, 2); assert.equal(h.media.time, 15);
     h.api.setPlayback(true, 3); assert.equal(h.media.state, 1); h.api.stop(); assert.equal(h.calls.at(-1), 'destroy');
+});
+
+test('discarding an iframe before readiness prevents late playback after a track change', () => {
+    const h = youtubeHarness();
+    h.api.setPlayback(true, 1);
+    h.create(); h.api.stop(); h.didLoad(); h.fail(100); h.tick();
+    assert.deepEqual(h.calls, ['destroy']);
+    assert.deepEqual(h.messages.map(message => message.type), ['loaded']);
+});
+
+test('a reopened iframe receives the retained start time without seeking before playback', () => {
+    const h = youtubeHarness({ startSeconds: 22, seekStartsPlayback: true });
+    h.api.setPlayback(false, 1); h.ready();
+    assert.equal(h.playerVars().start, 22);
+    assert.equal(h.playerVars().autoplay, 0);
+    assert.deepEqual(h.calls, ['pause']);
+    h.api.setPlayback(true, 2);
+    assert.deepEqual(h.calls, ['pause', 'play']);
+});
+
+test('a hidden document pauses without consuming the next native play command', () => {
+    const h = youtubeHarness();
+    h.api.setPlayback(true, 1); h.ready();
+    h.setHidden(true);
+    assert.equal(h.media.state, 2);
+    h.api.setPlayback(false, 2);
+    h.api.setPlayback(true, 3);
+    const beforeShowing = h.messages.length;
+    h.tick();
+    assert.equal(h.media.state, 2);
+    assert.equal(h.messages.length, beforeShowing);
+    h.setHidden(false); h.tick();
+    assert.equal(h.media.state, 2);
+    assert.deepEqual(h.messages.slice(beforeShowing).map(message => message.type), ['visible']);
+    h.api.setPlayback(true, 3); h.tick();
+    assert.equal(h.media.state, 1);
+    assert.equal(h.messages.at(-1).commandRevision, 3);
+    assert.equal(h.messages.at(-1).state, 1);
 });
 
 test('vendored desktop sources match the pinned snapshot and documented iOS patches', () => {

@@ -207,7 +207,7 @@ struct DiagnosticsScreen: View {
                     HStack {
                         DiagnosticBadge(state: result.state)
                         Spacer()
-                        Text("\(result.elapsedMs) ms").font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                        Text(result.timeLabel).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
                     }
                 }
                 .accessibilityIdentifier("diagnosticsResult-" + result.id)
@@ -271,9 +271,10 @@ private struct DiagnosticCheckRow: View {
 
     var body: some View {
         DisclosureGroup {
-            Text("\(check.evidence.title) · \(check.elapsedMs) ms").foregroundStyle(.secondary)
+            Text("\(check.evidence.title) · \(check.timeLabel)").foregroundStyle(.secondary)
             if let problem = check.problem {
-                Text(problem.code.title + (problem.httpStatus.map { "（HTTP \($0)）" } ?? ""))
+                Text(problem.detail)
+                Text(check.checkpoints.joined(separator: " → ")).foregroundStyle(.secondary)
             }
             if let note = check.note { Text(note).foregroundStyle(.secondary) }
             ForEach(check.metrics.keys.sorted(), id: \.self) { key in

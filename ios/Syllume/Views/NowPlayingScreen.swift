@@ -8,14 +8,30 @@ struct NowPlayingScreen: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("Folia.LyricDisplayMode") private var mode: LyricDisplayMode = .sonnet
     @State private var controlsVisible = true
     @State private var showingQueue = false
+    @State private var queueCoversVideo = false
 
     @State private var showingSearch = false
+    #if DEBUG
+    @State private var sonnetClockProbe = ""
+    @State private var lumiereClockProbe = ""
+    #endif
+
+    private func stageClockProbe(_ style: String) -> Binding<String>? {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+            return style == "lumiere" ? $lumiereClockProbe : $sonnetClockProbe
+        }
+        #endif
+        return nil
+    }
 
     private var luminous: Bool { mode == .lumiere }
     private var accent: Color { luminous ? Color(red: 1, green: 0.83, blue: 0.58) : SyllumePalette.accent }
+    private var videoVisible: Bool { scenePhase == .active && !queueCoversVideo && !showingSearch }
 
     var body: some View {
         if let track = player.current {
@@ -33,7 +49,9 @@ struct NowPlayingScreen: View {
                         .accessibilityLabel("尋找歌詞")
                     Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
                         .accessibilityLabel("進入沉浸模式")
-                    Button { showingQueue = true } label: { Image(systemName: "list.bullet").frame(width: 44, height: 44) }
+                    Button { queueCoversVideo = true; showingQueue = true } label: {
+                        Image(systemName: "list.bullet").frame(width: 44, height: 44)
+                    }
                         .accessibilityLabel("播放佇列")
                 }
                 .buttonStyle(SyllumePressStyle(luminous: luminous))
@@ -44,6 +62,25 @@ struct NowPlayingScreen: View {
                 .pickerStyle(.segmented)
                 .frame(maxWidth: 340)
               }
+
+                if let video = player.embeddedVideo {
+                    YouTubePlayerView(player: video, onUpdate: player.refreshEmbeddedVideo)
+                        .frame(minWidth: 200, minHeight: 200, maxHeight: 200)
+                        .id(ObjectIdentifier(video))
+                        .onAppear {
+                            if player.embeddedVideo === video { player.setEmbeddedVideoVisible(videoVisible) }
+                        }
+                        .onDisappear {
+                            if player.embeddedVideo === video { player.setEmbeddedVideoVisible(false) }
+                        }
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+                        Text("YouTube 時間軸檢查").font(.system(size: 1)).frame(height: 1)
+                            .accessibilityIdentifier("youtubeTransportProbe")
+                            .accessibilityValue(String(format: "%.3f|%@", video.mediaSampleTime, player.isPlaying ? "playing" : "paused"))
+                    }
+                    #endif
+                }
 
                 Group {
                     switch mode {
@@ -64,7 +101,8 @@ struct NowPlayingScreen: View {
                             SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                                         timeline: subtitles.timeline, revision: subtitles.revision,
                                         position: player.lyricPosition, playing: player.lyricClockRunning,
-                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue)
+                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue,
+                                        clockProbe: stageClockProbe(mode.rawValue))
                         }
                     case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline).id(track.id)
                     case .cover: artwork
@@ -75,20 +113,36 @@ struct NowPlayingScreen: View {
 
               if controlsVisible {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
-                        .accessibilityAddTraits(.isHeader)
-                    if !track.subtitle.isEmpty {
-                        Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                    HStack(spacing: 10) {
+                        if mode != .cover, let image = player.artwork {
+                            Image(uiImage: image).resizable().scaledToFill()
+                                .frame(width: 42, height: 42).clipShape(.rect(cornerRadius: 8))
+                                .accessibilityLabel("目前歌曲封面")
+                                .accessibilityIdentifier("nowPlayingThumbnail")
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(track.title).font(.system(.title2, design: .serif, weight: .bold)).lineLimit(2)
+                                .accessibilityAddTraits(.isHeader)
+                            if !track.subtitle.isEmpty {
+                                Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                            }
+                        }
                     }
                     if let error = player.error {
                         Text(error).font(.footnote).foregroundStyle(.orange)
+                        if player.offersVideoFallback, player.embeddedVideo == nil {
+                            Button("在 Syllume 播放 YouTube 原片", action: player.requestVideoPlayback)
+                                .font(.footnote.weight(.semibold)).foregroundStyle(accent)
+                                .accessibilityIdentifier("playYouTubeFallback")
+                        }
                         if let videoID = track.playlistSong?.videoID, let url = YouTubeVideo.musicURL(for: videoID) {
                             Link("在 YouTube Music 開啟", destination: url)
                                 .font(.footnote).foregroundStyle(accent)
                                 .accessibilityIdentifier("openYouTubeMusic")
                         }
                     } else if player.isBuffering {
-                        Text(player.audioSource == nil && track.source == .catalogue ? "正在尋找可播放的音源…" : "音訊緩衝中…")
+                        Text(player.embeddedVideo != nil ? "正在開啟 YouTube 原片…" :
+                            player.audioSource == nil && track.source == .catalogue ? "正在尋找可播放的音源…" : "音訊緩衝中…")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else if let source = player.audioSource {
                         Text(source).font(.caption).foregroundStyle(accent)
@@ -109,6 +163,17 @@ struct NowPlayingScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
                     LocalTransportProbe(player: player)
                 }
+                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
+                    ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
+                    Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("systemNowPlayingProbe").accessibilityValue(player.nowPlayingProbe)
+                }
+                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+                    Text("商籟動畫時鐘").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("syllumeSonnetClockProbe").accessibilityValue(sonnetClockProbe)
+                    Text("繪光動畫時鐘").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("syllumeLumiereClockProbe").accessibilityValue(lumiereClockProbe)
+                }
                 #endif
               }
             }
@@ -119,6 +184,8 @@ struct NowPlayingScreen: View {
             .frame(maxWidth: .infinity)
             .background { playbackBackground(for: track) }
             .tint(accent)
+            .onChange(of: videoVisible, initial: true) { _, visible in player.setVideoSurfaceVisible(visible) }
+            .onDisappear { player.setVideoSurfaceVisible(false) }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: luminous)
             .overlay(alignment: .bottomTrailing) {
                 if !controlsVisible {
@@ -129,15 +196,29 @@ struct NowPlayingScreen: View {
                     .accessibilityLabel("顯示播放控制").padding(18)
                 }
             }
-            .sheet(isPresented: $showingQueue) { PlaybackQueue(player: player) }
+            .sheet(isPresented: $showingQueue, onDismiss: { queueCoversVideo = false }) {
+                PlaybackQueue(player: player)
+            }
             .sheet(isPresented: $showingSearch) {
-                LyricSearchScreen(subtitles: subtitles, title: track.title, artist: track.artist ?? "", player: player) { record in
+                let metadata = player.subtitleInput?.song
+                LyricSearchScreen(subtitles: subtitles, title: metadata?.title ?? track.title,
+                                  artist: metadata?.artist ?? track.artist ?? "", player: player) { record in
                     guard player.current?.id == track.id, player.current?.source == track.source else { return }
                     player.useLyrics(record)
                 }
                     .id(track.id)
             }
-            .onChange(of: track.id) { _, _ in showingSearch = false }
+            .onChange(of: track.id) { _, _ in
+                showingSearch = false
+                #if DEBUG
+                sonnetClockProbe = ""; lumiereClockProbe = ""
+                #endif
+            }
+            #if DEBUG
+            .onChange(of: mode) { _, _ in
+                sonnetClockProbe = ""; lumiereClockProbe = ""
+            }
+            #endif
             .onChange(of: controlsVisible) { _, visible in
                 DiagnosticsEvents.shared.record(visible ? .immersiveOff : .immersiveOn)
             }
@@ -159,7 +240,7 @@ struct NowPlayingScreen: View {
                     SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
                         timeline: subtitles.timeline, revision: subtitles.revision, position: player.lyricPosition,
                         playing: player.lyricClockRunning, style: "lumiere", rendering: !showingSearch && !showingQueue,
-                        showsTranslation: false)
+                        showsTranslation: false, clockProbe: stageClockProbe("lumiere"))
                 }
                 LinearGradient(stops: [.init(color: .black.opacity(0.76), location: 0),
                     .init(color: .clear, location: 0.24), .init(color: .clear, location: 0.65),
@@ -224,7 +305,7 @@ private struct TransportControls: View {
                                       else { player.seek(to: value) }
                                   }),
                    in: 0...upperBound, onEditingChanged: scrub)
-                .disabled(player.duration <= 0)
+                .disabled(!player.canSeek)
                 .accessibilityLabel("播放進度")
                 .accessibilityValue(playbackTime(isScrubbing ? scrubPosition : player.position))
             HStack {
@@ -249,15 +330,15 @@ private struct TransportControls: View {
                 }
                 .accessibilityLabel("上一首或回到開頭")
 
-                Button { player.toggle() } label: {
-                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                Button { player.toggle(inApp: true) } label: {
+                    Image(systemName: player.transportIcon)
                         .font(.title2.weight(.semibold))
                         .frame(width: 62, height: 62)
                         .foregroundStyle(SyllumePalette.surface)
                         .background(accent, in: Circle())
                         .shadow(color: luminous ? accent.opacity(0.4) : .clear, radius: 12)
                 }
-                .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
+                .accessibilityLabel(player.transportLabel)
                 .accessibilityIdentifier("playerToggle")
                 .padding(.horizontal, 10)
 
@@ -298,6 +379,7 @@ struct MiniPlayer: View {
                     if let image = player.artwork {
                         Image(uiImage: image).resizable().scaledToFill()
                             .frame(width: 38, height: 38).clipped().clipShape(.rect(cornerRadius: 8))
+                            .accessibilityIdentifier("miniPlayerArtwork")
                     } else {
                         Image(systemName: "waveform").foregroundStyle(SyllumePalette.accent)
                             .frame(width: 38, height: 38).background(.white.opacity(0.07), in: .rect(cornerRadius: 8))
@@ -312,10 +394,18 @@ struct MiniPlayer: View {
             }
             .accessibilityHint("打開完整播放畫面")
             .accessibilityIdentifier("openMiniPlayer")
-            Button { player.toggle() } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
+            #if DEBUG
+            .accessibilityValue(ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") && player.artwork != nil
+                ? "已載入歌曲封面" : "")
+            #endif
+            Button {
+                if !player.wantsPlayback, player.embeddedVideo != nil || player.offersVideoFallback { open() }
+                player.toggle(inApp: true)
+            } label: {
+                Image(systemName: player.transportIcon).frame(width: 44, height: 44)
             }
-            .accessibilityLabel(player.isPlaying ? "暫停" : "播放")
+            .accessibilityLabel(player.transportLabel)
+            .accessibilityIdentifier("miniPlayerToggle")
         }
         .buttonStyle(SyllumePressStyle())
         .padding(.horizontal, 14)
@@ -334,7 +424,8 @@ private struct PlaybackQueue: View {
     var body: some View {
         NavigationStack {
             List(player.queue.indices, id: \.self) { index in
-                TrackRow(track: player.queue[index], active: player.index == index) {
+                let track = player.queue[index]
+                TrackRow(track: track, active: player.index == index, artworkFile: player.artworkSource(for: track).file) {
                     player.selectQueueItem(index)
                     dismiss()
                 }

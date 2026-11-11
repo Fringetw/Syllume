@@ -64,13 +64,14 @@ struct LyricSearchRecord: Decodable, Identifiable, Sendable {
     let syncedLyrics: String?
 
     func matches(title: String, artist: String, duration: Double) -> Bool {
-        Self.key(trackName) == Self.key(title) && Self.key(artistName) == Self.key(artist)
-            && duration.isFinite && self.duration.isFinite && abs(self.duration - duration) <= 2
-            && !(syncedLyrics ?? "").isEmpty
-    }
-
-    private static func key(_ text: String) -> String {
-        text.folding(options: [.caseInsensitive, .diacriticInsensitive, .widthInsensitive], locale: Locale(identifier: "en_US_POSIX"))
-            .filter { $0.isLetter || $0.isNumber }
+        let key = DownloadSongMatch.normalized(title)
+        guard !key.isEmpty && DownloadSongMatch.normalized(trackName) == key
+            && DownloadSongMatch.versions(trackName) == DownloadSongMatch.versions(title)
+            && DownloadSongMatch.samePerformers(artistName, artist)
+            && duration.isFinite && self.duration.isFinite && duration > 0 && self.duration > 0
+            && abs(self.duration - duration) <= 2,
+              let syncedLyrics, !syncedLyrics.isEmpty else { return false }
+        let lines = LyricTimeline(lrc: syncedLyrics).lines
+        return !lines.isEmpty && lines.allSatisfy { $0.startTime >= 0 && $0.startTime <= duration + 2 }
     }
 }
