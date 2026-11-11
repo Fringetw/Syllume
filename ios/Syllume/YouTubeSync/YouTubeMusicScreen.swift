@@ -97,11 +97,27 @@ struct YouTubeMusicScreen: View {
             Button("儲存") { sync.rename(name) }
             Button("取消", role: .cancel) { }
         }
-        .confirmationDialog("下載音樂到「檔案」？", isPresented: Binding(
-            get: { downloadTarget != nil }, set: { if !$0 { downloadTarget = nil } }), presenting: downloadTarget) { song in
-            Button("下載音樂") { sync.download(song, library: library, account: account, connection: connection); downloadTarget = nil }
-        } message: { song in
-            Text("「\(song.title)」會尋找可用的同版本音檔，優先選擇較高音質，並在儲存前完整解碼。請確認你有權下載這份音檔。")
+        .sheet(item: $downloadTarget) { song in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("下載音樂到「檔案」？").font(.headline)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("「\(song.title)」會尋找可用的同版本音檔，優先選擇較高音質，並在儲存前完整解碼。請確認你有權下載這份音檔。")
+                        .foregroundStyle(.secondary)
+                    Button("下載音樂") {
+                        downloadTarget = nil
+                        sync.download(song, library: library, account: account, connection: connection)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("confirmPlaylistDownload")
+                    Button("取消", role: .cancel) { downloadTarget = nil }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("cancelPlaylistDownload")
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
+            }
+            .presentationDetents([.medium, .large])
         }
     }
 
@@ -193,7 +209,13 @@ struct YouTubeMusicScreen: View {
             }
             if let url = YouTubeVideo.musicURL(for: song.videoID) {
                 Link(destination: url) { Label("在 YouTube Music 開啟", systemImage: "arrow.up.right.square") }
-                Button("下載音樂", systemImage: "arrow.down.circle") { downloadTarget = song }.disabled(sync.downloading != nil)
+                Button("下載音樂", systemImage: "arrow.down.circle") {
+                    Task { @MainActor in
+                        await Task.yield()
+                        downloadTarget = song
+                    }
+                }
+                .disabled(sync.downloading != nil)
                 Button("附加音檔", systemImage: "folder.badge.plus") { attachment = song; importing = true }
             }
             Button("從清單移除", systemImage: "minus.circle", role: .destructive) { sync.remove(song) }

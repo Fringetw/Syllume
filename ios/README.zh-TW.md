@@ -1,4 +1,4 @@
-# Syllume 0.3.16 · build 27
+# Syllume 0.3.16 · build 28
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
@@ -8,6 +8,7 @@
 - 已匯入或附加的音檔與有權存取的 Navidrome 為預設原生音源。網易雲、QQ 音樂的直接串流和下載需先取得平台對 Syllume 使用這些端點的授權。獲授權的維護者可在 `ios/Syllume/Resources/Info.plist` 的 `SyllumeAuthorizedMediaProviders` 字串陣列填入對應的 `netease` 或 `qq`。診斷會將未設定平台授權的來源標為無法驗證。
 - 歌單曲目的封面資料會傳給播放佇列，並與迷你播放器、封面頁和原生鎖定畫面資訊共用快取。播放失敗時系統媒體資訊保留歌曲與封面，播放速率為 0。
 - 同步歌詞查詢在選歌時開始。歌名、演出者、錄音版本與時間戳都要符合，才會自動套用。專輯錄音的演出者優先讀取選定影片的官方標籤資料，歌詞可透過 LRCLIB 查詢。
+- 歌單長按下載時，會先開啟獨立的確認頁。選擇取消可直接回到歌單，確認後才尋找音源並驗證完整檔案。
 - 診斷分別呈現影片資料、音源配對、音軌、播放器時鐘、離線解碼與裝置取樣。裝置耗時採實際觀測區間。歌詞清單、商籟及繪光使用隨 App 打包的源泉圓體 JP Medium。
 
 《JANE DOE》與《Lemon》的回歸測試使用公開影片識別碼與歌曲資料，播放媒體為內建的測試音檔。實機的 YouTube 嵌入可用性、私人歌單及實際歌詞對齊由裝置診斷確認。

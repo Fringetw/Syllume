@@ -285,13 +285,20 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["syncYouTubePlaylist"].waitForExistence(timeout: 15))
         XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
-        audio.press(forDuration: 1)
-        let download = app.buttons["下載音樂"].firstMatch
-        XCTAssertTrue(download.waitForExistence(timeout: 10))
-        download.tap()
-        let confirm = app.sheets.buttons["下載音樂"].firstMatch
-        XCTAssertTrue(confirm.waitForExistence(timeout: 10))
-        XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
+        let confirm = app.buttons["confirmPlaylistDownload"]
+        func openConfirmation() {
+            audio.press(forDuration: 1)
+            let download = app.buttons["下載音樂"].firstMatch
+            XCTAssertTrue(download.waitForExistence(timeout: 15))
+            download.tap()
+            XCTAssertTrue(confirm.waitForExistence(timeout: 20))
+        }
+        openConfirmation()
+        app.buttons["cancelPlaylistDownload"].tap()
+        let cancelled = expectation(for: NSPredicate(format: "hittable == true AND value == %@", "點歌時搜尋音源"),
+                                    evaluatedWith: audio)
+        XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 15), .completed)
+        openConfirmation()
         confirm.tap()
         let saved = expectation(for: NSPredicate(format: "value CONTAINS %@", "示範音軌"), evaluatedWith: audio)
         XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 20), .completed)
