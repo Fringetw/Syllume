@@ -844,7 +844,6 @@ final class PlaybackModel {
                 resume()
                 return
             }
-            if embeddedVideo.position > 0 { embeddedVideo.seek(to: embeddedVideo.position) }
         }
         embeddedVideo.setVisible(visible)
         refreshEmbeddedVideo()
@@ -868,12 +867,10 @@ final class PlaybackModel {
             loadLyrics(track: track, recording: song.recordingMetadata)
         }
         wantsPlayback = video.wantsPlayback
-        isPlaying = video.visible && video.isPlaying
-        isBuffering = video.wantsPlayback && !isPlaying
-        lyricClockRunning = isPlaying && !video.isSeeking
+        let reportsPlaying = video.visible && video.isPlaying
         error = video.error
         let advance = position - previousPosition
-        if lyricClockRunning, advance > 0.02, advance <= 1.5 {
+        if reportsPlaying, !video.isSeeking, advance > 0.02, advance <= 1.5 {
             DiagnosticsEvents.shared.observeAdvance(advance)
             if !videoHasAdvanced {
                 videoHasAdvanced = true
@@ -883,6 +880,9 @@ final class PlaybackModel {
                 DiagnosticsEvents.shared.record(.playbackStarted, source: .youtube)
             }
         }
+        isPlaying = reportsPlaying && videoHasAdvanced
+        isBuffering = video.wantsPlayback && !isPlaying
+        lyricClockRunning = isPlaying && !video.isSeeking
         if wasPlaying && !isPlaying {
             DiagnosticsEvents.shared.record(.playbackPaused, source: .youtube)
             videoHasAdvanced = false

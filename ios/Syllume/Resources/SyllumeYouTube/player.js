@@ -40,7 +40,7 @@ const timeout = setTimeout(() => emit('error', { code: -1 }), 25000);
 window.onYouTubeIframeAPIReady = () => {
     if (stopped) return;
     player = new YT.Player('player', { width: '100%', height: '100%', videoId: videoID,
-        playerVars: { playsinline: 1, controls: 1, autoplay: 0, origin, widget_referrer: origin },
+        playerVars: { playsinline: 1, controls: 1, autoplay: 0, origin, widget_referrer: origin, start: startSeconds },
         events: {
             onReady() {
                 if (stopped) return;
@@ -53,7 +53,7 @@ window.onYouTubeIframeAPIReady = () => {
                 if (stopped || !wants) return;
                 awaiting = false; wants = false; emit('blocked', { commandRevision: revision });
             },
-            onError(e) { emit('error', { code: e.data }); },
+            onError(e) { if (!stopped) emit('error', { code: e.data }); },
         } });
 };
 const timer = setInterval(snapshot, 250);

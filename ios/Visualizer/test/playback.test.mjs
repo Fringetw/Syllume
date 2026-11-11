@@ -76,21 +76,23 @@ test('reduced motion stops the ticker while accepting new word positions', async
     assert.equal(h.calls.length, before + 1); assert.deepEqual(h.calls.at(-1), ['render']);
 });
 
-function youtubeHarness({ seekStartsPlayback = false } = {}) {
-    const messages = [], calls = []; let now = 0, tick, events;
+function youtubeHarness({ seekStartsPlayback = false, startSeconds = 0 } = {}) {
+    const messages = [], calls = []; let now = 0, tick, playerOptions;
     const media = { state: 2, time: 4 };
     const controls = { playVideo() { calls.push('play'); media.state = 1; }, pauseVideo() { calls.push('pause'); media.state = 2; },
         seekTo(time) { calls.push(['seek', time]); media.time = time; if (seekStartsPlayback) media.state = 1; },
         destroy() { calls.push('destroy'); },
         getPlayerState: () => media.state, getVideoData: () => ({ video_id: 'M7lc1UVf-VE' }), getCurrentTime: () => media.time, getDuration: () => 60 };
     const window = { webkit: { messageHandlers: { youtube: { postMessage: m => messages.push(m) } } } };
-    const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios',
+    const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios', startSeconds,
         performance: { now: () => now }, document: { hidden: false, addEventListener() {} },
         setTimeout: () => 1, clearTimeout() {}, setInterval: fn => { tick = fn; return 2; }, clearInterval() {},
-        YT: { Player: function (_, options) { events = options.events; return controls; } } };
+        YT: { Player: function (_, options) { playerOptions = options; return controls; } } };
     vm.runInNewContext(fs.readFileSync(new URL('../../Syllume/Resources/SyllumeYouTube/player.js', import.meta.url), 'utf8'), context);
     return { messages, calls, media, api: window.FoliaYouTube,
-        create() { window.onYouTubeIframeAPIReady(); }, didLoad() { events.onReady(); },
+        create() { window.onYouTubeIframeAPIReady(); }, didLoad() { playerOptions.events.onReady(); },
+        fail(code) { playerOptions.events.onError({ data: code }); },
+        playerVars() { return playerOptions.playerVars; },
         ready() { this.create(); this.didLoad(); }, tick() { now += 250; tick(); } };
 }
 
@@ -112,9 +114,19 @@ test('a pause before YouTube readiness prevents autoplay and retains a pending s
 test('discarding an iframe before readiness prevents late playback after a track change', () => {
     const h = youtubeHarness();
     h.api.setPlayback(true, 1);
-    h.create(); h.api.stop(); h.didLoad(); h.tick();
+    h.create(); h.api.stop(); h.didLoad(); h.fail(100); h.tick();
     assert.deepEqual(h.calls, ['destroy']);
     assert.deepEqual(h.messages.map(message => message.type), ['loaded']);
+});
+
+test('a reopened iframe receives the retained start time without seeking before playback', () => {
+    const h = youtubeHarness({ startSeconds: 22, seekStartsPlayback: true });
+    h.api.setPlayback(false, 1); h.ready();
+    assert.equal(h.playerVars().start, 22);
+    assert.equal(h.playerVars().autoplay, 0);
+    assert.deepEqual(h.calls, ['pause']);
+    h.api.setPlayback(true, 2);
+    assert.deepEqual(h.calls, ['pause', 'play']);
 });
 
 test('vendored desktop sources match the pinned snapshot and documented iOS patches', () => {

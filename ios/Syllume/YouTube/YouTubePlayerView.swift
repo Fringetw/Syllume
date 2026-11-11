@@ -73,6 +73,7 @@ struct YouTubePlayerView: UIViewRepresentable {
         var loaded = false
         var sentRevision: Int?
         var sentSeek: UUID?
+        var pausedRevision: Int?
         init(input: YouTubePlayerView) { self.input = input }
 
         func update() {
@@ -80,15 +81,20 @@ struct YouTubePlayerView: UIViewRepresentable {
                   input.requestSession == player.session, input.requestRevision == player.playbackRevision else { return }
             if session != input.requestSession {
                 guard player.visible, view.hasVisibleViewport else { return }
-                session = input.requestSession; loaded = false; sentRevision = nil; sentSeek = nil
+                session = input.requestSession; loaded = false; sentRevision = nil; pausedRevision = nil
+                // A new iframe can start from the retained position without seeking a paused, unloaded video.
+                let start = Int(player.position.rounded(.down))
+                sentSeek = input.requestSeek
                 let bundle = (Bundle.main.bundleIdentifier ?? "org.folia.community.ios").lowercased()
                 let origin = "https://" + bundle
-                view.loadHTMLString(Self.html(video: video.id, session: input.requestSession.uuidString, origin: origin), baseURL: URL(string: origin))
+                view.loadHTMLString(Self.html(video: video.id, session: input.requestSession.uuidString,
+                                              origin: origin, start: start), baseURL: URL(string: origin))
                 return
             }
             // WebKit pauses the actual media immediately, even before the IFrame API is ready.
-            if sentRevision != input.requestRevision, !input.requestPlayback {
+            if sentRevision != nil, pausedRevision != input.requestRevision, !input.requestPlayback {
                 let revision = input.requestRevision
+                pausedRevision = revision
                 view.pauseAllMediaPlayback { [weak self] in
                     guard let self else { return }
                     // A slow WebKit pause must not land after a newer resume and leave it silent.
@@ -154,12 +160,24 @@ struct YouTubePlayerView: UIViewRepresentable {
                 return """
                 <script>
                 window.YT={Player:class {
-                  constructor(id,options){this.o=options;this.a=new Audio('data:audio/mp4;base64,\(data.base64EncodedString())');this.a.loop=true;
-                    document.getElementById(id).textContent='本機播放測試';setTimeout(()=>this.o.events.onReady(),0);}
+                  constructor(id,options){
+                    this.o=options;this.a=new Audio();this.a.loop=true;this.a.preload='auto';
+                    document.getElementById(id).textContent='本機播放測試';
+                    this.a.addEventListener('error',()=>options.events.onError({data:-1}));
+                    this.a.addEventListener('loadedmetadata',()=>{
+                      const start=options.playerVars.start % this.a.duration;
+                      if(start>0){
+                        this.a.addEventListener('seeked',()=>options.events.onReady(),{once:true});
+                        this.a.currentTime=start;
+                      }else options.events.onReady();
+                    },{once:true});
+                    this.a.src='data:audio/mp4;base64,\(data.base64EncodedString())';
+                  }
                   playVideo(){this.a.play().then(()=>this.o.events.onStateChange()).catch(()=>this.o.events.onAutoplayBlocked());}
                   pauseVideo(){this.a.pause();this.o.events.onStateChange();}
                   getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Syllume'};}
-                  getPlayerState(){return this.a.paused?2:1;} getCurrentTime(){return this.a.currentTime;}
+                  getPlayerState(){return this.a.paused?2:(this.a.seeking || this.a.readyState<3?3:1);}
+                  getCurrentTime(){return this.a.currentTime;}
                   getDuration(){return {'6AR6Oc0-4NQ':236,'3NNhrqHZqlI':256,'z2tDtdHHAHg':188}[videoID] || (Number.isFinite(this.a.duration)?this.a.duration:30);}
                   seekTo(time){this.a.currentTime=time;} destroy(){this.a.pause();this.a.src='';}
                 }};window.onYouTubeIframeAPIReady();
@@ -170,14 +188,14 @@ struct YouTubePlayerView: UIViewRepresentable {
             return "<script src=\"https://www.youtube.com/iframe_api\" onerror=\"emit('error',{code:-1})\"></script>"
         }
 
-        static func html(video: String, session: String, origin: String) -> String {
-            // These three inputs are validated identifiers, never free-form titles or lyrics.
+        static func html(video: String, session: String, origin: String, start: Int) -> String {
+            // The strings are validated identifiers, never free-form titles or lyrics.
             """
             <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
             <meta name="referrer" content="strict-origin-when-cross-origin">
             <style>html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}</style></head><body>
             <div id="player"></div><script>
-            const session='\(session)',videoID='\(video)',origin='\(origin)';
+            const session='\(session)',videoID='\(video)',origin='\(origin)',startSeconds=\(start);
             \(transportScript)
             </script>\(apiLoader)</body></html>
             """
