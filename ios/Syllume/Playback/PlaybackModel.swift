@@ -34,6 +34,8 @@ final class PlaybackModel {
     private var videoHasAdvanced = false
     @ObservationIgnored private var videoDeadline: Task<Void, Never>?
     @ObservationIgnored private var queuedVideoReplay: UUID?
+    @ObservationIgnored private var videoSurfaceVisible = false
+    @ObservationIgnored private var videoRequested = false
     @ObservationIgnored private var lyricReferenceDuration: Double?
     @ObservationIgnored private var manualLyrics = false
 
@@ -83,6 +85,9 @@ final class PlaybackModel {
 
     var current: Track? { index.flatMap { queue.indices.contains($0) ? queue[$0] : nil } }
     var canAdvance: Bool { index.map { $0 + 1 < queue.count || repeatQueue } ?? false }
+    var handlesRemoteCommands: Bool {
+        current != nil && !externalPlayback && embeddedVideo == nil && (current?.source != .catalogue || error == nil)
+    }
     #if DEBUG
     var mediaProbe: String {
         // Observe the clock even in cover mode or when a downloaded track has no lyrics.
@@ -115,6 +120,8 @@ final class PlaybackModel {
     @ObservationIgnored private var youtubeConnection: PlatformConnection?
     private var catalogueTarget: SyncedYouTubeSong?
     @ObservationIgnored private var catalogueMetadataTask: Task<SyncedYouTubeSong, Never>?
+    @ObservationIgnored private var catalogueVideoStatus: YouTubeVideoDetails.Status?
+    @ObservationIgnored private var catalogueVideoProblem: DiagnosticProblem?
     @ObservationIgnored private var activeCatalogueSource: DiagnosticSource?
     private var catalogueHasStarted = false
     @ObservationIgnored private var resolveTicket = UUID()
@@ -133,20 +140,21 @@ final class PlaybackModel {
         system = PlaybackSystem(model: self, player: player)
     }
 
-    func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil) {
+    func play(_ tracks: [Track], from selected: Track, client: NavidromeClient? = nil, presentingVideo: Bool = false) {
         guard let index = tracks.firstIndex(of: selected) else { return }
         self.client = client
         queue = tracks
-        load(index)
+        load(index, requestingVideo: presentingVideo || videoSurfaceVisible)
     }
 
     func playPlaylist(_ songs: [SyncedYouTubeSong], from song: SyncedYouTubeSong,
-                      bindings: [String: YouTubeAudioBinding], account: NavidromeAccount?, connection: PlatformConnection) {
+                      bindings: [String: YouTubeAudioBinding], account: NavidromeAccount?, connection: PlatformConnection,
+                      presentingVideo: Bool = true) {
         let tracks = songs.map { Self.playlistTrack($0, bindings: bindings) }
         guard let track = tracks.first(where: { $0.id == song.id }) else { return }
         self.account = account
         youtubeConnection = connection
-        play(tracks, from: track)
+        play(tracks, from: track, presentingVideo: presentingVideo)
     }
 
     func playNext(_ song: SyncedYouTubeSong, bindings: [String: YouTubeAudioBinding], account: NavidromeAccount?, connection: PlatformConnection) {
@@ -160,7 +168,9 @@ final class PlaybackModel {
             }
             queue.insert(track, at: index + 1)
             system?.updateCommands(model: self)
-        } else { playPlaylist([song], from: song, bindings: bindings, account: account, connection: connection) }
+        } else {
+            playPlaylist([song], from: song, bindings: bindings, account: account, connection: connection, presentingVideo: false)
+        }
     }
 
     private static func playlistTrack(_ song: SyncedYouTubeSong, bindings: [String: YouTubeAudioBinding]) -> Track {
@@ -180,7 +190,9 @@ final class PlaybackModel {
 
     func toggle(inApp: Bool = false) {
         if inApp { reclaimPlayback() }
-        wantsPlayback ? pause() : resume()
+        if wantsPlayback { pause() }
+        else if inApp, offersVideoFallback || embeddedVideo != nil { requestVideoPlayback() }
+        else { resume() }
     }
 
     private func reclaimPlayback() {
@@ -232,6 +244,7 @@ final class PlaybackModel {
     }
 
     func pause() {
+        videoRequested = false
         if let embeddedVideo {
             embeddedVideo.pause()
             refreshEmbeddedVideo()
@@ -278,14 +291,15 @@ final class PlaybackModel {
 
     func selectQueueItem(_ selected: Int) {
         guard queue.indices.contains(selected) else { return }
-        guard selected == index else { load(selected); return }
+        guard selected == index else { load(selected, requestingVideo: true); return }
         reclaimPlayback()
         if let video = embeddedVideo, !video.visible {
             queuedVideoReplay = video.session
             return
         }
         seek(to: 0)
-        resume()
+        if offersVideoFallback { requestVideoPlayback() }
+        else { resume() }
     }
 
     func toggleRepeat() {
@@ -416,9 +430,19 @@ final class PlaybackModel {
         let connection = youtubeConnection
         catalogueMetadataTask = Task { [weak self] in
             let started = Date()
-            let resolved = await connection?.playlistSongWithMetadata(song) ?? song
+            var details: YouTubeVideoDetails?
+            var problem: DiagnosticProblem?
+            if YouTubeVideo.validID(song.videoID) {
+                do {
+                    guard let connection else { throw DiagnosticProblem(code: .signedOut) }
+                    details = try await connection.selectedVideoDetails(for: song)
+                } catch { problem = DiagnosticProblem.classify(error) }
+            }
+            let resolved = details?.enrich(song) ?? song
             guard let self, generation == revision, !Task.isCancelled else { return song }
             catalogueTarget = resolved
+            catalogueVideoStatus = details?.status
+            catalogueVideoProblem = problem
             if !nativeReady, embeddedVideo == nil, let length = resolved.duration { duration = length }
             if song.duration == nil {
                 DiagnosticsEvents.shared.record(resolved.duration == nil ? .durationUnavailable : .durationRead, source: .youtube,
@@ -499,7 +523,7 @@ final class PlaybackModel {
         }
     }
 
-    private func load(_ index: Int) {
+    private func load(_ index: Int, requestingVideo: Bool? = nil) {
         resetItem()
         externalPlayback = false
         self.index = index
@@ -511,6 +535,7 @@ final class PlaybackModel {
         let url: URL?
         switch track.source {
         case .catalogue:
+            videoRequested = requestingVideo ?? videoSurfaceVisible
             system?.updateCommands(model: self)
             if let song = track.playlistSong {
                 loadCatalogueArtwork(song, localID: track.preferredLocalID)
@@ -594,6 +619,7 @@ final class PlaybackModel {
         let ticket = UUID(), revision = generation
         DiagnosticsEvents.shared.record(.lookupStarted)
         resolveTicket = ticket
+        if videoSurfaceVisible { videoRequested = true }
         wantsPlayback = true; isPlaying = false; isBuffering = true; lyricClockRunning = false
         offersVideoFallback = false
         startCatalogueDeadline()
@@ -609,12 +635,14 @@ final class PlaybackModel {
                 try check()
                 #if DEBUG
                 if ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
+                    _ = await catalogueMetadataTask?.value
+                    try check()
                     catalogueFailed(problem: DiagnosticProblem(code: .unavailable))
-                    error = "測試音源目前無法播放。"
                     return
                 }
                 if ProcessInfo.processInfo.arguments.contains("--youtube-sync-fixture"),
                    !ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression"),
+                   !ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
                    let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
                     if let file = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
@@ -712,24 +740,70 @@ final class PlaybackModel {
     }
 
     private func catalogueFailed(problem: DiagnosticProblem) {
-        diagnosticPlaybackProblem = problem
-        DiagnosticsEvents.shared.record(.playbackFailed, source: activeCatalogueSource, problem: problem)
         let videoID = current?.playlistSong?.videoID
-        offersVideoFallback = videoID.map(YouTubeVideo.validID) == true
+        let hasVideo = videoID.map(YouTubeVideo.validID) == true
+        offersVideoFallback = hasVideo && catalogueVideoStatus?.allowsEmbeddedPlayback == true
+        var failure = problem
         let messages = sourceFailures.map { "\($0.source)：\($0.problem.code.title)" }
         error = messages.isEmpty ? problem.code.title : Set(messages).sorted().joined(separator: "、")
+        if hasVideo {
+            if offersVideoFallback {
+                error = "找不到可用的音檔，可在播放畫面播放 YouTube 原片。"
+            } else if catalogueVideoStatus?.embeddable == false {
+                failure = DiagnosticProblem(code: .permission)
+                error = "YouTube 限制這部影片的內嵌播放。"
+            } else if catalogueVideoStatus?.madeForKids == true {
+                failure = DiagnosticProblem(code: .permission)
+                error = "這部兒童專屬影片可在 YouTube Music 開啟。"
+            } else {
+                failure = catalogueVideoProblem ?? DiagnosticProblem(code: .noData)
+                error = "無法確認 YouTube 的嵌入播放設定。可重試，或在 YouTube Music 開啟。"
+            }
+        }
         let details = sourceFailures.map { failure in
             let time = failure.elapsedMs.map { $0 == 0 ? "<1 ms" : "\($0) ms" }
             return ["\(failure.source)：\(failure.problem.detail)", time].compactMap { $0 }.joined(separator: " · ")
         }
+        diagnosticPlaybackProblem = failure
         diagnosticPlaybackDetails = details.isEmpty ? nil : Set(details).sorted().joined(separator: "\n")
+        let shouldSwitch = wantsPlayback && videoRequested && offersVideoFallback
+        DiagnosticsEvents.shared.record(shouldSwitch ? .playbackStalled : .playbackFailed,
+            source: activeCatalogueSource, problem: failure)
         pause()
+        system?.updateCommands(model: self)
+        videoRequested = shouldSwitch
+        startRequestedVideoIfVisible()
     }
 
-    func playYouTubeFallback() {
+    func requestVideoPlayback() {
+        reclaimPlayback()
+        videoRequested = true
+        startRequestedVideoIfVisible()
+    }
+
+    func setVideoSurfaceVisible(_ visible: Bool) {
+        videoSurfaceVisible = visible
+        if !visible { videoRequested = false }
+        if embeddedVideo != nil { setEmbeddedVideoVisible(visible) }
+        else { startRequestedVideoIfVisible() }
+    }
+
+    private func startRequestedVideoIfVisible() {
+        guard videoSurfaceVisible, videoRequested, !externalPlayback else { return }
+        if let embeddedVideo {
+            guard embeddedVideo.visible else { return }
+            videoRequested = false
+            resume()
+        } else if offersVideoFallback {
+            playYouTubeFallback()
+        }
+    }
+
+    private func playYouTubeFallback() {
         guard offersVideoFallback, embeddedVideo == nil, !externalPlayback, let song = current?.playlistSong,
               YouTubeVideo.validID(song.videoID) else { return }
-        pause()
+        videoRequested = false
+        offersVideoFallback = false
         player.replaceCurrentItem(with: nil)
         nativeReady = false
         let video = YouTubeVideo(id: song.videoID, title: song.title, artist: song.artist)
@@ -741,7 +815,6 @@ final class PlaybackModel {
         videoHasAdvanced = false
         didAdvancePlayback = false
         diagnosticPlaybackProblem = nil
-        diagnosticPlaybackDetails = nil
         audioSource = "YouTube · 官方播放器"
         error = nil
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
@@ -775,6 +848,7 @@ final class PlaybackModel {
         }
         embeddedVideo.setVisible(visible)
         refreshEmbeddedVideo()
+        if visible { startRequestedVideoIfVisible() }
     }
 
     func refreshEmbeddedVideo() {
@@ -805,6 +879,7 @@ final class PlaybackModel {
                 videoHasAdvanced = true
                 didAdvancePlayback = true
                 diagnosticPlaybackProblem = nil
+                diagnosticPlaybackDetails = nil
                 DiagnosticsEvents.shared.record(.playbackStarted, source: .youtube)
             }
         }
@@ -927,6 +1002,7 @@ final class PlaybackModel {
         embeddedVideo?.stop()
         embeddedVideo = nil
         queuedVideoReplay = nil
+        videoRequested = false
         videoDeadline?.cancel(); videoDeadline = nil
         offersVideoFallback = false
         nativeReady = false
@@ -942,6 +1018,7 @@ final class PlaybackModel {
         streamTimeout?.cancel(); streamTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         catalogueTarget = nil; catalogueHasStarted = false
+        catalogueVideoStatus = nil; catalogueVideoProblem = nil
         catalogueMetadataTask?.cancel(); catalogueMetadataTask = nil
         lyricReferenceDuration = nil; manualLyrics = false
         activeCatalogueSource = nil

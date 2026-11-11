@@ -61,7 +61,7 @@ final class PlaybackSystem {
 
     func updateCommands(model: PlaybackModel) {
         let remote = MPRemoteCommandCenter.shared()
-        let hasTrack = model.current != nil && !model.externalPlayback && model.embeddedVideo == nil
+        let hasTrack = model.handlesRemoteCommands
         remote.playCommand.isEnabled = hasTrack
         remote.pauseCommand.isEnabled = hasTrack
         remote.togglePlayPauseCommand.isEnabled = hasTrack
@@ -76,7 +76,7 @@ final class PlaybackSystem {
             guard let model else { return .noActionableNowPlayingItem }
             let time = (event as? MPChangePlaybackPositionCommandEvent)?.positionTime
             Task { @MainActor [weak model] in
-                guard let model, !model.externalPlayback, model.embeddedVideo == nil else { return }
+                guard let model, model.handlesRemoteCommands else { return }
                 action(model, time)
             }
             return .success

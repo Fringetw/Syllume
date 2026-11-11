@@ -203,10 +203,14 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let song = app.buttons["youtubeSong-fixture-row"]
         XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
-        XCTAssertTrue(app.staticTexts["測試音源目前無法播放。"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["YouTube 限制這部影片的內嵌播放。"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["openYouTubeMusic"].firstMatch.exists)
         let artwork = app.descendants(matching: .any)["playerArtwork"].firstMatch
         XCTAssertTrue(artwork.waitForExistence(timeout: 10))
+        let nowPlaying = app.staticTexts["systemNowPlayingProbe"]
+        let published = expectation(for: NSPredicate(format: "value == %@", "0.0|0.0|artwork"), evaluatedWith: nowPlaying)
+        XCTAssertEqual(XCTWaiter.wait(for: [published], timeout: 10), .completed)
         capture(app, name: "Syllume-cover-with-unavailable-audio")
         app.terminate()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-artwork-offline", "--youtube-unavailable-audio-fixture",
@@ -380,10 +384,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let jane = app.buttons["youtubeSong-recording-jane"]
         XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
-        let fallback = app.buttons["playYouTubeFallback"]
-        XCTAssertTrue(fallback.waitForExistence(timeout: 15))
-        XCTAssertFalse(app.buttons["lyricLine-0"].exists)
-        fallback.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.waitForExistence(timeout: 15))
         assertLyric("頭髮發現", in: app)
 
         let transport = app.staticTexts["youtubeTransportProbe"]
@@ -402,6 +403,39 @@ final class SyllumeUITests: XCTestCase {
                        "Selecting the visible video's own queue row must restart its media clock.")
     }
 
+    func testYouTubeSongAutomaticallyPlaysVisibleOriginal() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-device-playback-regression",
+                               "--youtube-playback-fixture", "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let help = app.buttons["youtubeSong-recording-help"]
+        XCTAssertTrue(help.waitForExistence(timeout: 15)); help.tap()
+        let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+        let transport = app.staticTexts["youtubeTransportProbe"]
+        let moving = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing"#)
+        XCTAssertTrue(video.waitForExistence(timeout: 15))
+        XCTAssertGreaterThanOrEqual(video.frame.width, 200)
+        XCTAssertGreaterThanOrEqual(video.frame.height, 200)
+        let started = expectation(for: moving, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 25), .completed, "The song tap must start the official player without a second action.")
+        XCTAssertTrue(app.staticTexts["YouTube · 官方播放器"].exists)
+
+        app.buttons["關閉播放畫面"].tap()
+        let mini = app.buttons["miniPlayerToggle"]
+        XCTAssertTrue(mini.waitForExistence(timeout: 10))
+        let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: mini)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
+        mini.tap()
+        XCTAssertTrue(video.waitForExistence(timeout: 15))
+        let resumed = expectation(for: moving, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 25), .completed)
+        capture(app, name: "HELP-YouTube-visible-playback")
+    }
+
     func testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -414,18 +448,12 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let jane = app.buttons["youtubeSong-recording-jane"]
         XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
-        let fallback = app.buttons["playYouTubeFallback"]
         let toggle = app.buttons["playerToggle"]
-        XCTAssertTrue(fallback.waitForExistence(timeout: 15))
-        XCTAssertEqual(toggle.label, "播放")
-        XCTAssertFalse(app.sliders["播放進度"].isEnabled)
-        XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
+        let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+        XCTAssertTrue(video.waitForExistence(timeout: 15))
         // Select each mode in the UI so UserDefaults' launch-argument domain cannot pin the picker.
         app.segmentedControls.buttons["封面"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["playerArtwork"].firstMatch.waitForExistence(timeout: 10))
-        let nowPlaying = app.staticTexts["systemNowPlayingProbe"]
-        let published = expectation(for: NSPredicate(format: "value == %@", "0.0|0.0|artwork"), evaluatedWith: nowPlaying)
-        XCTAssertEqual(XCTWaiter.wait(for: [published], timeout: 10), .completed)
 
         app.buttons["關閉播放畫面"].tap()
         let mini = app.buttons["openMiniPlayer"]
@@ -445,15 +473,11 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["nowPlayingThumbnail"].firstMatch.waitForExistence(timeout: 10))
         assertLyric("頭髮發現", in: app)
         XCTAssertEqual(app.buttons["lyricLine-0"].value as? String, "GenSenRounded2JP-M")
-        XCTAssertTrue(fallback.exists, "Lyrics must load before an audio route can start")
 
         let transport = app.staticTexts["youtubeTransportProbe"]
         func playAndVerify(_ song: String, mode: String, stageID: String) {
-            XCTAssertTrue(fallback.waitForExistence(timeout: 15))
-            XCTAssertEqual(toggle.label, "播放")
-            fallback.tap()
-            let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
             XCTAssertTrue(video.waitForExistence(timeout: 15), song)
+            if toggle.label == "播放" { toggle.tap() }
             XCTAssertGreaterThanOrEqual(video.frame.width, 200, song)
             XCTAssertGreaterThanOrEqual(video.frame.height, 200, song)
             // Use one accessibility snapshot for both the real media time and the play state.
@@ -481,8 +505,7 @@ final class SyllumeUITests: XCTestCase {
         playAndVerify("JANE DOE", mode: "商籟", stageID: "syllumeSonnetClockProbe")
         app.buttons["播放佇列"].tap()
         XCTAssertTrue(lemonQueue.waitForExistence(timeout: 10)); lemonQueue.tap()
-        XCTAssertTrue(fallback.waitForExistence(timeout: 15), "Lemon rejects the short sample and finishes the remaining source search")
-        XCTAssertFalse(app.webViews["youtubeEmbeddedPlayer"].exists)
+        XCTAssertTrue(video.waitForExistence(timeout: 15), "Lemon rejects the short sample and switches to the original video")
         playAndVerify("Lemon", mode: "繪光", stageID: "syllumeLumiereClockProbe")
         capture(app, name: "Recorded-songs-Lemon-visible-fallback")
     }

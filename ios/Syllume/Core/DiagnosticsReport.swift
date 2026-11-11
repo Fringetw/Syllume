@@ -47,6 +47,7 @@ enum DiagnosticCode: String, Codable, Sendable {
     case configuration, signedOut, reauthorize, permission, quota, rateLimit, offline, timeout, transport
     case verification, region, unavailable, noMatch, missingDuration, invalidResponse, invalidMedia, cancelled
     case noData, authorizationRequired, providerAuthorizationRequired, appBusy, appBackgrounded, engine, timeline, systemUnavailable
+    case playbackInteractionRequired
 
     var title: String {
         switch self {
@@ -70,6 +71,7 @@ enum DiagnosticCode: String, Codable, Sendable {
         case .noData: "目前沒有足夠資料"
         case .authorizationRequired: "需要使用者授權"
         case .providerAuthorizationRequired: "需要平台授權第三方音源"
+        case .playbackInteractionRequired: "需要在 YouTube 播放器按播放"
         case .appBusy: "主播放器正在播放"
         case .appBackgrounded: "App 已切到背景"
         case .engine: "動畫或字幕引擎錯誤"

@@ -19,7 +19,7 @@ final class YouTubePlayback {
     private(set) var lyricsSource: String?
     private(set) var error: String?
     private(set) var seekTime = 0.0
-    private(set) var seekRevision = UUID()
+    private(set) var seekRevision: UUID?
     private(set) var visible = false
     private(set) var playbackRevision = 0
     private(set) var didReachEnd = false
@@ -87,9 +87,11 @@ final class YouTubePlayback {
     func toggle() { wantsPlayback ? pause() : resume() }
     func resume() { guard current != nil, visible else { return }; error = nil; prepareToPlay() }
     func pause() { playbackRevision += 1; wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = false }
-    func autoplayBlocked() {
+    func autoplayBlocked(revision: Int?) {
+        guard visible, wantsPlayback, revision == playbackRevision else { return }
         wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = nil
         didBlockAutoplay = true
+        failure = DiagnosticProblem(code: .playbackInteractionRequired)
         error = "請點上方 YouTube 播放器的播放鍵，開始播放。"
     }
     func next() { guard canAdvance else { return }; index += 1; load() }
@@ -194,7 +196,7 @@ final class YouTubePlayback {
     private func load() {
         lyricTask?.cancel(); session = UUID(); error = nil; position = 0; duration = 0
         sampledTime = nil
-        didReachEnd = false; didBlockAutoplay = false; failure = nil; seekTime = 0; seekRevision = UUID()
+        didReachEnd = false; didBlockAutoplay = false; failure = nil; seekTime = 0; seekRevision = nil
         isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
         matchAttempts = 0
         playbackRevision += 1; pendingPlayback = true; pendingSeek = nil

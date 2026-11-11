@@ -12,7 +12,7 @@ Syllume 是由 Fringetw 維護的非官方 iOS 移植。商籟（Sonnet）和繪
 ## Syllume for iPhone
 
 - 在 YouTube 歌單、迷你播放器和播放頁查看歌曲封面。曾載入的封面會在本機暫存，網路中斷時仍可使用快取。
-- 用本機或有權使用的來源播放配對歌曲。找不到可用音源時，可在 Syllume 開啟可見的 YouTube 官方播放器，或在 YouTube Music 開啟原曲。
+- 用本機或有權使用的來源播放配對歌曲。找不到可用音源時，點播會在前景切到可見的 YouTube 官方播放器。受嵌入限制的影片可在 YouTube Music 開啟。
 - 播放本機與 Navidrome 音訊，支援鎖定畫面控制與背景播放。
 - 使用商籟、繪光、歌詞清單或封面視圖。可匯入 LRC、Enhanced LRC 和原版 Folia 的 `.fia`。
 - 內建 [OpenCC 繁體字幕](https://github.com/Fringetw/folia-traditional-chinese)。可離線簡轉繁、尋找同步歌詞或附加字幕。

@@ -1,6 +1,12 @@
-# Syllume 0.3.17 · build 29
+# Syllume 0.3.18 · build 30
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
+
+## 0.3.18 YouTube 點播與 Syllume 圖示
+
+- 點選 YouTube 歌單曲目後，找不到可用的同版本音檔時，直接在前景播放可嵌入的 YouTube 原片。離開播放頁、顯示佇列或切到背景會暫停原片。
+- 若 YouTube 限制嵌入，或目前無法確認影片的嵌入狀態，播放頁會提供 YouTube Music 的原片連結。若系統要求手動起播，可直接點官方播放器內的播放鍵。
+- iPhone 主畫面圖示換成白色圓角 S 與青藍、淡紫漸層。
 
 ## 0.3.17 音檔綁定與播放
 
@@ -216,4 +222,4 @@ Spotify 標誌使用其[官方設計資源](https://developer.spotify.com/docume
 
 ## 授權
 
-原專案與圖示來自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)。此移植依 GNU AGPL v3 提供原始碼與授權全文，見 [LICENSE](../LICENSE)。內建示範音軌為本專案合成的音訊。
+原專案來自 [chthollyphile/folia-major](https://github.com/chthollyphile/folia-major)，Syllume 圖示取其漸層和圓角字形作為設計參考。此移植依 GNU AGPL v3 提供原始碼與授權全文，見 [LICENSE](../LICENSE)。內建示範音軌為本專案合成的音訊。

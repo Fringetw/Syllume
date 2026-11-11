@@ -8,7 +8,7 @@ struct YouTubePlayerView: UIViewRepresentable {
     let requestSession: UUID
     let requestPlayback: Bool
     let requestRevision: Int
-    let requestSeek: UUID
+    let requestSeek: UUID?
     let requestTime: Double
     let onUpdate: @MainActor () -> Void
 
@@ -21,32 +21,54 @@ struct YouTubePlayerView: UIViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(input: self) }
-    func makeUIView(context: Context) -> WKWebView {
+    func makeUIView(context: Context) -> PlayerWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
         config.userContentController.add(context.coordinator, name: "youtube")
-        let view = WKWebView(frame: .zero, configuration: config)
+        let view = PlayerWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator; view.uiDelegate = context.coordinator
         view.isOpaque = false; view.backgroundColor = .black; view.scrollView.isScrollEnabled = false
         view.accessibilityIdentifier = "youtubeEmbeddedPlayer"
         context.coordinator.view = view
-        context.coordinator.update()
+        view.viewportDidChange = { [weak coordinator = context.coordinator] in coordinator?.update() }
         return view
     }
-    func updateUIView(_ view: WKWebView, context: Context) { context.coordinator.input = self; context.coordinator.update() }
-    static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+    func updateUIView(_ view: PlayerWebView, context: Context) { context.coordinator.input = self; context.coordinator.update() }
+    static func dismantleUIView(_ view: PlayerWebView, coordinator: Coordinator) {
+        view.viewportDidChange = nil
         view.pauseAllMediaPlayback(completionHandler: nil)
         view.evaluateJavaScript("window.FoliaYouTube?.stop()", completionHandler: nil)
         view.stopLoading(); view.configuration.userContentController.removeScriptMessageHandler(forName: "youtube")
         view.navigationDelegate = nil; view.uiDelegate = nil
     }
 
+    final class PlayerWebView: WKWebView {
+        var viewportDidChange: (@MainActor () -> Void)?
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            viewportDidChange?()
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            viewportDidChange?()
+        }
+
+        var hasVisibleViewport: Bool {
+            guard let window, !isHidden, alpha > 0, bounds.width >= 200, bounds.height >= 200 else { return false }
+            let frame = convert(bounds, to: window)
+            let visible = frame.intersection(window.bounds)
+            return !visible.isNull && visible.width * visible.height > frame.width * frame.height / 2
+        }
+    }
+
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         var input: YouTubePlayerView
         var player: YouTubePlayback { input.player }
-        weak var view: WKWebView?
+        weak var view: PlayerWebView?
         var session: UUID?
         var loaded = false
         var sentRevision: Int?
@@ -54,15 +76,16 @@ struct YouTubePlayerView: UIViewRepresentable {
         init(input: YouTubePlayerView) { self.input = input }
 
         func update() {
-            guard let view, let video = player.current else { return }
+            guard let view, let video = player.current,
+                  input.requestSession == player.session, input.requestRevision == player.playbackRevision else { return }
             if session != input.requestSession {
+                guard player.visible, view.hasVisibleViewport else { return }
                 session = input.requestSession; loaded = false; sentRevision = nil; sentSeek = nil
                 let bundle = (Bundle.main.bundleIdentifier ?? "org.folia.community.ios").lowercased()
                 let origin = "https://" + bundle
                 view.loadHTMLString(Self.html(video: video.id, session: input.requestSession.uuidString, origin: origin), baseURL: URL(string: origin))
                 return
             }
-            guard input.requestSession == player.session, input.requestRevision == player.playbackRevision else { return }
             // WebKit pauses the actual media immediately, even before the IFrame API is ready.
             if sentRevision != input.requestRevision, !input.requestPlayback {
                 let revision = input.requestRevision
@@ -74,13 +97,14 @@ struct YouTubePlayerView: UIViewRepresentable {
                 }
             }
             guard loaded else { return }
+            if input.requestPlayback, !view.hasVisibleViewport { return }
             if sentRevision != input.requestRevision {
                 sentRevision = input.requestRevision
                 view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants, revision)",
                     arguments: ["wants": input.requestPlayback, "revision": input.requestRevision], in: nil, in: .page, completionHandler: nil)
             }
-            if sentSeek != input.requestSeek {
-                sentSeek = input.requestSeek
+            if let seek = input.requestSeek, sentSeek != seek, player.visible, view.hasVisibleViewport {
+                sentSeek = seek
                 view.callAsyncJavaScript("window.FoliaYouTube.seek(time)", arguments: ["time": input.requestTime], in: nil, in: .page, completionHandler: nil)
             }
         }
@@ -101,7 +125,7 @@ struct YouTubePlayerView: UIViewRepresentable {
                   let session = body["session"] as? String, session == player.session.uuidString,
                   let type = body["type"] as? String else { return }
             if type == "loaded" { loaded = true; update(); return }
-            else if type == "blocked" { player.autoplayBlocked() }
+            else if type == "blocked" { player.autoplayBlocked(revision: body["commandRevision"] as? Int) }
             else if type == "error" { player.failed(body["code"] as? Int ?? -1, session: session) }
             else if type == "snapshot", let data = try? JSONSerialization.data(withJSONObject: body),
                     let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) { player.receive(snapshot) }
@@ -136,7 +160,7 @@ struct YouTubePlayerView: UIViewRepresentable {
                   pauseVideo(){this.a.pause();this.o.events.onStateChange();}
                   getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Syllume'};}
                   getPlayerState(){return this.a.paused?2:1;} getCurrentTime(){return this.a.currentTime;}
-                  getDuration(){return {'6AR6Oc0-4NQ':236,'3NNhrqHZqlI':256}[videoID] || (Number.isFinite(this.a.duration)?this.a.duration:30);}
+                  getDuration(){return {'6AR6Oc0-4NQ':236,'3NNhrqHZqlI':256,'z2tDtdHHAHg':188}[videoID] || (Number.isFinite(this.a.duration)?this.a.duration:30);}
                   seekTo(time){this.a.currentTime=time;} destroy(){this.a.pause();this.a.src='';}
                 }};window.onYouTubeIframeAPIReady();
                 </script>

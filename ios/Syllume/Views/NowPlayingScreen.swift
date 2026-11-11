@@ -66,8 +66,9 @@ struct NowPlayingScreen: View {
                 if let video = player.embeddedVideo {
                     YouTubePlayerView(player: video, onUpdate: player.refreshEmbeddedVideo)
                         .frame(minWidth: 200, minHeight: 200, maxHeight: 200)
-                        .onChange(of: videoVisible, initial: true) { _, visible in
-                            if player.embeddedVideo === video { player.setEmbeddedVideoVisible(visible) }
+                        .id(ObjectIdentifier(video))
+                        .onAppear {
+                            if player.embeddedVideo === video { player.setEmbeddedVideoVisible(videoVisible) }
                         }
                         .onDisappear {
                             if player.embeddedVideo === video { player.setEmbeddedVideoVisible(false) }
@@ -130,7 +131,7 @@ struct NowPlayingScreen: View {
                     if let error = player.error {
                         Text(error).font(.footnote).foregroundStyle(.orange)
                         if player.offersVideoFallback, player.embeddedVideo == nil {
-                            Button("在 Syllume 播放 YouTube 原片", action: player.playYouTubeFallback)
+                            Button("在 Syllume 播放 YouTube 原片", action: player.requestVideoPlayback)
                                 .font(.footnote.weight(.semibold)).foregroundStyle(accent)
                                 .accessibilityIdentifier("playYouTubeFallback")
                         }
@@ -140,7 +141,8 @@ struct NowPlayingScreen: View {
                                 .accessibilityIdentifier("openYouTubeMusic")
                         }
                     } else if player.isBuffering {
-                        Text(player.audioSource == nil && track.source == .catalogue ? "正在尋找可播放的音源…" : "音訊緩衝中…")
+                        Text(player.embeddedVideo != nil ? "正在開啟 YouTube 原片…" :
+                            player.audioSource == nil && track.source == .catalogue ? "正在尋找可播放的音源…" : "音訊緩衝中…")
                             .font(.footnote).foregroundStyle(.secondary)
                     } else if let source = player.audioSource {
                         Text(source).font(.caption).foregroundStyle(accent)
@@ -161,9 +163,12 @@ struct NowPlayingScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
                     LocalTransportProbe(player: player)
                 }
-                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
+                    ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
                     Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
                         .accessibilityIdentifier("systemNowPlayingProbe").accessibilityValue(player.nowPlayingProbe)
+                }
+                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
                     Text("商籟動畫時鐘").font(.system(size: 1)).frame(height: 1)
                         .accessibilityIdentifier("syllumeSonnetClockProbe").accessibilityValue(sonnetClockProbe)
                     Text("繪光動畫時鐘").font(.system(size: 1)).frame(height: 1)
@@ -179,6 +184,8 @@ struct NowPlayingScreen: View {
             .frame(maxWidth: .infinity)
             .background { playbackBackground(for: track) }
             .tint(accent)
+            .onChange(of: videoVisible, initial: true) { _, visible in player.setVideoSurfaceVisible(visible) }
+            .onDisappear { player.setVideoSurfaceVisible(false) }
             .animation(reduceMotion ? nil : .easeInOut(duration: 0.26), value: luminous)
             .overlay(alignment: .bottomTrailing) {
                 if !controlsVisible {
@@ -392,12 +399,12 @@ struct MiniPlayer: View {
                 ? "已載入歌曲封面" : "")
             #endif
             Button {
-                if player.embeddedVideo != nil { open() }
-                else { player.toggle(inApp: true) }
+                if !player.wantsPlayback, player.embeddedVideo != nil || player.offersVideoFallback { open() }
+                player.toggle(inApp: true)
             } label: {
                 Image(systemName: player.transportIcon).frame(width: 44, height: 44)
             }
-            .accessibilityLabel(player.embeddedVideo == nil ? player.transportLabel : "開啟 YouTube 播放畫面")
+            .accessibilityLabel(player.transportLabel)
             .accessibilityIdentifier("miniPlayerToggle")
         }
         .buttonStyle(SyllumePressStyle())

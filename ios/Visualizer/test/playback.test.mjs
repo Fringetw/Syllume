@@ -76,11 +76,12 @@ test('reduced motion stops the ticker while accepting new word positions', async
     assert.equal(h.calls.length, before + 1); assert.deepEqual(h.calls.at(-1), ['render']);
 });
 
-function youtubeHarness() {
+function youtubeHarness({ seekStartsPlayback = false } = {}) {
     const messages = [], calls = []; let now = 0, tick, events;
     const media = { state: 2, time: 4 };
     const controls = { playVideo() { calls.push('play'); media.state = 1; }, pauseVideo() { calls.push('pause'); media.state = 2; },
-        seekTo(time) { calls.push(['seek', time]); media.time = time; }, destroy() { calls.push('destroy'); },
+        seekTo(time) { calls.push(['seek', time]); media.time = time; if (seekStartsPlayback) media.state = 1; },
+        destroy() { calls.push('destroy'); },
         getPlayerState: () => media.state, getVideoData: () => ({ video_id: 'M7lc1UVf-VE' }), getCurrentTime: () => media.time, getDuration: () => 60 };
     const window = { webkit: { messageHandlers: { youtube: { postMessage: m => messages.push(m) } } } };
     const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios',
@@ -88,7 +89,9 @@ function youtubeHarness() {
         setTimeout: () => 1, clearTimeout() {}, setInterval: fn => { tick = fn; return 2; }, clearInterval() {},
         YT: { Player: function (_, options) { events = options.events; return controls; } } };
     vm.runInNewContext(fs.readFileSync(new URL('../../Syllume/Resources/SyllumeYouTube/player.js', import.meta.url), 'utf8'), context);
-    return { messages, calls, media, api: window.FoliaYouTube, ready() { window.onYouTubeIframeAPIReady(); events.onReady(); }, tick() { now += 250; tick(); } };
+    return { messages, calls, media, api: window.FoliaYouTube,
+        create() { window.onYouTubeIframeAPIReady(); }, didLoad() { events.onReady(); },
+        ready() { this.create(); this.didLoad(); }, tick() { now += 250; tick(); } };
 }
 
 test('YouTube pause calls the real player and wins over a delayed older play command', () => {
@@ -99,9 +102,19 @@ test('YouTube pause calls the real player and wins over a delayed older play com
 });
 
 test('a pause before YouTube readiness prevents autoplay and retains a pending seek', () => {
-    const h = youtubeHarness(); h.api.setPlayback(true, 1); h.api.seek(12); h.api.setPlayback(false, 2); h.ready();
+    const h = youtubeHarness({ seekStartsPlayback: true });
+    h.api.setPlayback(true, 1); h.api.seek(12); h.api.setPlayback(false, 2); h.ready();
     assert.equal(h.media.state, 2); assert.equal(h.media.time, 12); assert.equal(h.calls.includes('play'), false);
+    h.api.seek(15); assert.equal(h.media.state, 2); assert.equal(h.media.time, 15);
     h.api.setPlayback(true, 3); assert.equal(h.media.state, 1); h.api.stop(); assert.equal(h.calls.at(-1), 'destroy');
+});
+
+test('discarding an iframe before readiness prevents late playback after a track change', () => {
+    const h = youtubeHarness();
+    h.api.setPlayback(true, 1);
+    h.create(); h.api.stop(); h.didLoad(); h.tick();
+    assert.deepEqual(h.calls, ['destroy']);
+    assert.deepEqual(h.messages.map(message => message.type), ['loaded']);
 });
 
 test('vendored desktop sources match the pinned snapshot and documented iOS patches', () => {

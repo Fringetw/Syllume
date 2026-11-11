@@ -106,7 +106,12 @@ struct YouTubeVideoDetails: Decodable, Sendable {
         let channelTitle: String?
         let description: String?
     }
-    struct Status: Decodable, Sendable { let embeddable: Bool? }
+    struct Status: Decodable, Sendable {
+        let embeddable: Bool?
+        let madeForKids: Bool?
+
+        var allowsEmbeddedPlayback: Bool { embeddable != false && madeForKids == false }
+    }
 
     var duration: Double? { PlatformLibrary.isoDuration(contentDetails?.duration) }
     var creditedArtist: String? {
