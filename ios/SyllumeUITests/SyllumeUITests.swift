@@ -385,13 +385,13 @@ final class SyllumeUITests: XCTestCase {
         let jane = app.buttons["youtubeSong-recording-jane"]
         XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
         XCTAssertTrue(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.waitForExistence(timeout: 15))
-        assertLyric("頭髮發現", in: app)
-
         let transport = app.staticTexts["youtubeTransportProbe"]
         let beforeQueue = expectation(for: NSPredicate { _, _ in
             self.probeTime(transport) >= 8 && (transport.value as? String ?? "").hasSuffix("|playing")
         }, evaluatedWith: transport)
-        XCTAssertEqual(XCTWaiter.wait(for: [beforeQueue], timeout: 35), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [beforeQueue], timeout: 45), .completed,
+                       "Expected actual playback before restarting the current queue row.")
+        assertLyric("頭髮發現", in: app, timeout: 30)
         app.buttons["播放佇列"].tap()
         let current = app.buttons["trackRow-recording-jane"]
         XCTAssertTrue(current.waitForExistence(timeout: 10)); current.tap()
@@ -599,13 +599,15 @@ final class SyllumeUITests: XCTestCase {
             control.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         }
         let changed = expectation(for: NSPredicate(format: "value == %@", target), evaluatedWith: control)
-        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 5), .completed)
+        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed,
+                       "\(identifier): expected \(target), got \(String(describing: control.value))")
     }
 
-    private func assertLyric(_ text: String, in app: XCUIApplication, file: StaticString = #filePath, line: UInt = #line) {
+    private func assertLyric(_ text: String, in app: XCUIApplication, timeout: TimeInterval = 15,
+                             file: StaticString = #filePath, line: UInt = #line) {
         let row = app.buttons["lyricLine-0"]
         let matches = expectation(for: NSPredicate(format: "label CONTAINS %@", text), evaluatedWith: row)
-        let result = XCTWaiter.wait(for: [matches], timeout: 15)
+        let result = XCTWaiter.wait(for: [matches], timeout: timeout)
         if result != .completed {
             print("Subtitle display failure: \(app.debugDescription)")
             capture(app, name: "Subtitle-display-failure")

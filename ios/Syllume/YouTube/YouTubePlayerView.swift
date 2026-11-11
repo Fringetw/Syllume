@@ -103,7 +103,7 @@ struct YouTubePlayerView: UIViewRepresentable {
                 }
             }
             guard loaded else { return }
-            if input.requestPlayback, !view.hasVisibleViewport { return }
+            if input.requestPlayback, !view.hasVisibleViewport || UIApplication.shared.applicationState != .active { return }
             if sentRevision != input.requestRevision {
                 sentRevision = input.requestRevision
                 view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants, revision)",
@@ -131,10 +131,15 @@ struct YouTubePlayerView: UIViewRepresentable {
                   let session = body["session"] as? String, session == player.session.uuidString,
                   let type = body["type"] as? String else { return }
             if type == "loaded" { loaded = true; update(); return }
+            else if type == "visible" { sentRevision = nil; update(); return }
             else if type == "blocked" { player.autoplayBlocked(revision: body["commandRevision"] as? Int) }
             else if type == "error" { player.failed(body["code"] as? Int ?? -1, session: session) }
             else if type == "snapshot", let data = try? JSONSerialization.data(withJSONObject: body),
-                    let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) { player.receive(snapshot) }
+                    let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) {
+                player.receive(snapshot)
+                // A presentation transition can settle without another layout or SwiftUI update.
+                if input.requestPlayback, sentRevision != input.requestRevision { update() }
+            }
             input.onUpdate()
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
@@ -173,7 +178,12 @@ struct YouTubePlayerView: UIViewRepresentable {
                     },{once:true});
                     this.a.src='data:audio/mp4;base64,\(data.base64EncodedString())';
                   }
-                  playVideo(){this.a.play().then(()=>this.o.events.onStateChange()).catch(()=>this.o.events.onAutoplayBlocked());}
+                  playVideo(){
+                    this.a.play().then(()=>this.o.events.onStateChange()).catch(error=>{
+                      if(error.name==='NotAllowedError') this.o.events.onAutoplayBlocked();
+                      else if(error.name!=='AbortError') this.o.events.onError({data:-1});
+                    });
+                  }
                   pauseVideo(){this.a.pause();this.o.events.onStateChange();}
                   getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Syllume'};}
                   getPlayerState(){return this.a.paused?2:(this.a.seeking || this.a.readyState<3?3:1);}

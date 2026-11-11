@@ -2,20 +2,22 @@
 let player, ready = false, wants = false, revision = -1, awaiting = false, pendingSeek = null;
 let attempts = 0, lastCommand = 0, stopped = false;
 const emit = (type, extra = {}) => window.webkit.messageHandlers.youtube.postMessage({ type, session, ...extra });
+let waitingForVisibleCommand = document.hidden;
+const canPlay = () => wants && !document.hidden && !waitingForVisibleCommand;
 const applyPlayback = () => {
     if (!ready || stopped || revision < 0) return;
     lastCommand = performance.now(); attempts++;
-    wants ? player.playVideo() : player.pauseVideo();
+    canPlay() ? player.playVideo() : player.pauseVideo();
 };
 const applySeek = (time) => {
     player.seekTo(time, true);
-    if (!wants) {
+    if (!canPlay()) {
         awaiting = true; attempts = 0;
         applyPlayback();
     }
 };
 const snapshot = () => {
-    if (!ready) return;
+    if (!ready || document.hidden || waitingForVisibleCommand) return;
     const state = player.getPlayerState(), data = player.getVideoData() || {};
     if (awaiting && ((wants && state === 1) || (!wants && [-1, 0, 2, 5].includes(state)))) awaiting = false;
     else if (awaiting && performance.now() - lastCommand >= 750 && attempts < 4) applyPlayback();
@@ -27,7 +29,8 @@ const snapshot = () => {
 window.FoliaYouTube = {
     setPlayback(value, command) {
         if (stopped || !Number.isSafeInteger(command) || command < revision) return;
-        revision = command; wants = !!value; awaiting = true; attempts = 0; applyPlayback();
+        revision = command; wants = !!value; waitingForVisibleCommand = document.hidden;
+        awaiting = true; attempts = 0; applyPlayback();
     },
     seek(time) { if (stopped) return; if (ready) applySeek(time); else pendingSeek = time; },
     stop() {
@@ -50,7 +53,7 @@ window.onYouTubeIframeAPIReady = () => {
             },
             onStateChange: snapshot,
             onAutoplayBlocked() {
-                if (stopped || !wants) return;
+                if (stopped || !canPlay()) return;
                 awaiting = false; wants = false; emit('blocked', { commandRevision: revision });
             },
             onError(e) { if (!stopped) emit('error', { code: e.data }); },
@@ -58,6 +61,13 @@ window.onYouTubeIframeAPIReady = () => {
 };
 const timer = setInterval(snapshot, 250);
 document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { wants = false; awaiting = true; attempts = 0; applyPlayback(); }
+    if (stopped) return;
+    if (document.hidden) {
+        waitingForVisibleCommand = true;
+        if (ready) player.pauseVideo();
+    } else if (waitingForVisibleCommand) {
+        // Native still owns the intent and checks that the player is actually onscreen.
+        emit('visible');
+    }
 });
 emit('loaded');
