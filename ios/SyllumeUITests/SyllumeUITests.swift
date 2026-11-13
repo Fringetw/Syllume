@@ -280,7 +280,8 @@ final class SyllumeUITests: XCTestCase {
     func testYouTubePlaylistDownloadRequiresConfirmation() {
         continueAfterFailure = false
         let app = XCUIApplication()
-        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--subtitle-fixture"]
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--subtitle-fixture",
+                               "-Folia.LyricDisplayMode", "cover"]
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
@@ -290,10 +291,15 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(app.buttons["syncYouTubePlaylist"].waitForExistence(timeout: 15))
         XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
         let confirm = app.buttons["confirmPlaylistDownload"]
+        let download = app.buttons["下載音樂"].firstMatch
         func openConfirmation() {
-            audio.press(forDuration: 1)
-            let download = app.buttons["下載音樂"].firstMatch
-            XCTAssertTrue(download.waitForExistence(timeout: 15))
+            let ready = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: audio)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
+            // Hold over the leading artwork where the visible row content begins.
+            audio.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).press(forDuration: 1.5)
+            let menuShown = download.waitForExistence(timeout: 15)
+            if !menuShown { capture(app, name: "Download-context-menu-missing") }
+            XCTAssertTrue(menuShown, "Long press must open the song's context menu.")
             download.tap()
             XCTAssertTrue(confirm.waitForExistence(timeout: 20))
         }

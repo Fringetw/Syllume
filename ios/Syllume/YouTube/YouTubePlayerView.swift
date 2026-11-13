@@ -37,11 +37,13 @@ struct YouTubePlayerView: UIViewRepresentable {
     }
     func updateUIView(_ view: PlayerWebView, context: Context) { context.coordinator.input = self; context.coordinator.update() }
     static func dismantleUIView(_ view: PlayerWebView, coordinator: Coordinator) {
+        coordinator.view = nil
         view.viewportDidChange = nil
+        view.configuration.userContentController.removeScriptMessageHandler(forName: "youtube")
+        view.navigationDelegate = nil; view.uiDelegate = nil
         view.pauseAllMediaPlayback(completionHandler: nil)
         view.evaluateJavaScript("window.FoliaYouTube?.stop()", completionHandler: nil)
-        view.stopLoading(); view.configuration.userContentController.removeScriptMessageHandler(forName: "youtube")
-        view.navigationDelegate = nil; view.uiDelegate = nil
+        view.stopLoading()
     }
 
     final class PlayerWebView: WKWebView {
@@ -94,9 +96,10 @@ struct YouTubePlayerView: UIViewRepresentable {
             // WebKit pauses the actual media immediately, even before the IFrame API is ready.
             if sentRevision != nil, pausedRevision != input.requestRevision, !input.requestPlayback {
                 let revision = input.requestRevision
+                let pauseSession = session
                 pausedRevision = revision
-                view.pauseAllMediaPlayback { [weak self] in
-                    guard let self else { return }
+                view.pauseAllMediaPlayback { [weak self, weak view] in
+                    guard let self, let view, self.view === view, session == pauseSession else { return }
                     // A slow WebKit pause must not land after a newer resume and leave it silent.
                     if revision != player.playbackRevision, input.requestPlayback { sentRevision = nil; update() }
                     reportMediaState()
@@ -127,8 +130,9 @@ struct YouTubePlayerView: UIViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any],
-                  let session = body["session"] as? String, session == player.session.uuidString,
+            guard let view, message.webView === view, message.frameInfo.isMainFrame,
+                  let body = message.body as? [String: Any], let session = body["session"] as? String,
+                  session == self.session?.uuidString, session == player.session.uuidString,
                   let type = body["type"] as? String else { return }
             if type == "loaded" || type == "visible" {
                 loaded = true
@@ -137,7 +141,15 @@ struct YouTubePlayerView: UIViewRepresentable {
                 return
             }
             else if type == "blocked" { player.autoplayBlocked(revision: body["commandRevision"] as? Int) }
-            else if type == "error" { player.failed(body["code"] as? Int ?? -1, session: session) }
+            else if type == "error" {
+                let code = body["code"] as? Int ?? -1
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+                    print("YouTube playback fixture: \(body["reason"] as? String ?? "player readiness deadline") (\(code))")
+                }
+                #endif
+                player.failed(code, session: session)
+            }
             else if type == "snapshot", let data = try? JSONSerialization.data(withJSONObject: body),
                     let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) {
                 player.receive(snapshot)
@@ -147,7 +159,13 @@ struct YouTubePlayerView: UIViewRepresentable {
             input.onUpdate()
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            player.failed(-1, session: session?.uuidString ?? "")
+            guard webView === view, let session, session == player.session else { return }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+                print("YouTube playback fixture: WebKit content process terminated")
+            }
+            #endif
+            player.failed(-1, session: session.uuidString)
             input.onUpdate()
         }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
@@ -171,25 +189,17 @@ struct YouTubePlayerView: UIViewRepresentable {
                 window.YT={Player:class {
                   constructor(id,options){
                     this.o=options;this.a=new Audio();this.a.loop=true;this.a.preload='auto';
-                    this.clockOffset=0;this.lastMediaTime=0;
+                    // Keep the video timeline while the repeating fixture starts at the beginning of its clip.
+                    this.clockOffset=options.playerVars.start;this.lastMediaTime=0;
                     document.getElementById(id).textContent='本機播放測試';
-                    this.a.addEventListener('error',()=>options.events.onError({data:-1}));
-                    this.a.addEventListener('loadedmetadata',()=>{
-                      const start=options.playerVars.start;
-                      if(start % this.a.duration > 0){
-                        this.a.addEventListener('seeked',()=>options.events.onReady(),{once:true});
-                        this.seekTo(start);
-                      }else{
-                        this.clockOffset=start;
-                        options.events.onReady();
-                      }
-                    },{once:true});
+                    this.a.addEventListener('error',()=>emit('error',{code:-1,reason:'audio fixture failed to load'}));
+                    this.a.addEventListener('loadedmetadata',()=>options.events.onReady(),{once:true});
                     this.a.src='data:audio/mp4;base64,\(data.base64EncodedString())';
                   }
                   playVideo(){
                     this.a.play().then(()=>this.o.events.onStateChange()).catch(error=>{
                       if(error.name==='NotAllowedError') this.o.events.onAutoplayBlocked();
-                      else if(error.name!=='AbortError') this.o.events.onError({data:-1});
+                      else if(error.name!=='AbortError') emit('error',{code:-1,reason:'audio fixture play() failed'});
                     });
                   }
                   pauseVideo(){this.a.pause();this.o.events.onStateChange();}
