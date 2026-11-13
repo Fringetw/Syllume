@@ -443,6 +443,8 @@ final class SyllumeUITests: XCTestCase {
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-artwork-reset",
                                "--syllume-recording-regression", "--youtube-playback-fixture", "--subtitle-fixture", "--subtitle-reset",
                                "--presentation-reset"]
+        // Begin with artwork before launching the heavier lyric renderer; the picker stays editable.
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
@@ -452,8 +454,6 @@ final class SyllumeUITests: XCTestCase {
         let toggle = app.buttons["playerToggle"]
         let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
         XCTAssertTrue(video.waitForExistence(timeout: 15))
-        // Select each mode in the UI so UserDefaults' launch-argument domain cannot pin the picker.
-        app.segmentedControls.buttons["封面"].tap()
         XCTAssertTrue(app.descendants(matching: .any)["playerArtwork"].firstMatch.waitForExistence(timeout: 10))
 
         app.buttons["關閉播放畫面"].tap()

@@ -13,6 +13,10 @@ struct SyllumeApp: App {
         if ProcessInfo.processInfo.arguments.contains("--presentation-reset") {
             UserDefaults.standard.removeObject(forKey: "Folia.LyricDisplayMode")
             UserDefaults.standard.removeObject(forKey: "Folia.EnergySavingAnimation")
+            if let initialMode = ProcessInfo.processInfo.environment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"],
+               let mode = LyricDisplayMode(rawValue: initialMode) {
+                UserDefaults.standard.set(mode.rawValue, forKey: "Folia.LyricDisplayMode")
+            }
         }
         #endif
         let library = LocalLibrary()
