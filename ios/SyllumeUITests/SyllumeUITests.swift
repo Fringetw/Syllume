@@ -394,7 +394,7 @@ final class SyllumeUITests: XCTestCase {
         let transport = app.staticTexts["youtubeTransportProbe"]
         assertLyric("頭髮發現", in: app, timeout: 30)
         let beforeQueue = waitForAdvancingYouTubeClock(transport, above: 25, timeout: 55,
-                                                     "Expected actual playback before selecting the current queue row.").time
+                                                     "Expected actual playback before selecting the current queue row.")
         app.buttons["播放佇列"].tap()
         let current = app.buttons["trackRow-recording-jane"]
         XCTAssertTrue(current.waitForExistence(timeout: 10)); current.tap()
@@ -420,7 +420,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(video.frame.width, 200)
         XCTAssertGreaterThanOrEqual(video.frame.height, 200)
         let beforeClosing = waitForAdvancingYouTubeClock(transport, above: 10, timeout: 40,
-                                                       "The song tap must start playback without a second action.").time
+                                                       "The song tap must start playback without a second action.")
         XCTAssertTrue(app.staticTexts["YouTube · 官方播放器"].exists)
 
         app.buttons["關閉播放畫面"].tap()
@@ -430,10 +430,20 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
         mini.tap()
         XCTAssertTrue(video.waitForExistence(timeout: 15))
-        let resumed = waitForAdvancingYouTubeClock(transport, timeout: 30,
-                                                  "The mini player must reopen the video and resume playback.")
-        XCTAssertGreaterThanOrEqual(resumed.firstPlayingTime, beforeClosing - 1,
-                                    "Expected resume near the retained position (\(beforeClosing)s).")
+        var resumeSamples: [String] = []
+        let resumed = expectation(for: NSPredicate { _, _ in
+            let value = transport.value as? String ?? "missing"
+            resumeSamples.append(value)
+            let fields = value.split(separator: "|")
+            // The playback model reports playing after the reopened media clock advances.
+            guard fields.count == 2, fields[1] == "playing", let time = Double(fields[0]) else { return false }
+            return time > beforeClosing + 0.5
+        }, evaluatedWith: transport)
+        let resumedResult = XCTWaiter.wait(for: [resumed], timeout: 40)
+        let resumeEvidence = resumeSamples.suffix(8).joined(separator: ", ")
+        XCTAssertEqual(resumedResult, .completed,
+                       "Expected the reopened media to play past \(beforeClosing)s. Samples: \(resumeEvidence)")
+        print("YouTube fixture resume clock: \(resumeEvidence)")
         capture(app, name: "HELP-YouTube-visible-playback")
     }
 
@@ -595,8 +605,7 @@ final class SyllumeUITests: XCTestCase {
     private func waitForAdvancingYouTubeClock(_ transport: XCUIElement, above minimum: Double = 0,
                                              below maximum: Double = .infinity, timeout: TimeInterval,
                                              _ message: String, file: StaticString = #filePath, line: UInt = #line)
-        -> (time: Double, firstPlayingTime: Double) {
-        var firstPlayingTime: Double?
+        -> Double {
         var previousTime: Double?
         var observedValues: [String] = []
         let advancing = expectation(for: NSPredicate { _, _ in
@@ -607,7 +616,6 @@ final class SyllumeUITests: XCTestCase {
                 previousTime = nil
                 return false
             }
-            if firstPlayingTime == nil { firstPlayingTime = time }
             guard time > minimum, time < maximum else {
                 previousTime = nil
                 return false
@@ -620,7 +628,7 @@ final class SyllumeUITests: XCTestCase {
         let samples = observedValues.suffix(8).joined(separator: ", ")
         XCTAssertEqual(result, .completed, "\(message) Media clock samples: \(samples)", file: file, line: line)
         print("YouTube fixture media clock: \(samples)")
-        return (previousTime ?? -1, firstPlayingTime ?? -1)
+        return previousTime ?? -1
     }
 
     private func setSwitch(_ identifier: String, to enabled: Bool, in app: XCUIApplication) {
