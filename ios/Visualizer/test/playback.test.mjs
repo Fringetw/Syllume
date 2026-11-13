@@ -151,6 +151,42 @@ test('a hidden document pauses without consuming the next native play command', 
     assert.equal(h.messages.at(-1).state, 1);
 });
 
+test('YouTube retries a visibility request that native cannot accept during presentation', () => {
+    const h = youtubeHarness();
+    h.api.setPlayback(true, 1); h.ready();
+    h.setHidden(true);
+    h.api.setPlayback(false, 2);
+    h.setHidden(false);
+    const visibilityRequests = () => h.messages.filter(message => message.type === 'visible').length;
+    assert.equal(visibilityRequests(), 1);
+    h.tick(); h.tick();
+    assert.equal(visibilityRequests(), 1);
+    h.tick();
+    assert.equal(visibilityRequests(), 2, 'Retry while native is still waiting for a visible viewport');
+    assert.equal(h.media.state, 2, 'The page must wait for native playback intent');
+
+    h.api.setPlayback(true, 3);
+    h.tick(); h.tick(); h.tick();
+    assert.equal(visibilityRequests(), 2);
+    assert.equal(h.media.state, 1);
+    assert.equal(h.messages.at(-1).commandRevision, 3);
+});
+
+test('YouTube requests its first playback command again if dispatch after load is lost', () => {
+    const h = youtubeHarness();
+    assert.equal(h.messages.at(-1).type, 'loaded');
+    h.ready();
+    assert.equal(h.messages.at(-1).type, 'visible');
+    h.tick(); h.tick(); h.tick();
+    assert.deepEqual(h.messages.map(message => message.type), ['loaded', 'visible', 'visible']);
+    assert.equal(h.calls.includes('play'), false);
+
+    h.api.setPlayback(true, 1);
+    h.tick();
+    assert.equal(h.media.state, 1);
+    assert.equal(h.messages.at(-1).commandRevision, 1);
+});
+
 test('vendored desktop sources match the pinned snapshot and documented iOS patches', () => {
     const manifest = JSON.parse(fs.readFileSync(new URL('../provenance.json', import.meta.url)));
     assert.equal(manifest.revision, '3125d376557182e25a12c915e39099db13ba63c8');

@@ -1,6 +1,11 @@
-# Syllume 0.3.20 · build 32
+# Syllume 0.3.21 · build 33
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
+
+## 0.3.21 YouTube 起播與續播
+
+- 播放頁剛開啟或重新可見時，官方播放器會在畫面可用前保留播放指令請求。可見時才執行原生端的播放意圖。
+- 模擬器以內建音檔檢查《HELP!!》點播及續播，以及從播放佇列重選目前曲目後的進度。原片聲音和 YouTube 嵌入限制須在 iPhone 上驗證。
 
 ## 0.3.20 YouTube 點播、續播與 Syllume 圖示
 

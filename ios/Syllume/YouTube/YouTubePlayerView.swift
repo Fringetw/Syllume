@@ -130,8 +130,12 @@ struct YouTubePlayerView: UIViewRepresentable {
             guard message.frameInfo.isMainFrame, let body = message.body as? [String: Any],
                   let session = body["session"] as? String, session == player.session.uuidString,
                   let type = body["type"] as? String else { return }
-            if type == "loaded" { loaded = true; update(); return }
-            else if type == "visible" { sentRevision = nil; update(); return }
+            if type == "loaded" || type == "visible" {
+                loaded = true
+                if type == "visible" { sentRevision = nil }
+                update()
+                return
+            }
             else if type == "blocked" { player.autoplayBlocked(revision: body["commandRevision"] as? Int) }
             else if type == "error" { player.failed(body["code"] as? Int ?? -1, session: session) }
             else if type == "snapshot", let data = try? JSONSerialization.data(withJSONObject: body),
@@ -167,14 +171,18 @@ struct YouTubePlayerView: UIViewRepresentable {
                 window.YT={Player:class {
                   constructor(id,options){
                     this.o=options;this.a=new Audio();this.a.loop=true;this.a.preload='auto';
+                    this.clockOffset=0;this.lastMediaTime=0;
                     document.getElementById(id).textContent='本機播放測試';
                     this.a.addEventListener('error',()=>options.events.onError({data:-1}));
                     this.a.addEventListener('loadedmetadata',()=>{
-                      const start=options.playerVars.start % this.a.duration;
-                      if(start>0){
+                      const start=options.playerVars.start;
+                      if(start % this.a.duration > 0){
                         this.a.addEventListener('seeked',()=>options.events.onReady(),{once:true});
-                        this.a.currentTime=start;
-                      }else options.events.onReady();
+                        this.seekTo(start);
+                      }else{
+                        this.clockOffset=start;
+                        options.events.onReady();
+                      }
                     },{once:true});
                     this.a.src='data:audio/mp4;base64,\(data.base64EncodedString())';
                   }
@@ -187,9 +195,19 @@ struct YouTubePlayerView: UIViewRepresentable {
                   pauseVideo(){this.a.pause();this.o.events.onStateChange();}
                   getVideoData(){return {video_id:videoID,title:'本機播放測試',author:'Syllume'};}
                   getPlayerState(){return this.a.paused?2:(this.a.seeking || this.a.readyState<3?3:1);}
-                  getCurrentTime(){return this.a.currentTime;}
+                  getCurrentTime(){
+                    const time=this.a.currentTime;
+                    // The short fixture clip repeats underneath a longer simulated video timeline.
+                    if(this.lastMediaTime-time>this.a.duration/2) this.clockOffset+=this.a.duration;
+                    this.lastMediaTime=time;
+                    return this.clockOffset+time;
+                  }
                   getDuration(){return {'6AR6Oc0-4NQ':236,'3NNhrqHZqlI':256,'z2tDtdHHAHg':188}[videoID] || (Number.isFinite(this.a.duration)?this.a.duration:30);}
-                  seekTo(time){this.a.currentTime=time;} destroy(){this.a.pause();this.a.src='';}
+                  seekTo(time){
+                    const mediaTime=time % this.a.duration;
+                    this.clockOffset=time-mediaTime;this.lastMediaTime=mediaTime;this.a.currentTime=mediaTime;
+                  }
+                  destroy(){this.a.pause();this.a.src='';}
                 }};window.onYouTubeIframeAPIReady();
                 </script>
                 """

@@ -136,12 +136,17 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
             -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
-      - name: Export simulator screenshots and diagnostic reports
+      - name: Export simulator test summaries, screenshots and diagnostic reports
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
           for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeRecordedSongsUI SyllumeUI; do
             if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
+              if summary=$(xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/$result.xcresult"); then
+                printf '%s\n' "$summary" > "$RUNNER_TEMP/SyllumeUIScreenshots/$result-summary.json"
+              else
+                echo "::warning::Could not export the test summary from $result"
+              fi
               if ! xcrun xcresulttool export attachments --path "$RUNNER_TEMP/$result.xcresult" \
                 --output-path "$RUNNER_TEMP/SyllumeUIScreenshots/$result"; then
                 echo "::warning::Could not export attachments from $result"

@@ -2,8 +2,15 @@
 let player, ready = false, wants = false, revision = -1, awaiting = false, pendingSeek = null;
 let attempts = 0, lastCommand = 0, stopped = false;
 const emit = (type, extra = {}) => window.webkit.messageHandlers.youtube.postMessage({ type, session, ...extra });
-let waitingForVisibleCommand = document.hidden;
+let waitingForVisibleCommand = true;
+let lastVisibilityRequest = -Infinity;
 const canPlay = () => wants && !document.hidden && !waitingForVisibleCommand;
+const requestVisibleCommand = () => {
+    const now = performance.now();
+    if (now - lastVisibilityRequest < 750) return;
+    lastVisibilityRequest = now;
+    emit('visible');
+};
 const applyPlayback = () => {
     if (!ready || stopped || revision < 0) return;
     lastCommand = performance.now(); attempts++;
@@ -17,7 +24,13 @@ const applySeek = (time) => {
     }
 };
 const snapshot = () => {
-    if (!ready || document.hidden || waitingForVisibleCommand) return;
+    if (stopped || document.hidden) return;
+    if (waitingForVisibleCommand) {
+        // The native viewport can still be transitioning when the document first becomes visible.
+        requestVisibleCommand();
+        return;
+    }
+    if (!ready) return;
     const state = player.getPlayerState(), data = player.getVideoData() || {};
     if (awaiting && ((wants && state === 1) || (!wants && [-1, 0, 2, 5].includes(state)))) awaiting = false;
     else if (awaiting && performance.now() - lastCommand >= 750 && attempts < 4) applyPlayback();
@@ -64,10 +77,11 @@ document.addEventListener('visibilitychange', () => {
     if (stopped) return;
     if (document.hidden) {
         waitingForVisibleCommand = true;
+        lastVisibilityRequest = -Infinity;
         if (ready) player.pauseVideo();
     } else if (waitingForVisibleCommand) {
         // Native still owns the intent and checks that the player is actually onscreen.
-        emit('visible');
+        requestVisibleCommand();
     }
 });
 emit('loaded');
