@@ -459,17 +459,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(mini.waitForExistence(timeout: 10))
         XCTAssertEqual(mini.value as? String, "已載入歌曲封面")
         mini.tap()
-        app.buttons["播放佇列"].tap()
-        let janeQueue = app.buttons["trackRow-recording-jane"], lemonQueue = app.buttons["trackRow-recording-lemon"]
-        for row in [janeQueue, lemonQueue] {
-            XCTAssertTrue(row.waitForExistence(timeout: 10))
-            let cover = expectation(for: NSPredicate(format: "value == %@", "已載入歌曲封面"), evaluatedWith: row)
-            XCTAssertEqual(XCTWaiter.wait(for: [cover], timeout: 10), .completed)
-        }
-        capture(app, name: "Recorded-songs-queue-artwork")
-        let done = app.buttons["完成"]
-        done.tap()
-        XCTAssertTrue(done.waitForNonExistence(timeout: 15), "The playback queue must finish dismissing.")
+        XCTAssertTrue(app.descendants(matching: .any)["playerArtwork"].firstMatch.waitForExistence(timeout: 15))
         selectPlaybackMode("歌詞", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["nowPlayingThumbnail"].firstMatch.waitForExistence(timeout: 10))
         assertLyric("頭髮發現", in: app)
@@ -502,8 +492,16 @@ final class SyllumeUITests: XCTestCase {
         }
         playAndVerify("JANE DOE", mode: "商籟", stageID: "syllumeSonnetClockProbe")
         app.buttons["播放佇列"].tap()
-        XCTAssertTrue(lemonQueue.waitForExistence(timeout: 10)); lemonQueue.tap()
+        let janeQueue = app.buttons["trackRow-recording-jane"], lemonQueue = app.buttons["trackRow-recording-lemon"]
+        for row in [janeQueue, lemonQueue] {
+            XCTAssertTrue(row.waitForExistence(timeout: 10))
+            let cover = expectation(for: NSPredicate(format: "value == %@", "已載入歌曲封面"), evaluatedWith: row)
+            XCTAssertEqual(XCTWaiter.wait(for: [cover], timeout: 10), .completed)
+        }
+        capture(app, name: "Recorded-songs-queue-artwork")
+        lemonQueue.tap()
         XCTAssertTrue(lemonQueue.waitForNonExistence(timeout: 15), "The playback queue must finish dismissing.")
+        XCTAssertTrue(app.staticTexts["Lemon"].waitForExistence(timeout: 15))
         XCTAssertTrue(video.waitForExistence(timeout: 15), "Lemon rejects the short sample and switches to the original video")
         playAndVerify("Lemon", mode: "繪光", stageID: "syllumeLumiereClockProbe")
         capture(app, name: "Recorded-songs-Lemon-visible-fallback")
