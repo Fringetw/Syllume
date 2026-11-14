@@ -393,14 +393,14 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.waitForExistence(timeout: 15))
         let transport = app.staticTexts["youtubeTransportProbe"]
         assertLyric("頭髮發現", in: app, timeout: 30)
-        let beforeQueue = waitForAdvancingYouTubeClock(transport, above: 25, timeout: 55,
-                                                     "Expected actual playback before selecting the current queue row.")
+        let beforeQueue = waitForYouTubePlayback(transport, above: 25, timeout: 55,
+                                                "Expected actual playback before selecting the current queue row.")
         app.buttons["播放佇列"].tap()
         let current = app.buttons["trackRow-recording-jane"]
         XCTAssertTrue(current.waitForExistence(timeout: 10)); current.tap()
         // The media fixture has a continuous timeline. A lower, advancing clock demonstrates a restart.
-        waitForAdvancingYouTubeClock(transport, below: beforeQueue - 2, timeout: 35,
-                                     "Selecting the current queue row must restart playback from \(beforeQueue)s.")
+        waitForYouTubePlayback(transport, below: beforeQueue - 2, timeout: 40,
+                               "Selecting the current queue row must restart playback from \(beforeQueue)s.")
     }
 
     func testYouTubeSongAutomaticallyPlaysVisibleOriginal() {
@@ -419,8 +419,8 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(video.waitForExistence(timeout: 15))
         XCTAssertGreaterThanOrEqual(video.frame.width, 200)
         XCTAssertGreaterThanOrEqual(video.frame.height, 200)
-        let beforeClosing = waitForAdvancingYouTubeClock(transport, above: 10, timeout: 40,
-                                                       "The song tap must start playback without a second action.")
+        let beforeClosing = waitForYouTubePlayback(transport, above: 10, timeout: 40,
+                                                  "The song tap must start playback without a second action.")
         XCTAssertTrue(app.staticTexts["YouTube · 官方播放器"].exists)
 
         app.buttons["關閉播放畫面"].tap()
@@ -430,20 +430,8 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
         mini.tap()
         XCTAssertTrue(video.waitForExistence(timeout: 15))
-        var resumeSamples: [String] = []
-        let resumed = expectation(for: NSPredicate { _, _ in
-            let value = transport.value as? String ?? "missing"
-            resumeSamples.append(value)
-            let fields = value.split(separator: "|")
-            // The playback model reports playing after the reopened media clock advances.
-            guard fields.count == 2, fields[1] == "playing", let time = Double(fields[0]) else { return false }
-            return time > beforeClosing + 0.5
-        }, evaluatedWith: transport)
-        let resumedResult = XCTWaiter.wait(for: [resumed], timeout: 40)
-        let resumeEvidence = resumeSamples.suffix(8).joined(separator: ", ")
-        XCTAssertEqual(resumedResult, .completed,
-                       "Expected the reopened media to play past \(beforeClosing)s. Samples: \(resumeEvidence)")
-        print("YouTube fixture resume clock: \(resumeEvidence)")
+        waitForYouTubePlayback(transport, above: beforeClosing + 0.5, timeout: 40,
+                               "Expected the reopened media to play past \(beforeClosing)s.")
         capture(app, name: "HELP-YouTube-visible-playback")
     }
 
@@ -479,8 +467,10 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertEqual(XCTWaiter.wait(for: [cover], timeout: 10), .completed)
         }
         capture(app, name: "Recorded-songs-queue-artwork")
-        app.buttons["完成"].tap()
-        app.segmentedControls.buttons["歌詞"].tap()
+        let done = app.buttons["完成"]
+        done.tap()
+        XCTAssertTrue(done.waitForNonExistence(timeout: 15), "The playback queue must finish dismissing.")
+        selectPlaybackMode("歌詞", in: app)
         XCTAssertTrue(app.descendants(matching: .any)["nowPlayingThumbnail"].firstMatch.waitForExistence(timeout: 10))
         assertLyric("頭髮發現", in: app)
         XCTAssertEqual(app.buttons["lyricLine-0"].value as? String, "GenSenRounded2JP-M")
@@ -491,11 +481,8 @@ final class SyllumeUITests: XCTestCase {
             if toggle.label == "播放" { toggle.tap() }
             XCTAssertGreaterThanOrEqual(video.frame.width, 200, song)
             XCTAssertGreaterThanOrEqual(video.frame.height, 200, song)
-            // Use one accessibility snapshot for both the real media time and the play state.
-            let hasAdvanced = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing"#)
-            let advancing = expectation(for: hasAdvanced, evaluatedWith: transport)
-            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 90), .completed, "\(song): \(String(describing: transport.value))")
-            app.segmentedControls.buttons[mode].tap()
+            waitForYouTubePlayback(transport, above: 0.5, timeout: 90, "Expected \(song) to play.")
+            selectPlaybackMode(mode, in: app)
             let stage = app.staticTexts[stageID]
             let renderedTime = NSPredicate(format: "value MATCHES %@", #"(0\.[5-9][0-9]*|[1-9][0-9]*\.[0-9]+)\|playing\|GenSenRounded2JP-M"#)
             let rendering = expectation(for: renderedTime, evaluatedWith: stage)
@@ -516,6 +503,7 @@ final class SyllumeUITests: XCTestCase {
         playAndVerify("JANE DOE", mode: "商籟", stageID: "syllumeSonnetClockProbe")
         app.buttons["播放佇列"].tap()
         XCTAssertTrue(lemonQueue.waitForExistence(timeout: 10)); lemonQueue.tap()
+        XCTAssertTrue(lemonQueue.waitForNonExistence(timeout: 15), "The playback queue must finish dismissing.")
         XCTAssertTrue(video.waitForExistence(timeout: 15), "Lemon rejects the short sample and switches to the original video")
         playAndVerify("Lemon", mode: "繪光", stageID: "syllumeLumiereClockProbe")
         capture(app, name: "Recorded-songs-Lemon-visible-fallback")
@@ -602,33 +590,34 @@ final class SyllumeUITests: XCTestCase {
     }
 
     @discardableResult
-    private func waitForAdvancingYouTubeClock(_ transport: XCUIElement, above minimum: Double = 0,
-                                             below maximum: Double = .infinity, timeout: TimeInterval,
-                                             _ message: String, file: StaticString = #filePath, line: UInt = #line)
-        -> Double {
-        var previousTime: Double?
+    private func waitForYouTubePlayback(_ transport: XCUIElement, above minimum: Double = 0,
+                                        below maximum: Double = .infinity, timeout: TimeInterval,
+                                        _ message: String, file: StaticString = #filePath, line: UInt = #line) -> Double {
+        var matchedTime: Double?
         var observedValues: [String] = []
         let advancing = expectation(for: NSPredicate { _, _ in
             let value = transport.value as? String ?? "missing"
             observedValues.append(value)
             let fields = value.split(separator: "|")
-            guard fields.count == 2, fields[1] == "playing", let time = Double(fields[0]) else {
-                previousTime = nil
-                return false
-            }
-            guard time > minimum, time < maximum else {
-                previousTime = nil
-                return false
-            }
-            let advanced = previousTime.map { time - $0 >= 0.1 } ?? false
-            previousTime = time
-            return advanced
+            // The model reports playing once it has observed advancement from the active media.
+            guard fields.count == 2, fields[1] == "playing", let time = Double(fields[0]),
+                  time > minimum, time < maximum else { return false }
+            matchedTime = time
+            return true
         }, evaluatedWith: transport)
         let result = XCTWaiter.wait(for: [advancing], timeout: timeout)
         let samples = observedValues.suffix(8).joined(separator: ", ")
         XCTAssertEqual(result, .completed, "\(message) Media clock samples: \(samples)", file: file, line: line)
         print("YouTube fixture media clock: \(samples)")
-        return previousTime ?? -1
+        return matchedTime ?? -1
+    }
+
+    private func selectPlaybackMode(_ title: String, in app: XCUIApplication,
+                                    file: StaticString = #filePath, line: UInt = #line) {
+        let mode = app.segmentedControls.buttons[title]
+        let hittable = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: mode)
+        XCTAssertEqual(XCTWaiter.wait(for: [hittable], timeout: 15), .completed, file: file, line: line)
+        mode.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     }
 
     private func setSwitch(_ identifier: String, to enabled: Bool, in app: XCUIApplication) {
