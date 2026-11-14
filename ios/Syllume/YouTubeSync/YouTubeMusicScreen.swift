@@ -9,6 +9,7 @@ struct YouTubeMusicScreen: View {
     let player: PlaybackModel
     let openPlayer: () -> Void
     let refresh: (Bool) -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showingPicker = false
     @State private var showingAccount = false
     @State private var addingLocal = false
@@ -29,14 +30,26 @@ struct YouTubeMusicScreen: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
-                Text("Syllume 播放清單").font(.headline)
-                Spacer()
+            HStack(spacing: 10) {
+                Text("YouTube 歌單")
+                    .font(.headline)
+                    .accessibilityAddTraits(.isHeader)
+                Spacer(minLength: 0)
                 Button("更換歌單") { showingPicker = true }
                     .disabled(!connection.connected).accessibilityIdentifier("changeYouTubePlaylist")
-                Button(connection.connected ? "帳號" : "連接帳號") { showingAccount = true }
-                    .accessibilityIdentifier("youtubeSyncAccount")
-            }.buttonStyle(.bordered).padding(.horizontal, 22).padding(.vertical, 12)
+                Button { showingAccount = true } label: {
+                    Image(systemName: "person.crop.circle")
+                        .font(.title3)
+                        .frame(width: 44, height: 44)
+                        .libraryControlSurface(in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(connection.connected ? "帳號" : "連接帳號")
+                .accessibilityIdentifier("youtubeSyncAccount")
+            }
+            .buttonStyle(.bordered)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 6)
             if !connection.connected {
                 ContentUnavailableView {
                     Label("同步你的 YouTube 歌單", systemImage: "music.note.list")
@@ -124,29 +137,33 @@ struct YouTubeMusicScreen: View {
     private var playlist: some View {
         List {
             Section {
-                Text(sync.snapshot.playlistTitle).font(.title3.weight(.semibold))
-                    .accessibilityIdentifier("selectedYouTubePlaylist")
-                Text("\(songs.count) 首 · 點歌播放").font(.footnote).foregroundStyle(.secondary)
-                HStack {
-                    Button("播放", systemImage: "play.fill") {
-                        if let first = songs.first { play(first, songs) }
-                    }.disabled(songs.isEmpty)
-                    Button("隨機", systemImage: "shuffle") {
-                        let shuffled = songs.shuffled()
-                        if let first = shuffled.first { play(first, shuffled) }
-                    }.disabled(songs.isEmpty)
-                    Spacer()
-                    Menu("編輯", systemImage: "ellipsis.circle") {
-                        Button("重新命名", systemImage: "pencil") { name = sync.snapshot.playlistTitle; renaming = true }
-                        Button("加入本機歌曲", systemImage: "plus") { addingLocal = true }
-                        Button(editing.isEditing ? "完成排序" : "調整順序", systemImage: "line.3.horizontal") {
-                            query = ""; withAnimation { editing = editing.isEditing ? .inactive : .active }
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 12) {
+                        Image(systemName: sync.snapshot.choice?.id == "liked" ? "heart.fill" : "music.note.list")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(SyllumePalette.accent)
+                            .frame(width: 44, height: 44)
+                            .background(SyllumePalette.accent.opacity(0.13), in: .rect(cornerRadius: 13))
+                            .accessibilityHidden(true)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(sync.snapshot.playlistTitle).font(.title3.weight(.semibold))
+                                .accessibilityAddTraits(.isHeader)
+                                .accessibilityIdentifier("selectedYouTubePlaylist")
+                            Text("\(songs.count) 首").font(.subheadline).foregroundStyle(.secondary)
                         }
+                        Spacer(minLength: 0)
                     }
-                }.buttonStyle(.bordered)
-                if let date = sync.snapshot.lastSync {
-                    Text("上次同步：\(date.formatted(date: .abbreviated, time: .shortened))").font(.caption).foregroundStyle(.secondary)
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 8) { playlistActions }
+                            .fixedSize(horizontal: true, vertical: false)
+                        VStack(alignment: .leading, spacing: 8) { playlistActions }
+                    }
                 }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .libraryControlSurface(in: RoundedRectangle(cornerRadius: 20))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
                 if sync.busy {
                     HStack {
                         ProgressView().controlSize(.small)
@@ -157,6 +174,11 @@ struct YouTubeMusicScreen: View {
                 } else {
                     Button("同步歌單", systemImage: "arrow.triangle.2.circlepath") { refresh(true) }
                         .accessibilityIdentifier("syncYouTubePlaylist")
+                }
+                if let date = sync.snapshot.lastSync {
+                    Label(date.formatted(date: .abbreviated, time: .shortened), systemImage: "clock")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityLabel("上次同步，\(date.formatted(date: .abbreviated, time: .shortened))")
                 }
                 if sync.downloading != nil {
                     Button("取消下載", systemImage: "xmark.circle") { sync.cancelDownload() }
@@ -184,7 +206,10 @@ struct YouTubeMusicScreen: View {
                 if let error = sync.error { Text(error).foregroundStyle(.orange).font(.footnote) }
             }
             Section("歌曲") {
-                TextField("搜尋清單內的歌曲", text: $query).disabled(editing.isEditing)
+                LibrarySearchField(title: "搜尋清單內的歌曲", text: $query)
+                    .disabled(editing.isEditing)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
                 ForEach(filtered) { song in songRow(song) }
                     .onMove { offsets, destination in
                         guard query.isEmpty else { return }
@@ -201,7 +226,38 @@ struct YouTubeMusicScreen: View {
         }
         .environment(\.editMode, $editing)
         .listStyle(.plain).scrollContentBackground(.hidden)
+        .scrollDismissesKeyboard(.interactively)
         .refreshable { refresh(true) }
+    }
+
+    @ViewBuilder private var playlistActions: some View {
+        Button("播放", systemImage: "play.fill") {
+            if let first = songs.first { play(first, songs) }
+        }
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .foregroundStyle(SyllumePalette.surface)
+        .disabled(songs.isEmpty)
+        Button("隨機", systemImage: "shuffle") {
+            let shuffled = songs.shuffled()
+            if let first = shuffled.first { play(first, shuffled) }
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
+        .disabled(songs.isEmpty)
+        Menu("編輯", systemImage: "ellipsis.circle") {
+            Button("重新命名", systemImage: "pencil") { name = sync.snapshot.playlistTitle; renaming = true }
+            Button("加入本機歌曲", systemImage: "plus") { addingLocal = true }
+            Button(editing.isEditing ? "完成排序" : "調整順序", systemImage: "line.3.horizontal") {
+                query = ""
+                withAnimation(reduceMotion ? nil : .default) { editing = editing.isEditing ? .inactive : .active }
+            }
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.capsule)
+        .controlSize(.large)
     }
 
     private func songRow(_ song: SyncedYouTubeSong) -> some View {
@@ -209,7 +265,7 @@ struct YouTubeMusicScreen: View {
         return Button { if !editing.isEditing { play(song, songs) } } label: {
             HStack(spacing: 12) {
                 SongArtworkView(source: SongArtworkSource(file: file, song: song),
-                                tint: SyllumePalette.accent, size: 32, cornerRadius: 16)
+                                tint: SyllumePalette.accent, size: 38, cornerRadius: 11)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(song.title).foregroundStyle(.primary).lineLimit(2)
                     Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)

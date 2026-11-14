@@ -76,7 +76,7 @@ test('reduced motion stops the ticker while accepting new word positions', async
     assert.equal(h.calls.length, before + 1); assert.deepEqual(h.calls.at(-1), ['render']);
 });
 
-function youtubeHarness({ seekStartsPlayback = false, startSeconds = 0 } = {}) {
+function youtubeHarness({ seekStartsPlayback = false, startSeconds = 0, initialSeek = '' } = {}) {
     const messages = [], calls = []; let now = 0, tick, playerOptions, visibilityChanged;
     const document = { hidden: false, addEventListener(_, callback) { visibilityChanged = callback; } };
     const media = { state: 2, time: 4 };
@@ -85,7 +85,7 @@ function youtubeHarness({ seekStartsPlayback = false, startSeconds = 0 } = {}) {
         destroy() { calls.push('destroy'); },
         getPlayerState: () => media.state, getVideoData: () => ({ video_id: 'M7lc1UVf-VE' }), getCurrentTime: () => media.time, getDuration: () => 60 };
     const window = { webkit: { messageHandlers: { youtube: { postMessage: m => messages.push(m) } } } };
-    const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios', startSeconds,
+    const context = { window, session: 'session', videoID: 'M7lc1UVf-VE', origin: 'https://org.folia.community.ios', startSeconds, initialSeek,
         performance: { now: () => now }, document,
         setTimeout: () => 1, clearTimeout() {}, setInterval: fn => { tick = fn; return 2; }, clearInterval() {},
         YT: { Player: function (_, options) { playerOptions = options; return controls; } } };
@@ -107,9 +107,11 @@ test('YouTube pause calls the real player and wins over a delayed older play com
 
 test('a pause before YouTube readiness prevents autoplay and retains a pending seek', () => {
     const h = youtubeHarness({ seekStartsPlayback: true });
-    h.api.setPlayback(true, 1); h.api.seek(12); h.api.setPlayback(false, 2); h.ready();
+    h.api.setPlayback(true, 1); h.api.seek(12, 'first'); h.api.setPlayback(false, 2); h.ready();
     assert.equal(h.media.state, 2); assert.equal(h.media.time, 12); assert.equal(h.calls.includes('play'), false);
-    h.api.seek(15); assert.equal(h.media.state, 2); assert.equal(h.media.time, 15);
+    assert.equal(h.messages.at(-1).seekRevision, 'first');
+    h.api.seek(15, 'second'); assert.equal(h.media.state, 2); assert.equal(h.media.time, 15);
+    h.tick(); assert.equal(h.messages.at(-1).seekRevision, 'second');
     h.api.setPlayback(true, 3); assert.equal(h.media.state, 1); h.api.stop(); assert.equal(h.calls.at(-1), 'destroy');
 });
 
@@ -122,11 +124,12 @@ test('discarding an iframe before readiness prevents late playback after a track
 });
 
 test('a reopened iframe receives the retained start time without seeking before playback', () => {
-    const h = youtubeHarness({ startSeconds: 22, seekStartsPlayback: true });
+    const h = youtubeHarness({ startSeconds: 22, initialSeek: 'retained', seekStartsPlayback: true });
     h.api.setPlayback(false, 1); h.ready();
     assert.equal(h.playerVars().start, 22);
     assert.equal(h.playerVars().autoplay, 0);
     assert.deepEqual(h.calls, ['pause']);
+    assert.equal(h.messages.at(-1).seekRevision, 'retained');
     h.api.setPlayback(true, 2);
     assert.deepEqual(h.calls, ['pause', 'play']);
 });

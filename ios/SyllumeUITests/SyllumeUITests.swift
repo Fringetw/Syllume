@@ -164,6 +164,78 @@ final class SyllumeUITests: XCTestCase {
         app.buttons["關閉播放畫面"].tap()
     }
 
+    func testMistStylePersistsAndProgressControlsSeekPausedAudio() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--presentation-reset", "--playback-probe", "--subtitle-fixture", "--subtitle-reset"]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
+        app.launch()
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15)); demo.tap()
+        let toggle = app.buttons["playerToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        if toggle.label == "暫停" { toggle.tap() }
+        let clock = app.staticTexts["localTransportProbe"]
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 10))
+        selectPlaybackMode("霧盞", in: app)
+        let mist = app.descendants(matching: .any)["mistLyricStage"].firstMatch
+        XCTAssertTrue(mist.waitForExistence(timeout: 15))
+        func expectPausedPosition(_ time: Double) {
+            let positioned = expectation(for: NSPredicate { _, _ in
+                let value = clock.value as? String ?? ""
+                guard value.hasSuffix("|0.0"), let first = value.split(separator: "|").first,
+                      let actual = Double(first) else { return false }
+                return abs(actual - time) < 1.8
+            }, evaluatedWith: clock)
+            XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 15), .completed,
+                           "Expected paused AVPlayer near \(time)s, got \(String(describing: clock.value)).")
+        }
+        let tap = progress.coordinate(withNormalizedOffset: CGVector(dx: 0.29, dy: 0.5))
+        tap.tap()
+        expectPausedPosition(8.7)
+        let destination = progress.coordinate(withNormalizedOffset: CGVector(dx: 0.68, dy: 0.5))
+        tap.press(forDuration: 0.12, thenDragTo: destination)
+        expectPausedPosition(20.4)
+        let currentLine = app.descendants(matching: .any)["mistLyricCurrentLine"].firstMatch
+        let traditional = expectation(for: NSPredicate(format: "label == %@ AND value == %@", "頭髮發現", "風裡的回聲"),
+                                      evaluatedWith: currentLine)
+        XCTAssertEqual(XCTWaiter.wait(for: [traditional], timeout: 15), .completed)
+        capture(app, name: "Syllume-mist-and-progress")
+
+        app.terminate()
+        app.launchEnvironment = [:]
+        app.launchArguments = ["--playback-probe", "--subtitle-fixture"]
+        app.launch()
+        XCTAssertTrue(demo.waitForExistence(timeout: 15)); demo.tap()
+        XCTAssertTrue(mist.waitForExistence(timeout: 15), "The last lyric style should survive relaunch.")
+    }
+
+    func testMistRenderingResourceSample() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--presentation-reset", "--playback-probe", "--subtitle-fixture", "--subtitle-reset"]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "mist"
+        app.launch()
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15)); demo.tap()
+        let mist = app.descendants(matching: .any)["mistLyricCurrentLine"].firstMatch
+        XCTAssertTrue(mist.waitForExistence(timeout: 15))
+        let toggle = app.buttons["playerToggle"]
+        app.buttons["循環佇列"].tap()
+        if toggle.label == "播放" { toggle.tap() }
+        let clock = app.staticTexts["localTransportProbe"]
+        let playing = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|1.0"), evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 15), .completed)
+
+        let options = XCTMeasureOptions()
+        options.iterationCount = 3
+        measure(metrics: [XCTCPUMetric(application: app), XCTMemoryMetric(application: app)], options: options) {
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 4))
+        }
+        capture(app, name: "Syllume-mist-playing")
+    }
+
     func testYouTubePlaylistChoicePersists() {
         continueAfterFailure = false
         let app = XCUIApplication()
@@ -433,6 +505,22 @@ final class SyllumeUITests: XCTestCase {
         waitForYouTubePlayback(transport, above: beforeClosing + 0.5, timeout: 40,
                                "Expected the reopened media to play past \(beforeClosing)s.")
         capture(app, name: "HELP-YouTube-visible-playback")
+
+        let toggle = app.buttons["playerToggle"]
+        toggle.tap()
+        let stopped = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 15), .completed)
+        let rail = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        XCTAssertTrue(rail.waitForExistence(timeout: 10))
+        rail.coordinate(withNormalizedOffset: CGVector(dx: 0.48, dy: 0.5)).tap()
+        let sought = expectation(for: NSPredicate { _, _ in
+            let value = transport.value as? String ?? ""
+            guard value.hasSuffix("|paused"), let first = value.split(separator: "|").first,
+                  let time = Double(first) else { return false }
+            return abs(time - 90.24) < 4
+        }, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 18), .completed,
+                       "Expected the paused iframe fixture to seek near 90s. Got \(String(describing: transport.value)).")
     }
 
     func testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics() {

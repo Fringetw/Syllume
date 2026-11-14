@@ -24,8 +24,11 @@ enum YouTubeChecks {
         model.play([a, b], selected: a); model.setVisible(true)
         precondition(model.seekRevision == nil, "Loading a new video must not issue a seek before playback")
         let session = model.session
-        func sample(_ state: Int, _ time: Double, _ otherSession: UUID? = nil, _ otherID: String? = nil, command: Int? = nil) -> YouTubeSnapshot {
-            YouTubeSnapshot(session: (otherSession ?? session).uuidString, videoID: otherID ?? id, state: state, time: time, duration: 60, title: nil, author: nil, commandRevision: command ?? model.playbackRevision)
+        func sample(_ state: Int, _ time: Double, _ otherSession: UUID? = nil, _ otherID: String? = nil,
+                    command: Int? = nil, seek: UUID? = nil) -> YouTubeSnapshot {
+            YouTubeSnapshot(session: (otherSession ?? session).uuidString, videoID: otherID ?? id, state: state,
+                            time: time, duration: 60, title: nil, author: nil,
+                            commandRevision: command ?? model.playbackRevision, seekRevision: seek)
         }
         model.receive(sample(1, 3)); precondition(model.isPlaying && model.position == 3)
         let oldCommand = model.playbackRevision
@@ -39,9 +42,18 @@ enum YouTubeChecks {
         precondition(model.isPlaying, "An old pause cannot undo a newer resume")
         model.autoplayBlocked(revision: oldCommand)
         precondition(model.isPlaying && model.failure == nil, "A stale blocked event cannot pause the current command")
-        model.seek(to: 40); model.receive(sample(1, 3.3)); precondition(model.position == 40)
-        model.receive(sample(1, 40.1)); precondition(model.position == 40.1)
-        model.setVisible(false); model.receive(sample(1, 41)); precondition(!model.isPlaying && !model.wantsPlayback)
+        model.seek(to: 40)
+        let firstSeek = model.seekRevision
+        model.receive(sample(1, 39.9))
+        precondition(model.position == 40 && model.isSeeking, "Even a nearby snapshot must acknowledge the active seek")
+        model.seek(to: 41)
+        let latestSeek = model.seekRevision
+        model.receive(sample(1, 40, seek: firstSeek))
+        model.receive(sample(3, 41.1, seek: latestSeek))
+        precondition(model.position == 41 && model.isSeeking, "An older command and a buffering snapshot cannot finish the seek")
+        model.receive(sample(1, 41.1, seek: latestSeek))
+        precondition(model.position == 41.1 && !model.isSeeking)
+        model.setVisible(false); model.receive(sample(1, 42, seek: latestSeek)); precondition(!model.isPlaying && !model.wantsPlayback)
         model.setVisible(true); model.prepareToPlay(); model.next()
         model.receive(sample(0, 60)); precondition(model.current?.id == b.id)
         model.receive(sample(1, .infinity, model.session, b.id)); precondition(model.position == 0)

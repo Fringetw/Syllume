@@ -2,10 +2,16 @@ import SwiftUI
 
 // One saved display choice is shared by local and YouTube playback.
 enum LyricDisplayMode: String, CaseIterable, Identifiable {
-    case sonnet, lumiere, lyrics, cover
+    case sonnet, lumiere, mist, lyrics, cover
     var id: String { rawValue }
     var title: String {
-        switch self { case .sonnet: "商籟"; case .lumiere: "繪光"; case .lyrics: "歌詞"; case .cover: "封面" }
+        switch self {
+        case .sonnet: "商籟"
+        case .lumiere: "繪光"
+        case .mist: "霧盞"
+        case .lyrics: "歌詞"
+        case .cover: "封面"
+        }
     }
 }
 

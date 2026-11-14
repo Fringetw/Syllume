@@ -63,6 +63,8 @@ jobs:
           -configuration Debug -destination 'generic/platform=iOS Simulator'
           -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
       - name: Compile unsigned iPhone app
+        env:
+          DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
         run: >-
           xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume
           -configuration Release -destination 'generic/platform=iOS'
@@ -158,4 +160,38 @@ jobs:
         with:
           name: Syllume-iOS-UI-checks
           path: ${{ runner.temp }}/SyllumeUIScreenshots
+          if-no-files-found: ignore
+
+  ios-26-player:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare lyric font
+        run: python3 ios/Tools/prepare_lyric_font.py
+      - name: Exercise progress and Mist on iOS 26
+        run: |
+          xcodebuild -version
+          simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for key, group in d["devices"].items() if "iOS-26" in key for x in group if x["name"].startswith("iPhone")))')
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -resultBundlePath "$RUNNER_TEMP/SyllumeIOS26.xcresult" \
+            -only-testing:SyllumeUITests/SyllumeUITests/testMistStylePersistsAndProgressControlsSeekPausedAudio \
+            -only-testing:SyllumeUITests/SyllumeUITests/testMistRenderingResourceSample \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+      - name: Export iOS 26 test evidence
+        if: always()
+        run: |
+          result="$RUNNER_TEMP/SyllumeIOS26.xcresult"
+          if [ -d "$result" ]; then
+            mkdir -p "$RUNNER_TEMP/SyllumeIOS26Evidence"
+            xcrun xcresulttool get test-results summary --path "$result" > "$RUNNER_TEMP/SyllumeIOS26Evidence/test-summary.json"
+            xcrun xcresulttool export attachments --path "$result" --output-path "$RUNNER_TEMP/SyllumeIOS26Evidence/attachments"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Syllume-iOS-26-player
+          path: ${{ runner.temp }}/SyllumeIOS26Evidence
           if-no-files-found: ignore

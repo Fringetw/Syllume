@@ -46,6 +46,7 @@ struct YouTubeSnapshot: Decodable {
     let title: String?
     let author: String?
     var commandRevision: Int? = nil
+    var seekRevision: UUID? = nil
 
     func belongs(to session: UUID, videoID: String) -> Bool {
         self.session == session.uuidString && self.videoID == videoID

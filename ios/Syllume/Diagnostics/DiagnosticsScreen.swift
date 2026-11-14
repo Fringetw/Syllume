@@ -87,21 +87,24 @@ struct DiagnosticsScreen: View {
 
     private var header: some View {
         Section {
-            HStack(spacing: 14) {
+            HStack(alignment: .top, spacing: 14) {
                 Image(systemName: "waveform.path.ecg")
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(SyllumePalette.accent)
-                    .frame(width: 50, height: 50)
-                    .background(SyllumePalette.accent.opacity(0.12), in: .rect(cornerRadius: 15))
+                    .frame(width: 44, height: 44)
+                    .libraryControlSurface(in: RoundedRectangle(cornerRadius: 13))
+                    .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("SYLLUME DIAGNOSTICS")
                         .font(.system(.caption, design: .monospaced, weight: .semibold))
-                        .tracking(1.4).foregroundStyle(SyllumePalette.accent)
+                        .foregroundStyle(SyllumePalette.accent)
                     Text("實機自動診斷").font(.system(.title2, design: .serif, weight: .bold))
+                        .accessibilityAddTraits(.isHeader)
+                    Text("報告保留在本機，可自行複製或匯出。")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
-            }.padding(.vertical, 7)
-            Text("檢查目前裝置、歌單與音源。報告保留在本機，由你選擇何時複製或匯出。")
-                .font(.footnote).foregroundStyle(.secondary)
+            }
+            .padding(.vertical, 8)
         }
     }
 
@@ -148,11 +151,13 @@ struct DiagnosticsScreen: View {
         Section("診斷進度") {
             ProgressView(value: Double(session.results.count), total: Double(max(1, session.plan.count))) {
                 Text(session.stopReason != nil ? "正在停止…" : session.active?.title ?? "正在準備…")
+            } currentValueLabel: {
+                TimelineView(.periodic(from: .now, by: 1)) { timeline in
+                    let seconds = max(0, Int(timeline.date.timeIntervalSince(session.startedAt ?? timeline.date)))
+                    Text("\(session.results.count)／\(session.plan.count) · \(seconds) 秒")
+                        .monospacedDigit().font(.footnote).foregroundStyle(.secondary)
+                }
             }.tint(SyllumePalette.accent).accessibilityIdentifier("diagnosticsProgress")
-            TimelineView(.periodic(from: .now, by: 1)) { timeline in
-                let seconds = max(0, Int(timeline.date.timeIntervalSince(session.startedAt ?? timeline.date)))
-                Text("\(session.results.count)／\(session.plan.count) · \(seconds) 秒").monospacedDigit().font(.footnote)
-            }
             Button("取消診斷", role: .cancel) { session.stop() }
                 .accessibilityIdentifier("diagnosticsCancel").disabled(session.stopReason != nil)
         }
@@ -262,7 +267,12 @@ private struct DiagnosticBadge: View {
         case .partial: ("circle.lefthalf.filled", .orange)
         case .unverifiable: ("minus.circle", .secondary)
         }
-        Label(state.title, systemImage: style.0).foregroundStyle(style.1).font(.subheadline.weight(.semibold))
+        Label(state.title, systemImage: style.0)
+            .foregroundStyle(style.1)
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(style.1.opacity(0.12), in: Capsule())
     }
 }
 

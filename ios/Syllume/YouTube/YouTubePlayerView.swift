@@ -90,7 +90,7 @@ struct YouTubePlayerView: UIViewRepresentable {
                 let bundle = (Bundle.main.bundleIdentifier ?? "org.folia.community.ios").lowercased()
                 let origin = "https://" + bundle
                 view.loadHTMLString(Self.html(video: video.id, session: input.requestSession.uuidString,
-                                              origin: origin, start: start), baseURL: URL(string: origin))
+                                              origin: origin, start: start, seek: input.requestSeek), baseURL: URL(string: origin))
                 return
             }
             // WebKit pauses the actual media immediately, even before the IFrame API is ready.
@@ -114,7 +114,12 @@ struct YouTubePlayerView: UIViewRepresentable {
             }
             if let seek = input.requestSeek, sentSeek != seek, player.visible, view.hasVisibleViewport {
                 sentSeek = seek
-                view.callAsyncJavaScript("window.FoliaYouTube.seek(time)", arguments: ["time": input.requestTime], in: nil, in: .page, completionHandler: nil)
+                view.callAsyncJavaScript("window.FoliaYouTube.seek(time, command)",
+                    arguments: ["time": input.requestTime, "command": seek.uuidString], in: nil, in: .page) { [weak self, weak view] result in
+                        guard case .failure = result, let self, let view, self.view === view,
+                              player.session == session, sentSeek == seek else { return }
+                        sentSeek = nil
+                    }
             }
         }
 
@@ -154,7 +159,7 @@ struct YouTubePlayerView: UIViewRepresentable {
                     let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) {
                 player.receive(snapshot)
                 // A presentation transition can settle without another layout or SwiftUI update.
-                if input.requestPlayback, sentRevision != input.requestRevision { update() }
+                if (input.requestPlayback && sentRevision != input.requestRevision) || sentSeek != input.requestSeek { update() }
             }
             input.onUpdate()
         }
@@ -226,14 +231,14 @@ struct YouTubePlayerView: UIViewRepresentable {
             return "<script src=\"https://www.youtube.com/iframe_api\" onerror=\"emit('error',{code:-1})\"></script>"
         }
 
-        static func html(video: String, session: String, origin: String, start: Int) -> String {
+        static func html(video: String, session: String, origin: String, start: Int, seek: UUID?) -> String {
             // The strings are validated identifiers, never free-form titles or lyrics.
             """
             <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
             <meta name="referrer" content="strict-origin-when-cross-origin">
             <style>html,body,#player{margin:0;width:100%;height:100%;background:#000;overflow:hidden}</style></head><body>
             <div id="player"></div><script>
-            const session='\(session)',videoID='\(video)',origin='\(origin)',startSeconds=\(start);
+            const session='\(session)',videoID='\(video)',origin='\(origin)',startSeconds=\(start),initialSeek='\(seek?.uuidString ?? "")';
             \(transportScript)
             </script>\(apiLoader)</body></html>
             """

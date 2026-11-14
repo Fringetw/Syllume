@@ -43,6 +43,7 @@ final class PlaybackModel {
         if let embeddedVideo { return embeddedVideo.visible && embeddedVideo.duration > 0 }
         return nativeReady && duration > 0
     }
+    var isSeeking: Bool { embeddedVideo?.isSeeking ?? seeking }
     var transportLabel: String { isBuffering && wantsPlayback ? "取消載入" : wantsPlayback ? "暫停" : "播放" }
     var transportIcon: String { isBuffering && wantsPlayback ? "stop.fill" : wantsPlayback ? "pause.fill" : "play.fill" }
 
@@ -113,7 +114,7 @@ final class PlaybackModel {
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var seekGeneration = UUID()
-    @ObservationIgnored private var seeking = false
+    private var seeking = false
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var streamTimeout: Task<Void, Never>?
     @ObservationIgnored private var startupTimeout: Task<Void, Never>?

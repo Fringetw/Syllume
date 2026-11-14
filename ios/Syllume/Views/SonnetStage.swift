@@ -13,6 +13,7 @@ struct SonnetStage: View {
     var style: String = "sonnet"
     var rendering: Bool = true
     var showsTranslation: Bool = true
+    var translationAccent: Color = SyllumePalette.accent
     var diagnosticProbe: DiagnosticStageProbe? = nil
     var clockProbe: Binding<String>? = nil
     @Environment(\.scenePhase) private var scenePhase
@@ -30,7 +31,9 @@ struct SonnetStage: View {
             if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
             else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
-                Text(translation).font(SyllumeLyricFont.text(.callout, size: 16)).foregroundStyle(.white.opacity(0.8))
+                let focus = LyricFocus(line: timeline.lines[index], position: position)
+                Text(translation).font(SyllumeLyricFont.text(.callout, size: 16))
+                    .foregroundStyle(translationAccent.opacity(reduceMotion || energySaving || lowPower ? 0.94 : 0.76 + 0.23 * focus.presence))
                     .multilineTextAlignment(.center).padding(.horizontal, 24).padding(.bottom, 18)
                     .allowsHitTesting(false)
             }

@@ -166,19 +166,59 @@ struct LyricTimeline: Sendable {
     }
 
     func activeIndex(at time: Double) -> Int? {
+        let next = nextIndex(after: time)
+        guard next > 0, time < lines[next - 1].endTime else { return nil }
+        return next - 1
+    }
+
+    // Returns endIndex after the final line.
+    func nextIndex(after time: Double) -> Int {
+        guard time.isFinite else { return 0 }
         var low = 0
         var high = lines.count
         while low < high {
             let mid = (low + high) / 2
             if lines[mid].startTime <= time { low = mid + 1 } else { high = mid }
         }
-        guard low > 0, time < lines[low - 1].endTime else { return nil }
-        return low - 1
+        return low
     }
 
     private static func seconds(_ minutes: Substring, _ seconds: Substring, _ fraction: Substring?) -> Double {
         let decimal = fraction.flatMap { Double("0." + $0) } ?? 0
         return (Double(minutes) ?? 0) * 60 + (Double(seconds) ?? 0) + decimal
+    }
+}
+
+/// Visual focus derived from media time. Line-only lyrics have an envelope and no word pointer.
+struct LyricFocus: Equatable {
+    let wordIndex: Int?
+    let wordProgress: Double
+    let presence: Double
+
+    init(line: LyricLine, position: Double) {
+        guard position.isFinite, line.startTime.isFinite, line.endTime.isFinite,
+              position >= line.startTime, position < line.endTime else {
+            wordIndex = nil
+            wordProgress = 0
+            presence = 0
+            return
+        }
+
+        let duration = line.endTime - line.startTime
+        let fadeIn = min(0.36, max(Double.leastNonzeroMagnitude, duration / 2))
+        let fadeOut = min(0.52, max(Double.leastNonzeroMagnitude, duration / 2))
+        let envelope = min(1, (position - line.startTime) / fadeIn, (line.endTime - position) / fadeOut)
+        presence = envelope * envelope * (3 - 2 * envelope)
+
+        wordIndex = line.words.lastIndex { word in
+            word.startTime.isFinite && word.endTime.isFinite && word.startTime <= position && position < word.endTime
+        }
+        if let wordIndex {
+            let word = line.words[wordIndex]
+            wordProgress = (position - word.startTime) / (word.endTime - word.startTime)
+        } else {
+            wordProgress = 0
+        }
     }
 }
 

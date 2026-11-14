@@ -14,42 +14,67 @@ struct SyllumeSettingsScreen: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("字幕與動畫") {
+                Section {
                     NavigationLink { SubtitleSettingsContent(subtitles: subtitles) } label: {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Label("繁體字幕", systemImage: "character.book.closed")
-                            Text("v1.1.6 · 隨 App 內建，可停用與調整")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+                        SettingsDestination(title: "繁體字幕", symbol: "character.book.closed",
+                                            detail: "內建 OpenCC，可離線轉換")
                     }
                     .accessibilityIdentifier("builtInTraditionalLyrics")
-                }
-                Section("動畫效能") {
                     Toggle("省電動畫（30 fps）", isOn: $energySaving)
+                } header: {
+                    Text("字幕與動畫")
+                } footer: {
                     Text("一般模式上限 60 fps；省電模式降低渲染解析度與繪光效果成本。系統低耗電模式也會自動採用省電動畫。")
-                        .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("音樂來源") {
-                    Button("Navidrome 設定") { showingServer = true }
+                    Button { showingServer = true } label: {
+                        SettingsDestination(title: "Navidrome 設定", symbol: "server.rack")
+                    }
                 }
-                Section("維護") {
+                Section {
                     NavigationLink {
                         DiagnosticsScreen(youtube: youtube, library: library, player: player, navidrome: navidrome)
                     } label: {
-                        Label("開發者診斷", systemImage: "waveform.path.ecg")
+                        SettingsDestination(title: "開發者診斷", symbol: "waveform.path.ecg",
+                                            detail: "檢查播放、音源與裝置")
                     }.accessibilityIdentifier("developerDiagnostics")
-                }
-                Section {
+                } header: {
+                    Text("維護")
+                } footer: {
                     let info = Bundle.main.infoDictionary
                     Text("Syllume iOS \(info?["CFBundleShortVersionString"] as? String ?? "—") · build \(info?["CFBundleVersion"] as? String ?? "—")")
                         .foregroundStyle(.secondary)
                 }
             }
-            .buttonStyle(SyllumePressStyle())
+            .scrollContentBackground(.hidden)
+            .background(SyllumePalette.surface)
             .navigationTitle("設定")
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("關閉") { dismiss() } } }
             .sheet(isPresented: $showingServer) { NavidromeSettings(connection: navidrome) }
         }
+    }
+}
+
+private struct SettingsDestination: View {
+    let title: String
+    let symbol: String
+    var detail: String?
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .foregroundStyle(SyllumePalette.accent)
+                .frame(width: 34, height: 34)
+                .background(SyllumePalette.accent.opacity(0.13), in: .rect(cornerRadius: 10))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).foregroundStyle(.primary)
+                if let detail {
+                    Text(detail).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(minHeight: 44)
     }
 }
 
@@ -176,6 +201,8 @@ private struct SubtitleSettingsContent: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
+        .scrollContentBackground(.hidden)
+        .background(SyllumePalette.surface)
         .navigationTitle("繁體字幕").navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingReport) {
             NavigationStack {

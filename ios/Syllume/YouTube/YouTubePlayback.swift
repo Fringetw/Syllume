@@ -38,7 +38,7 @@ final class YouTubePlayback {
     @ObservationIgnored private var attemptedMatch: String?
     @ObservationIgnored private var matchAttempts = 0
     @ObservationIgnored private var pendingPlayback: Bool?
-    @ObservationIgnored private var pendingSeek: (time: Double, date: Date)?
+    private var pendingSeek: (time: Double, date: Date)?
     @ObservationIgnored private let manualLyricRoot: URL?
     @ObservationIgnored private let lookup: @Sendable (String, String, Double) async throws -> LyricSearchRecord?
     @ObservationIgnored private let automaticallyMatchesLyrics: Bool
@@ -105,12 +105,13 @@ final class YouTubePlayback {
     func receive(_ snapshot: YouTubeSnapshot) {
         guard let track = current, snapshot.belongs(to: session, videoID: track.id) else { return }
         guard visible else { if wantsPlayback || isPlaying { pause() }; return }
-        guard snapshot.commandRevision == playbackRevision else { return }
+        guard snapshot.commandRevision == playbackRevision, snapshot.seekRevision == seekRevision else { return }
         sampledTime = snapshot.time
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
-        if let seek = pendingSeek, abs(snapshot.time - seek.time) > 1.5, Date().timeIntervalSince(seek.date) < 2 {
-            // A sample queued before the seek must not pull the lyric clock backwards.
+        if let seek = pendingSeek, Date().timeIntervalSince(seek.date) < 2,
+           snapshot.state == 3 || abs(snapshot.time - seek.time) > 1.5 {
+            // The command arrived, but the media may still be buffering at its previous position.
         } else if !stalePlay && !stalePause {
             if abs(position - snapshot.time) > 0.001 { position = snapshot.time }
             pendingSeek = nil
@@ -151,6 +152,7 @@ final class YouTubePlayback {
     func failed(_ code: Int, session: String) {
         guard self.session.uuidString == session else { return }
         pause()
+        pendingSeek = nil
         didBlockAutoplay = false
         let reason: DiagnosticCode = switch code {
         case 101, 150: .permission

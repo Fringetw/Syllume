@@ -7,6 +7,7 @@ struct LibraryScreen: View {
     let library: LocalLibrary
     let player: PlaybackModel
     let navidrome: NavidromeConnection
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var spotify = PlatformConnection(.spotify)
@@ -24,7 +25,12 @@ struct LibraryScreen: View {
     @State private var query = ""
     @State private var source: Source = .local
 
-    private enum Source: Hashable { case local, navidrome, spotify, youtube }
+    private enum Source: String, CaseIterable {
+        case local = "本機"
+        case navidrome = "Navidrome"
+        case spotify = "Spotify"
+        case youtube = "YouTube"
+    }
     private static let lyricTypes: [UTType] = [
         UTType(importedAs: "org.folia.lyrics.lrc"), UTType(importedAs: "org.folia.lyrics.fia")
     ]
@@ -33,15 +39,9 @@ struct LibraryScreen: View {
         NavigationStack {
             VStack(spacing: 0) {
                 masthead
-                Picker("音樂來源", selection: $source) {
-                    Text("本機").tag(Source.local)
-                    Text("Navidrome").tag(Source.navidrome)
-                    Text("Spotify").tag(Source.spotify)
-                    Text("YouTube").tag(Source.youtube)
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 22)
-                .padding(.bottom, 8)
+                sourceSelector
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 10)
 
                 switch source {
                 case .local: localLibrary
@@ -57,7 +57,14 @@ struct LibraryScreen: View {
                         account: navidrome.account, player: player, openPlayer: presentPlayer, refresh: refreshYouTubePlaylist)
                 }
             }
-            .background(SyllumePalette.surface.ignoresSafeArea())
+            .background {
+                SyllumePalette.surface.overlay(alignment: .top) {
+                    LinearGradient(colors: [SyllumePalette.accent.opacity(0.09), .clear],
+                                   startPoint: .top, endPoint: .bottom)
+                        .frame(height: 236)
+                }
+                .ignoresSafeArea()
+            }
             .toolbar(.hidden, for: .navigationBar)
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 if let track = player.current {
@@ -141,26 +148,19 @@ struct LibraryScreen: View {
     }
 
     private var masthead: some View {
-        HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("L Y R I C S   R E I M A G I N E D")
-                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(SyllumePalette.accent)
-                    .accessibilityHidden(true)
-                Text("Syllume").font(.system(.largeTitle, design: .serif, weight: .semibold))
-                    .accessibilityAddTraits(.isHeader)
-            }
-            Spacer()
+        HStack(spacing: 10) {
+            Text("Syllume")
+                .font(.system(.largeTitle, design: .serif, weight: .semibold))
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .accessibilityAddTraits(.isHeader)
+            Spacer(minLength: 0)
             Button { showingSettings = true } label: {
                 Image(systemName: "slider.horizontal.3")
                     .font(.title3).frame(width: 44, height: 44)
-                    .background(.white.opacity(0.06), in: Circle())
+                    .libraryControlSurface(in: Circle())
             }
             .accessibilityLabel("Syllume 設定")
-            Button {
-                lyricTarget = nil
-                showingImporter = true
-            } label: {
+            Button(action: openImport) {
                 Image(systemName: "plus").font(.title3.weight(.medium))
                     .frame(width: 44, height: 44).background(SyllumePalette.accent, in: Circle())
                     .foregroundStyle(SyllumePalette.surface)
@@ -169,8 +169,22 @@ struct LibraryScreen: View {
             .disabled(library.importInProgress)
         }
         .buttonStyle(SyllumePressStyle())
-        .padding(.horizontal, 22)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 10)
+    }
+
+    @ViewBuilder private var sourceSelector: some View {
+        let picker = Picker("音樂來源", selection: $source) {
+            ForEach(Source.allCases, id: \.self) { source in
+                Text(source.rawValue).tag(source)
+            }
+        }
+        if dynamicTypeSize.isAccessibilitySize {
+            picker.pickerStyle(.menu)
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        } else {
+            picker.pickerStyle(.segmented)
+        }
     }
 
     private var visibleTracks: [Track] {
@@ -182,7 +196,7 @@ struct LibraryScreen: View {
 
     private var localLibrary: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 13) {
+            LazyVStack(alignment: .leading, spacing: 16) {
                 demoCard
                 HStack {
                     Text("我的音樂").font(.title3.weight(.semibold)).accessibilityAddTraits(.isHeader)
@@ -192,12 +206,20 @@ struct LibraryScreen: View {
                 }
                 if let error = library.storageError { Text(error).foregroundStyle(.secondary) }
                 if library.tracks.isEmpty {
-                    Text("使用右上角 ＋ 從「檔案」匯入音樂。若有同名的 .lrc 或 .fia，選取音檔時可一起匯入。")
-                        .font(.callout).foregroundStyle(.secondary)
+                    ContentUnavailableView {
+                        Label("沒有本機音樂", systemImage: "music.note")
+                    } description: {
+                        Text("可一併匯入與音檔同名的 LRC 或 FIA 歌詞。")
+                    } actions: {
+                        Button("從「檔案」匯入", action: openImport)
+                            .buttonStyle(.bordered).disabled(library.importInProgress)
+                    }
+                    .background(.white.opacity(0.04), in: .rect(cornerRadius: 24))
                 } else {
-                    TextField("搜尋本機曲庫", text: $query)
-                        .textFieldStyle(.roundedBorder).submitLabel(.search)
-                    if visibleTracks.isEmpty { Text("沒有符合的歌曲。").foregroundStyle(.secondary) }
+                    LibrarySearchField(title: "搜尋本機曲庫", text: $query)
+                    if visibleTracks.isEmpty {
+                        ContentUnavailableView.search(text: query)
+                    }
                     ForEach(visibleTracks) { track in
                         TrackRow(track: track, active: player.current?.source == .local && player.current?.id == track.id,
                                  artworkFile: library.artworkURL(for: track)) {
@@ -211,10 +233,14 @@ struct LibraryScreen: View {
                             }
                             Button("移除歌曲", systemImage: "trash", role: .destructive) { deletionTarget = track }
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(.white.opacity(0.045), in: .rect(cornerRadius: 16))
                     }
                 }
             }
-            .padding(22)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
         }
         .scrollDismissesKeyboard(.interactively)
     }
@@ -226,25 +252,30 @@ struct LibraryScreen: View {
         } label: {
             HStack(spacing: 14) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("S Y L L U M E   S E S S I O N   /   0 1").font(.system(size: 9, weight: .medium, design: .monospaced))
-                        .foregroundStyle(SyllumePalette.accent)
                     Text("潮汐之間").font(.system(.title2, design: .serif, weight: .semibold))
-                    Text("試看商籟動畫 · 30 秒音樂示範").font(.footnote).foregroundStyle(.secondary)
+                    Text("30 秒同步歌詞示範").font(.subheadline).foregroundStyle(.secondary)
                 }
-                Spacer()
+                Spacer(minLength: 0)
                 Image(systemName: "play.fill")
-                    .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.12), in: Circle())
+                    .font(.headline)
+                    .foregroundStyle(SyllumePalette.accent)
+                    .frame(width: 48, height: 48)
+                    .libraryControlSurface(in: Circle())
             }
-            .padding(18)
+            .padding(20)
             .background {
-                SyllumeAtmosphere().clipShape(.rect(cornerRadius: 20))
+                SyllumeAtmosphere().clipShape(.rect(cornerRadius: 24))
             }
-            .overlay { RoundedRectangle(cornerRadius: 20).strokeBorder(.white.opacity(0.10)) }
+            .overlay { RoundedRectangle(cornerRadius: 24).strokeBorder(.white.opacity(0.12)) }
         }
         .buttonStyle(SyllumePressStyle())
         .accessibilityLabel("試聽潮汐之間，30 秒同步歌詞示範")
         .accessibilityIdentifier("demoTrack")
+    }
+
+    private func openImport() {
+        lyricTarget = nil
+        showingImporter = true
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {
@@ -268,6 +299,51 @@ struct LibraryScreen: View {
     }
 
     private func pauseForPlatform() { player.pauseForExternalPlayback() }
+}
+
+struct LibrarySearchField: View {
+    let title: String
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary).accessibilityHidden(true)
+            TextField(title, text: $text).submitLabel(.search)
+            if !text.isEmpty {
+                Button { text = "" } label: {
+                    Image(systemName: "xmark.circle.fill").frame(minWidth: 44, minHeight: 44)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("清除搜尋")
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(minHeight: 44)
+        .background(.white.opacity(0.07), in: .rect(cornerRadius: 14))
+    }
+}
+
+extension View {
+    func libraryControlSurface<S: InsettableShape>(in shape: S) -> some View {
+        modifier(LibraryControlSurface(shape: shape))
+    }
+}
+
+private struct LibraryControlSurface<S: InsettableShape>: ViewModifier {
+    let shape: S
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    func body(content: Content) -> some View {
+        content.background {
+            if reduceTransparency {
+                shape.fill(Color(uiColor: .secondarySystemBackground))
+            } else {
+                shape.fill(.regularMaterial)
+            }
+        }
+        .overlay { shape.strokeBorder(.white.opacity(0.10)).allowsHitTesting(false) }
+    }
 }
 
 struct TrackRow: View {

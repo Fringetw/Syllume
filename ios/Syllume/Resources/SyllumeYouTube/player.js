@@ -1,6 +1,7 @@
 // The native command revision travels with every sample, so delayed play events cannot undo pause.
 let player, ready = false, wants = false, revision = -1, awaiting = false, pendingSeek = null;
 let attempts = 0, lastCommand = 0, stopped = false;
+let seekRevision = initialSeek || null;
 const emit = (type, extra = {}) => window.webkit.messageHandlers.youtube.postMessage({ type, session, ...extra });
 let waitingForVisibleCommand = true;
 let lastVisibilityRequest = -Infinity;
@@ -16,8 +17,9 @@ const applyPlayback = () => {
     lastCommand = performance.now(); attempts++;
     canPlay() ? player.playVideo() : player.pauseVideo();
 };
-const applySeek = (time) => {
+const applySeek = ({ time, command }) => {
     player.seekTo(time, true);
+    seekRevision = command;
     if (!canPlay()) {
         awaiting = true; attempts = 0;
         applyPlayback();
@@ -35,7 +37,7 @@ const snapshot = () => {
     if (awaiting && ((wants && state === 1) || (!wants && [-1, 0, 2, 5].includes(state)))) awaiting = false;
     else if (awaiting && performance.now() - lastCommand >= 750 && attempts < 4) applyPlayback();
     if (!awaiting && (state === 1 || state === 2)) wants = state === 1;
-    emit('snapshot', { videoID: data.video_id || videoID, commandRevision: revision, state,
+    emit('snapshot', { videoID: data.video_id || videoID, commandRevision: revision, seekRevision, state,
         time: player.getCurrentTime() || 0, duration: player.getDuration() || 0,
         title: data.title || '', author: data.author || '' });
 };
@@ -45,7 +47,12 @@ window.FoliaYouTube = {
         revision = command; wants = !!value; waitingForVisibleCommand = document.hidden;
         awaiting = true; attempts = 0; applyPlayback();
     },
-    seek(time) { if (stopped) return; if (ready) applySeek(time); else pendingSeek = time; },
+    seek(time, command) {
+        if (stopped) return;
+        const request = { time, command };
+        if (ready) applySeek(request);
+        else pendingSeek = request;
+    },
     stop() {
         if (stopped) return;
         stopped = true; wants = false; ready = false;
