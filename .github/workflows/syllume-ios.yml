@@ -101,6 +101,7 @@ jobs:
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistDownloadRequiresConfirmation \
               -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+              -only-testing:SyllumeUITests/SyllumeUITests/testYouTubeSongAutomaticallyPlaysVisibleOriginal \
               -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
           }
           set -o pipefail
@@ -136,6 +137,7 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistChoicePersists \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubePlaylistDownloadRequiresConfirmation \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSongAutomaticallyPlaysVisibleOriginal \
             -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator test summaries, screenshots and diagnostic reports

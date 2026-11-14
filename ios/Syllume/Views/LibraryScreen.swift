@@ -148,25 +148,30 @@ struct LibraryScreen: View {
     }
 
     private var masthead: some View {
-        HStack(spacing: 10) {
+        let layout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 10))
+        return layout {
             Text("Syllume")
                 .font(.system(.largeTitle, design: .serif, weight: .semibold))
                 .lineLimit(1).minimumScaleFactor(0.7)
                 .accessibilityAddTraits(.isHeader)
-            Spacer(minLength: 0)
-            Button { showingSettings = true } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.title3).frame(width: 44, height: 44)
-                    .libraryControlSurface(in: Circle())
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                Button { showingSettings = true } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 20)).frame(width: 44, height: 44)
+                        .libraryControlSurface(in: Circle())
+                }
+                .accessibilityLabel("Syllume 設定")
+                Button(action: openImport) {
+                    Image(systemName: "plus").font(.system(size: 20, weight: .medium))
+                        .frame(width: 44, height: 44).background(SyllumePalette.accent, in: Circle())
+                        .foregroundStyle(SyllumePalette.surface)
+                }
+                .accessibilityLabel("匯入音樂")
+                .disabled(library.importInProgress)
             }
-            .accessibilityLabel("Syllume 設定")
-            Button(action: openImport) {
-                Image(systemName: "plus").font(.title3.weight(.medium))
-                    .frame(width: 44, height: 44).background(SyllumePalette.accent, in: Circle())
-                    .foregroundStyle(SyllumePalette.surface)
-            }
-            .accessibilityLabel("匯入音樂")
-            .disabled(library.importInProgress)
         }
         .buttonStyle(SyllumePressStyle())
         .padding(.horizontal, 20)

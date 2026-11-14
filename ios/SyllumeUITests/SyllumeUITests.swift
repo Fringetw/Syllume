@@ -479,7 +479,8 @@ final class SyllumeUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-device-playback-regression",
-                               "--youtube-playback-fixture", "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
+                               "--youtube-playback-fixture", "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover",
+                               "-Folia.EnergySavingAnimation", "YES"]
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]

@@ -88,11 +88,14 @@ struct DiagnosticProbes {
 
     func captions() async -> [DiagnosticCheck] {
         var checks: [DiagnosticCheck] = []
-        let sample = (0..<4).map { index in
-            LyricLine(startTime: Double(index * 2 + 1), endTime: Double(index * 2 + 2),
-                      fullText: "あの日のこと \(index)", translation: "头发和风里的回声")
+        let sample: [LyricLine] = (0..<4).map { index in
+            let start = Double(index) * 2 + 1
+            return LyricLine(startTime: start, endTime: start + 1,
+                             fullText: "あの日のこと \(index)", translation: "头发和风里的回声")
         }
-        let original = sample.map { line in LyricLine(startTime: line.startTime + 0.4, endTime: line.endTime + 0.4, fullText: line.fullText) }
+        let original: [LyricLine] = sample.map { line in
+            LyricLine(startTime: line.startTime + 0.4, endTime: line.endTime + 0.4, fullText: line.fullText)
+        }
         let aligned = YouTubeCaptionDecoders.alignTranslation(sample, to: original)
         let started = Date()
         do {

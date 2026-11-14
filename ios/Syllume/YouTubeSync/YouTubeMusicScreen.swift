@@ -236,7 +236,7 @@ struct YouTubeMusicScreen: View {
         }
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        .controlSize(.regular)
         .foregroundStyle(SyllumePalette.surface)
         .disabled(songs.isEmpty)
         Button("隨機", systemImage: "shuffle") {
@@ -245,7 +245,7 @@ struct YouTubeMusicScreen: View {
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        .controlSize(.regular)
         .disabled(songs.isEmpty)
         Menu("編輯", systemImage: "ellipsis.circle") {
             Button("重新命名", systemImage: "pencil") { name = sync.snapshot.playlistTitle; renaming = true }
@@ -257,7 +257,7 @@ struct YouTubeMusicScreen: View {
         }
         .buttonStyle(.bordered)
         .buttonBorderShape(.capsule)
-        .controlSize(.large)
+        .controlSize(.regular)
     }
 
     private func songRow(_ song: SyncedYouTubeSong) -> some View {

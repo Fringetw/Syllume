@@ -366,10 +366,14 @@ private struct TransportControls: View {
     @Binding var preview: Double?
 
     var body: some View {
+        let trackID = player.current?.id
         VStack(spacing: 9) {
             PlaybackProgressBar(position: player.position, duration: player.duration,
                                 isPlaying: player.isPlaying, isBuffering: player.isBuffering, isSeeking: player.isSeeking,
-                                canSeek: player.canSeek, accent: accent, preview: $preview, seek: player.seek(to:))
+                                canSeek: player.canSeek, accent: accent, preview: $preview) { time in
+                guard player.current?.id == trackID, player.canSeek else { return }
+                player.seek(to: time)
+            }
 
             HStack(spacing: 0) {
                 Button { player.toggleRepeat() } label: {
@@ -379,7 +383,7 @@ private struct TransportControls: View {
                 .accessibilityLabel("循環佇列")
                 .accessibilityAddTraits(player.repeatQueue ? .isSelected : [])
 
-                Spacer()
+                Spacer(minLength: 0)
                 Button { player.previous() } label: {
                     Image(systemName: "backward.end.fill").font(.title2).frame(width: 48, height: 48)
                 }
@@ -395,20 +399,19 @@ private struct TransportControls: View {
                 }
                 .accessibilityLabel(player.transportLabel)
                 .accessibilityIdentifier("playerToggle")
-                .padding(.horizontal, 10)
+                .padding(.horizontal, 6)
 
                 Button { player.next() } label: {
                     Image(systemName: "forward.end.fill").font(.title2).frame(width: 48, height: 48)
                 }
                 .accessibilityLabel("下一首")
                 .disabled(!player.canAdvance)
-                Spacer()
+                Spacer(minLength: 0)
                 Color.clear.frame(width: 44, height: 1).accessibilityHidden(true)
             }
             .buttonStyle(SyllumePressStyle(luminous: luminous))
         }
     }
-
 }
 
 struct MiniPlayer: View {

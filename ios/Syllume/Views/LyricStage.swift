@@ -42,12 +42,16 @@ struct PlaybackAtmosphere: View {
     let playing: Bool
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("Folia.EnergySavingAnimation") private var energySaving = false
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+
+    private var staticAtmosphere: Bool { reduceMotion || energySaving || lowPower }
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !playing || reduceMotion || scenePhase != .active)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 15, paused: !playing || staticAtmosphere || scenePhase != .active)) { timeline in
             Canvas(opaque: true, rendersAsynchronously: true) { context, size in
                 context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(SyllumePalette.surface))
-                let time = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
+                let time = staticAtmosphere ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600)
                 let colors: [Color] = [.init(red: 0.12, green: 0.46, blue: 0.43),
                                        .init(red: 0.31, green: 0.17, blue: 0.47),
                                        .init(red: 0.10, green: 0.24, blue: 0.40)]
@@ -66,6 +70,9 @@ struct PlaybackAtmosphere: View {
         }
         .allowsHitTesting(false)
         .accessibilityHidden(true)
+        .onReceive(NotificationCenter.default.publisher(for: .NSProcessInfoPowerStateDidChange)) { _ in
+            lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+        }
     }
 }
 

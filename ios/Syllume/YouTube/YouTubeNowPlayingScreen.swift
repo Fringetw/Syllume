@@ -17,11 +17,12 @@ struct YouTubeNowPlayingScreen: View {
 
     var body: some View {
         if let track = player.current {
+            let session = player.session
             let stageTime = scrubPreview ?? player.position
             let stagePlaying = scrubPreview == nil && player.isPlaying && !player.isBuffering && !player.isSeeking
             VStack(spacing: 8) {
                 HStack {
-                    Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 40) }
+                    Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }
                         .accessibilityLabel("關閉 YouTube 播放畫面")
                     Spacer()
                     Text("YouTube · Syllume").font(.subheadline.weight(.semibold))
@@ -30,7 +31,7 @@ struct YouTubeNowPlayingScreen: View {
                         Button("繁體字幕設定") { player.pause(); showingSubtitles = true }
                         Button("尋找歌詞") { player.pause(); showingSearch = true }
                         Button("附加 LRC／FIA 歌詞", action: importLyrics)
-                    } label: { Image(systemName: "ellipsis").frame(width: 44, height: 40) }
+                    } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
                     .accessibilityLabel("YouTube 播放選項")
                 }
                 YouTubePlayerView(player: player)
@@ -82,17 +83,20 @@ struct YouTubeNowPlayingScreen: View {
                     PlaybackProgressBar(position: player.position, duration: player.duration,
                                         isPlaying: player.isPlaying, isBuffering: player.isBuffering, isSeeking: player.isSeeking,
                                         canSeek: player.visible && player.duration > 0, accent: SyllumePalette.accent,
-                                        label: "YouTube 播放進度", preview: $scrubPreview, seek: player.seek(to:))
-                        .id(player.session)
+                                        label: "YouTube 播放進度", preview: $scrubPreview) { time in
+                        guard player.session == session, player.visible else { return }
+                        player.seek(to: time)
+                    }
+                    .id(session)
                     HStack {
                         Spacer()
-                        Button { player.previous() } label: { Image(systemName: "backward.end.fill").frame(width: 44, height: 40) }
+                        Button { player.previous() } label: { Image(systemName: "backward.end.fill").frame(width: 44, height: 44) }
                             .accessibilityLabel("YouTube 上一首")
                         Button { player.toggle() } label: {
-                            Image(systemName: player.wantsPlayback ? "pause.fill" : "play.fill").frame(width: 44, height: 40)
+                            Image(systemName: player.wantsPlayback ? "pause.fill" : "play.fill").frame(width: 44, height: 44)
                         }
                         .accessibilityLabel(player.wantsPlayback ? "暫停 YouTube" : "播放 YouTube")
-                        Button { player.next() } label: { Image(systemName: "forward.end.fill").frame(width: 44, height: 40) }
+                        Button { player.next() } label: { Image(systemName: "forward.end.fill").frame(width: 44, height: 44) }
                             .disabled(!player.canAdvance).accessibilityLabel("YouTube 下一首")
                         Spacer()
                     }
