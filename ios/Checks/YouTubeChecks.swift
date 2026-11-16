@@ -46,12 +46,15 @@ enum YouTubeChecks {
         let firstSeek = model.seekRevision
         model.receive(sample(1, 39.9))
         precondition(model.position == 40 && model.isSeeking, "Even a nearby snapshot must acknowledge the active seek")
-        model.seek(to: 41)
+        let seekStart = ContinuousClock().now
+        model.seek(to: 41, now: seekStart)
         let latestSeek = model.seekRevision
         model.receive(sample(1, 40, seek: firstSeek))
         model.receive(sample(3, 41.1, seek: latestSeek))
         precondition(model.position == 41 && model.isSeeking, "An older command and a buffering snapshot cannot finish the seek")
-        model.receive(sample(1, 41.1, seek: latestSeek))
+        model.receive(sample(3, 3.2, seek: latestSeek), now: seekStart.advanced(by: .seconds(5)))
+        precondition(model.position == 41 && model.isSeeking, "Long buffering must not return the playhead to its previous position")
+        model.receive(sample(1, 41.1, seek: latestSeek), now: seekStart.advanced(by: .seconds(6)))
         precondition(model.position == 41.1 && !model.isSeeking)
         model.setVisible(false); model.receive(sample(1, 42, seek: latestSeek)); precondition(!model.isPlaying && !model.wantsPlayback)
         model.setVisible(true); model.prepareToPlay(); model.next()

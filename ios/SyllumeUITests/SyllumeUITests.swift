@@ -119,13 +119,10 @@ final class SyllumeUITests: XCTestCase {
         wait(3)
         capture(app, name: "Lyrics-playing-05")
         toggle.tap()
-        let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
-        wait(for: [paused], timeout: 10)
-        capture(app, name: "Lyrics-paused")
         let mediaProbe = app.staticTexts["localTransportProbe"]
-        XCTAssertTrue(mediaProbe.waitForExistence(timeout: 5))
-        XCTAssertTrue((mediaProbe.value as? String ?? "").hasSuffix("|0.0"))
-        let pausedTime = probeTime(mediaProbe)
+        let pausedTime = waitForPausedNativeClock(mediaProbe)
+        XCTAssertEqual(toggle.label, "播放")
+        capture(app, name: "Lyrics-paused")
         wait(2)
         XCTAssertEqual(probeTime(mediaProbe), pausedTime, accuracy: 0.15, "AVPlayer time must stop, not only the icon")
         app.segmentedControls.buttons["繪光"].tap()
@@ -135,23 +132,14 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [lumiereReady], timeout: 120), .completed, "Lumiere: \(String(describing: lumiere.value))")
         XCTAssertGreaterThan(lumiere.frame.height, app.frame.height * 0.8)
         capture(app, name: "Lumiere-paused")
-        // The animated WebKit background can delay an accessibility hit-test on a busy runner.
-        // Tap the visible control at its measured center, then verify the native playback clock stopped.
-        let frame = toggle.frame
-        let center = CGPoint(x: frame.midX, y: frame.midY)
-        XCTAssertTrue(app.frame.contains(center))
-        let pausePoint = app.coordinate(withNormalizedOffset: .zero).withOffset(
-            CGVector(dx: center.x - app.frame.minX, dy: center.y - app.frame.minY))
         toggle.tap()
         let resumed = expectation(for: NSPredicate(format: "label == %@", "暫停"), evaluatedWith: toggle)
         wait(for: [resumed], timeout: 10)
         wait(2)
         capture(app, name: "Lumiere-playing")
-        pausePoint.tap()
-        let lumierePaused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
-        wait(for: [lumierePaused], timeout: 10)
-        XCTAssertTrue((mediaProbe.value as? String ?? "").hasSuffix("|0.0"))
-        let lumierePausedTime = probeTime(mediaProbe)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let lumierePausedTime = waitForPausedNativeClock(mediaProbe)
+        XCTAssertEqual(toggle.label, "播放")
         wait(2)
         XCTAssertEqual(probeTime(mediaProbe), lumierePausedTime, accuracy: 0.15)
         app.buttons["尋找歌詞"].tap()
@@ -176,6 +164,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(toggle.waitForExistence(timeout: 10))
         if toggle.label == "暫停" { toggle.tap() }
         let clock = app.staticTexts["localTransportProbe"]
+        waitForPausedNativeClock(clock)
         let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 10))
         selectPlaybackMode("霧盞", in: app)
@@ -319,8 +308,9 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(probe.waitForExistence(timeout: 5))
         let advancing = expectation(for: NSPredicate { _, _ in self.probeTime(probe) > 0.3 }, evaluatedWith: probe)
         XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 15), .completed)
-        toggle.tap(); wait(1)
-        let stopped = probeTime(probe); wait(2)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let stopped = waitForPausedNativeClock(probe)
+        wait(2)
         XCTAssertEqual(probeTime(probe), stopped, accuracy: 0.15)
         XCTAssertTrue((probe.value as? String ?? "").hasSuffix("|0.0"))
         toggle.tap()
@@ -674,6 +664,20 @@ final class SyllumeUITests: XCTestCase {
 
     private func probeTime(_ element: XCUIElement) -> Double {
         Double((element.value as? String ?? "").split(separator: "|").first ?? "") ?? -1
+    }
+
+    @discardableResult
+    private func waitForPausedNativeClock(_ probe: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> Double {
+        var pausedTime: Double?
+        let paused = expectation(for: NSPredicate { _, _ in
+            let fields = (probe.value as? String ?? "").split(separator: "|")
+            guard fields.count == 2, let time = Double(fields[0]), time.isFinite, fields[1] == "0.0" else { return false }
+            pausedTime = time
+            return true
+        }, evaluatedWith: probe)
+        let result = XCTWaiter.wait(for: [paused], timeout: 20)
+        XCTAssertEqual(result, .completed, "Expected a finite paused AVPlayer clock, got \(String(describing: probe.value))", file: file, line: line)
+        return pausedTime ?? -1
     }
 
     @discardableResult

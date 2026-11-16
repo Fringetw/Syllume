@@ -46,22 +46,12 @@ struct PlaybackProgressBar: View {
                 PlaybackProgressTrack(fraction: fraction, accent: accent, fromRight: fromRight,
                                       enabled: enabled, glow: showGlow, increasedContrast: contrast == .increased)
                     .animation(animateClock ? .linear(duration: 0.18) : nil, value: fraction)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .updating($dragging) { _, state, _ in state = true }
-                            .onChanged { gesture in
-                                guard enabled else { return }
-                                preview = time(at: gesture.location.x, width: geometry.size.width)
-                            }
-                            .onEnded { gesture in
-                                if enabled, geometry.size.width > 0 {
-                                    seek(time(at: gesture.location.x, width: geometry.size.width))
-                                }
-                                preview = nil
-                            },
-                        including: enabled ? .all : .none
-                    )
+                    .overlay {
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .gesture(scrubbing(width: geometry.size.width), including: enabled ? .all : .none)
+                    }
             }
             .frame(minHeight: 44, maxHeight: 44)
             .accessibilityElement(children: .ignore)
@@ -100,6 +90,23 @@ struct PlaybackProgressBar: View {
     }
 
     private func clamped(_ time: Double) -> Double { time.isFinite ? min(max(time, 0), length) : 0 }
+
+    private func scrubbing(width: CGFloat) -> some Gesture {
+        let drag = DragGesture(minimumDistance: 4)
+            .updating($dragging) { _, state, _ in state = true }
+            .onChanged { gesture in
+                guard enabled else { return }
+                preview = time(at: gesture.location.x, width: width)
+            }
+            .onEnded { gesture in
+                if enabled, width > 0 { seek(time(at: gesture.location.x, width: width)) }
+                preview = nil
+            }
+        let tap = SpatialTapGesture().onEnded { gesture in
+            if enabled, width > 0 { seek(time(at: gesture.location.x, width: width)) }
+        }
+        return drag.exclusively(before: tap)
+    }
 
     private func time(at x: CGFloat, width: CGFloat) -> Double {
         guard x.isFinite, width > 0 else { return 0 }

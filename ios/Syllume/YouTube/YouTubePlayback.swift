@@ -38,7 +38,7 @@ final class YouTubePlayback {
     @ObservationIgnored private var attemptedMatch: String?
     @ObservationIgnored private var matchAttempts = 0
     @ObservationIgnored private var pendingPlayback: Bool?
-    private var pendingSeek: (time: Double, date: Date)?
+    private var pendingSeek: (time: Double, requestedAt: ContinuousClock.Instant)?
     @ObservationIgnored private let manualLyricRoot: URL?
     @ObservationIgnored private let lookup: @Sendable (String, String, Double) async throws -> LyricSearchRecord?
     @ObservationIgnored private let automaticallyMatchesLyrics: Bool
@@ -96,22 +96,22 @@ final class YouTubePlayback {
     }
     func next() { guard canAdvance else { return }; index += 1; load() }
     func previous() { if position > 3 || index == 0 { seek(to: 0) } else { index -= 1; load() } }
-    func seek(to time: Double) {
+    func seek(to time: Double, now: ContinuousClock.Instant = ContinuousClock().now) {
         guard time.isFinite, duration > 0 else { return }
         seekTime = min(duration, max(0, time)); position = seekTime; seekRevision = UUID()
-        pendingSeek = (seekTime, Date())
+        pendingSeek = (seekTime, now)
     }
 
-    func receive(_ snapshot: YouTubeSnapshot) {
+    func receive(_ snapshot: YouTubeSnapshot, now: ContinuousClock.Instant = ContinuousClock().now) {
         guard let track = current, snapshot.belongs(to: session, videoID: track.id) else { return }
         guard visible else { if wantsPlayback || isPlaying { pause() }; return }
         guard snapshot.commandRevision == playbackRevision, snapshot.seekRevision == seekRevision else { return }
         sampledTime = snapshot.time
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
-        if let seek = pendingSeek, Date().timeIntervalSince(seek.date) < 2,
-           snapshot.state == 3 || abs(snapshot.time - seek.time) > 1.5 {
-            // The command arrived, but the media may still be buffering at its previous position.
+        if let seek = pendingSeek, [-1, 3, 5].contains(snapshot.state) ||
+           (now - seek.requestedAt < .seconds(2) && abs(snapshot.time - seek.time) > 1.5) {
+            // Hold the preview until the iframe settles. The reported time can be the old position during buffering.
         } else if !stalePlay && !stalePause {
             if abs(position - snapshot.time) > 0.001 { position = snapshot.time }
             pendingSeek = nil
