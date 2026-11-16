@@ -172,26 +172,49 @@ jobs:
       - uses: actions/checkout@v4
       - name: Prepare lyric font
         run: python3 ios/Tools/prepare_lyric_font.py
-      - name: Exercise progress and Mist on iOS 26
+      - name: Build the iOS 26 simulator tests
         run: |
           xcodebuild -version
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for key, group in d["devices"].items() if "iOS-26" in key for x in group if x["name"].startswith("iPhone")))')
+          echo "FOLIA_IOS26_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
           xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
             -destination "platform=iOS Simulator,id=$simulator_id" \
-            -resultBundlePath "$RUNNER_TEMP/SyllumeIOS26.xcresult" \
-            -only-testing:SyllumeUITests/SyllumeUITests/testMistStylePersistsAndProgressControlsSeekPausedAudio \
-            -only-testing:SyllumeUITests/SyllumeUITests/testMistRenderingResourceSample \
-            -only-testing:SyllumeUITests/SyllumeUITests/testLargeTextPlaybackKeepsStyleMenuAndControlsUsable \
-            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
+            -derivedDataPath "$RUNNER_TEMP/SyllumeIOS26Build" \
+            CODE_SIGNING_ALLOWED=NO build-for-testing
+      - name: Exercise progress, Mist and large text on iOS 26
+        run: |
+          simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
+          derived_data="$RUNNER_TEMP/SyllumeIOS26Build"
+          bundle_id=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$derived_data/Build/Products/Debug-iphonesimulator/Syllume.app/Info.plist")
+          xcrun simctl boot "$simulator_id" || xcrun simctl list devices booted | grep -F "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+          run_player_check() {
+            local result_name="$1" test_name="$2"
+            # Let CoreSimulator stop the previous app before starting a separate XCTest session.
+            xcrun simctl terminate "$simulator_id" "$bundle_id" 2>/dev/null || true
+            xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+              -destination "platform=iOS Simulator,id=$simulator_id" -derivedDataPath "$derived_data" \
+              -resultBundlePath "$RUNNER_TEMP/$result_name.xcresult" \
+              -only-testing:"SyllumeUITests/SyllumeUITests/$test_name" \
+              -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building
+          }
+          failed=0
+          run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
+          run_player_check SyllumeIOS26Resources testMistRenderingResourceSample || failed=1
+          run_player_check SyllumeIOS26Scrub testMistStylePersistsAndProgressControlsSeekPausedAudio || failed=1
+          exit "$failed"
       - name: Export iOS 26 test evidence
         if: always()
         run: |
-          result="$RUNNER_TEMP/SyllumeIOS26.xcresult"
-          if [ -d "$result" ]; then
-            mkdir -p "$RUNNER_TEMP/SyllumeIOS26Evidence"
-            xcrun xcresulttool get test-results summary --path "$result" > "$RUNNER_TEMP/SyllumeIOS26Evidence/test-summary.json"
-            xcrun xcresulttool export attachments --path "$result" --output-path "$RUNNER_TEMP/SyllumeIOS26Evidence/attachments"
-          fi
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub; do
+            result="$RUNNER_TEMP/$name.xcresult"
+            if [ -d "$result" ]; then
+              evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
+              mkdir -p "$evidence"
+              xcrun xcresulttool get test-results summary --path "$result" > "$evidence/test-summary.json"
+              xcrun xcresulttool export attachments --path "$result" --output-path "$evidence/attachments"
+            fi
+          done
       - uses: actions/upload-artifact@v4
         if: always()
         with:
