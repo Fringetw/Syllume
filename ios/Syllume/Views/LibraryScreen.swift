@@ -81,6 +81,7 @@ struct LibraryScreen: View {
             refreshYouTubePlaylist()
         }) {
             NowPlayingScreen(player: player, subtitles: subtitles)
+                .environment(\.dynamicTypeSize, dynamicTypeSize)
                 #if DEBUG
                 .overlay(alignment: .topLeading) {
                     if ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture") {

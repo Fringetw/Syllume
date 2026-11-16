@@ -328,11 +328,18 @@ struct PlaybackStylePicker: View {
 
     var body: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            Picker("歌詞樣式", selection: $mode) {
-                options
+            Menu {
+                Picker("歌詞樣式", selection: $mode) {
+                    options
+                }
+                .pickerStyle(.inline)
+            } label: {
+                Label(mode.title, systemImage: "textformat")
+                    .font(.headline)
+                    .frame(minHeight: 44)
             }
-            .pickerStyle(.menu)
-            .frame(minHeight: 44)
+            .accessibilityLabel("歌詞樣式")
+            .accessibilityValue(mode.title)
             .accessibilityIdentifier("lyricStyleMenu")
         } else {
             Picker("歌詞樣式", selection: $mode) {
