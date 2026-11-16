@@ -10,7 +10,13 @@ final class PlatformConnection {
     let platform: LibraryPlatform
     let googleConfiguration: GoogleClientConfiguration
     private(set) var clientID: String
-    private(set) var sessionID = UUID()
+    private(set) var sessionID = UUID() {
+        didSet {
+            refreshTask?.cancel()
+            refreshTask = nil
+            selectedLookup.reset()
+        }
+    }
     private(set) var libraryID: String?
     private(set) var connecting = false
     private(set) var storageError: String?
@@ -19,6 +25,7 @@ final class PlatformConnection {
     private var credential: Credential?
     @ObservationIgnored private let authorizer = PlatformAuthorization()
     @ObservationIgnored private var refreshTask: Task<Credential, Error>?
+    @ObservationIgnored private let selectedLookup = SelectedYouTubeVideoLookup()
     @ObservationIgnored private let session: URLSession
 
     private struct Credential: Codable {
@@ -131,8 +138,6 @@ final class PlatformConnection {
         let status = SecItemDelete(key as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw PlatformError.message("無法移除曲庫登入資料。") }
         authorizer.cancel()
-        refreshTask?.cancel()
-        refreshTask = nil
         credential = nil
         libraryID = nil
         storageError = nil
@@ -202,10 +207,10 @@ final class PlatformConnection {
     // Fetch label credits only for the selected song, keeping bulk playlist requests small.
     func playlistSongWithMetadata(_ song: SyncedYouTubeSong) async -> SyncedYouTubeSong {
         guard song.duration == nil || (song.creditedArtist == nil && song.artist.hasSuffix(" - Topic")) else { return song }
-        return (try? await selectedVideoDetails(for: song))?.enrich(song) ?? song
+        return (try? await selectedVideoDetails(for: song, useCachedMetadata: true))?.enrich(song) ?? song
     }
 
-    func selectedVideoDetails(for song: SyncedYouTubeSong) async throws -> YouTubeVideoDetails {
+    func selectedVideoDetails(for song: SyncedYouTubeSong, useCachedMetadata: Bool = false) async throws -> YouTubeVideoDetails {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--youtube-sync-fixture") {
@@ -216,13 +221,16 @@ final class PlatformConnection {
                 status: .init(embeddable: !arguments.contains("--youtube-unavailable-audio-fixture"), madeForKids: false))
         }
         #endif
-        guard connected else { throw DiagnosticProblem(code: .signedOut) }
+        guard platform == .youtube, let credential else { throw DiagnosticProblem(code: .signedOut) }
         let id = song.videoID
-        return try await PlaybackLookup.within(.seconds(5)) {
-            guard let details = try await self.videoDetails([id], includeMetadata: true).first else {
-                throw DiagnosticProblem(code: .unavailable)
+        guard YouTubeVideo.validID(id) else { throw DiagnosticProblem(code: .unavailable) }
+        return try await selectedLookup.details(for: id, useCachedMetadata: useCachedMetadata && credential.expires.timeIntervalSinceNow > 60) {
+            try await PlaybackLookup.within(.seconds(5)) {
+                guard let details = try await self.videoDetails([id], includeMetadata: true).first else {
+                    throw DiagnosticProblem(code: .unavailable)
+                }
+                return details
             }
-            return details
         }
     }
 
@@ -244,9 +252,15 @@ final class PlatformConnection {
             .init(name: "id", value: ids.joined(separator: ",")),
             .init(name: "fields", value: "items(id,contentDetails(duration)\(detail))")]
         var token = try await accessToken()
+        try Task.checkCancellation()
+        guard sessionID == revision else { throw CancellationError() }
         var result = try await request(url: parts.url!, token: token)
         if result.1.statusCode == 401 {
+            try Task.checkCancellation()
+            guard sessionID == revision else { throw CancellationError() }
             token = try await accessToken(refresh: true)
+            try Task.checkCancellation()
+            guard sessionID == revision else { throw CancellationError() }
             result = try await request(url: parts.url!, token: token)
         }
         try Task.checkCancellation()

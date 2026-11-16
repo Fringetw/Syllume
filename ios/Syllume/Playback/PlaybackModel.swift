@@ -46,6 +46,7 @@ final class PlaybackModel {
     var isSeeking: Bool { embeddedVideo?.isSeeking ?? seeking }
     var transportLabel: String { isBuffering && wantsPlayback ? "取消載入" : wantsPlayback ? "暫停" : "播放" }
     var transportIcon: String { isBuffering && wantsPlayback ? "stop.fill" : wantsPlayback ? "pause.fill" : "play.fill" }
+    private var nativeTransportRunning: Bool { wantsPlayback && player.currentItem != nil && player.timeControlStatus == .playing }
 
     var diagnosticTransportMetrics: [String: Double] {
         guard current != nil else { return [:] }
@@ -60,9 +61,16 @@ final class PlaybackModel {
         guard player.currentItem != nil else { return metrics }
         let audio = player.currentTime().seconds
         if audio.isFinite, !seeking { metrics["displayClockDifference_s"] = abs(position - audio) }
-        if let event = player.currentItem?.accessLog()?.events.last {
-            for (key, value) in ["stalls": Double(event.numberOfStalls), "observedBitrate_bps": event.observedBitrate, "startup_s": event.startupTime]
-                where value.isFinite && value >= 0 { metrics[key] = value }
+        if let item = player.currentItem, let event = item.accessLog()?.events.last {
+            var accessMetrics: [String: Double] = ["stalls": Double(event.numberOfStalls),
+                "observedBitrate_bps": event.observedBitrate, "startup_s": event.startupTime]
+            if (item.asset as? AVURLAsset)?.url.isFileURL == false {
+                accessMetrics["lastMediaBytes"] = Double(event.numberOfBytesTransferred)
+                accessMetrics["lastMediaRequests"] = Double(event.numberOfMediaRequests)
+                accessMetrics["lastMediaCellularRequests"] = Double(event.mediaRequestsWWAN)
+                accessMetrics["lastMediaTransfer_s"] = event.transferDuration
+            }
+            metrics.merge(accessMetrics.filter { $0.value.isFinite && $0.value >= 0 }) { _, new in new }
         }
         return metrics
     }
@@ -479,7 +487,7 @@ final class PlaybackModel {
         if !seeking, seconds.isFinite, abs(position - seconds) > 0.01 {
             let advance = seconds - position
             position = max(0, seconds)
-            if lyricClockRunning, advance > 0.01, advance <= 1.5 {
+            if nativeTransportRunning, advance > 0.01, advance <= 1.5 {
                 DiagnosticsEvents.shared.observeAdvance(advance)
                 if !nativeHasAdvanced {
                     nativeHasAdvanced = true
@@ -487,6 +495,7 @@ final class PlaybackModel {
                     diagnosticPlaybackProblem = nil
                     diagnosticPlaybackDetails = nil
                     DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
+                    refreshTransport()
                 }
             }
         }
@@ -1109,13 +1118,14 @@ final class PlaybackModel {
 
     private func refreshTransport() {
         guard embeddedVideo == nil else { return }
-        let status = player.timeControlStatus
+        let enginePlaying = nativeTransportRunning
         let wasBuffering = isBuffering
-        isPlaying = wantsPlayback && status == .playing && player.currentItem != nil
+        if !enginePlaying { nativeHasAdvanced = false }
+        // AVPlayer can report its intention to play before the remote media clock moves.
+        isPlaying = enginePlaying && nativeHasAdvanced
         isBuffering = wantsPlayback && !isPlaying
         lyricClockRunning = isPlaying && !seeking
         if isBuffering && !wasBuffering { DiagnosticsEvents.shared.record(.playbackStalled) }
-        if !isPlaying { nativeHasAdvanced = false }
         if lyricClockRunning {
             startupTimeout?.cancel(); startupTimeout = nil
             if !catalogueHasStarted, let track = current, track.playlistSong != nil {

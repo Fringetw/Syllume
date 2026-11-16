@@ -143,6 +143,105 @@ struct YouTubeVideoDetails: Decodable, Sendable {
     }
 }
 
+@MainActor
+final class SelectedYouTubeVideoLookup {
+    private typealias Waiter = CheckedContinuation<YouTubeVideoDetails, Error>
+
+    private struct Pending {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: Waiter]
+    }
+
+    private struct CachedMetadata {
+        let details: YouTubeVideoDetails
+        let expires: ContinuousClock.Instant
+    }
+
+    private let now: () -> ContinuousClock.Instant
+    private var pending: [String: Pending] = [:]
+    private var metadata: [String: CachedMetadata] = [:]
+    private var accountRevision = UUID()
+
+    init(now: @escaping () -> ContinuousClock.Instant = { ContinuousClock().now }) {
+        self.now = now
+    }
+
+    func details(for videoID: String, useCachedMetadata: Bool,
+                 fetch: @escaping @MainActor () async throws -> YouTubeVideoDetails) async throws -> YouTubeVideoDetails {
+        try Task.checkCancellation()
+        if pending[videoID] == nil, useCachedMetadata,
+           let cached = metadata[videoID], cached.expires > now() { return cached.details }
+
+        let waiter = UUID()
+        let revision = accountRevision
+        let details = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: Waiter) in
+                guard !Task.isCancelled else {
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if pending[videoID] != nil {
+                    pending[videoID]?.waiters[waiter] = continuation
+                    return
+                }
+                let request = UUID()
+                let task = Task { [weak self] in
+                    do {
+                        let value = try await fetch()
+                        guard value.id == videoID else { throw DiagnosticProblem(code: .unavailable) }
+                        self?.finish(videoID, request: request, result: .success(value))
+                    } catch {
+                        self?.finish(videoID, request: request, result: .failure(error))
+                    }
+                }
+                pending[videoID] = Pending(id: request, task: task, waiters: [waiter: continuation])
+            }
+        } onCancel: {
+            Task { @MainActor in self.cancelWaiter(waiter, for: videoID) }
+        }
+        try Task.checkCancellation()
+        guard accountRevision == revision else { throw CancellationError() }
+        return details
+    }
+
+    func reset() {
+        accountRevision = UUID()
+        let interrupted = pending.values
+        pending.removeAll()
+        metadata.removeAll()
+        for request in interrupted {
+            request.task.cancel()
+            for waiter in request.waiters.values { waiter.resume(throwing: CancellationError()) }
+        }
+    }
+
+    private func cancelWaiter(_ waiter: UUID, for videoID: String) {
+        guard let continuation = pending[videoID]?.waiters.removeValue(forKey: waiter) else { return }
+        if pending[videoID]?.waiters.isEmpty == true {
+            pending.removeValue(forKey: videoID)?.task.cancel()
+        }
+        continuation.resume(throwing: CancellationError())
+    }
+
+    private func finish(_ videoID: String, request: UUID, result: Result<YouTubeVideoDetails, Error>) {
+        guard pending[videoID]?.id == request, let completed = pending.removeValue(forKey: videoID) else { return }
+        metadata.removeValue(forKey: videoID)
+        if case .success(let details) = result {
+            let time = now()
+            metadata = metadata.filter { $0.value.expires > time }
+            if metadata.count >= 32, let oldest = metadata.min(by: { $0.value.expires < $1.value.expires }) {
+                metadata.removeValue(forKey: oldest.key)
+            }
+            // Download enrichment can reuse credits and duration. Playback always needs current embed status.
+            let entry = YouTubeVideoDetails(id: videoID, contentDetails: details.contentDetails,
+                                            snippet: details.snippet, status: nil)
+            metadata[videoID] = CachedMetadata(details: entry, expires: time.advanced(by: .seconds(120)))
+        }
+        for waiter in completed.waiters.values { waiter.resume(with: result) }
+    }
+}
+
 enum YouTubeArtwork {
     private static let thumbnailHosts: Set<String> = [
         "i.ytimg.com", "i1.ytimg.com", "i2.ytimg.com", "i3.ytimg.com", "i4.ytimg.com", "img.youtube.com"

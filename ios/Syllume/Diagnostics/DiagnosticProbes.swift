@@ -201,7 +201,7 @@ struct DiagnosticProbes {
         do {
             guard let length = song.duration else { throw DiagnosticProblem(code: .missingDuration) }
             guard let result = try await PlaybackLookup.within(.seconds(12), operation: {
-                try await OnlineLyrics.shared.exact(title: lyrics.title, artist: lyrics.artist, duration: length)
+                try await OnlineLyrics.shared.exact(title: lyrics.title, artist: lyrics.artist, duration: length, useCache: false)
             }), let text = result.syncedLyrics else { throw DiagnosticProblem(code: .noMatch) }
             checks.append(DiagnosticCheck("audio.lyrics", "LRCLIB 同版本與同步時間戳", .passed, .liveNetwork, since: lyricStart,
                 note: "核對歌名、演出者、版本、時長與時間戳範圍。實際唱詞對齊需對照同版本音訊。",

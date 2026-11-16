@@ -7,10 +7,11 @@ import Foundation
 @main
 struct Checks {
     @MainActor static func main() async throws {
-        try PlatformChecks.run()
+        try await PlatformChecks.run()
         try YouTubeChecks.run()
         try await YouTubeSyncChecks.run()
         try await StreamingSourceChecks.run()
+        try await OnlineLyricsChecks.run()
         try SubtitleSourceChecks.run()
         try await DiagnosticsChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" {

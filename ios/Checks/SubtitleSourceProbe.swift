@@ -6,7 +6,7 @@ enum SubtitleSourceProbe {
         for (title, artist, length) in [("JANE DOE", "Kenshi Yonezu、Hikaru Utada", 236.0), ("Lemon", "Kenshi Yonezu", 256.0)] {
             do {
                 let record = try await PlaybackLookup.within(.seconds(12)) {
-                    try await OnlineLyrics.shared.exact(title: title, artist: artist, duration: length)
+                    try await OnlineLyrics.shared.exact(title: title, artist: artist, duration: length, useCache: false)
                 }
                 if let record, let text = record.syncedLyrics {
                     print("SOURCE PROBE LRCLIB \(title): exactMetadata=true, durationDelta=\(abs(length - record.duration)), timedLines=\(LyricTimeline(lrc: text).lines.count)")
