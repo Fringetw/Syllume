@@ -26,10 +26,23 @@ struct SyllumeApp: App {
 
     var body: some Scene {
         WindowGroup {
-            LibraryScreen(library: library, player: player, navidrome: navidrome)
+            libraryView
                 .preferredColorScheme(.dark)
                 .tint(SyllumePalette.accent)
                 .buttonStyle(SyllumePressStyle())
         }
+    }
+
+    @ViewBuilder private var libraryView: some View {
+        let content = LibraryScreen(library: library, player: player, navidrome: navidrome)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--accessibility-text-fixture") {
+            content.dynamicTypeSize(.accessibility3)
+        } else {
+            content
+        }
+        #else
+        content
+        #endif
     }
 }

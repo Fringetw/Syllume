@@ -200,6 +200,40 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(mist.waitForExistence(timeout: 15), "The last lyric style should survive relaunch.")
     }
 
+    func testLargeTextPlaybackKeepsStyleMenuAndControlsUsable() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--accessibility-text-fixture", "--subtitle-fixture", "--subtitle-reset",
+                               "--presentation-reset", "--playback-probe"]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
+        app.launch()
+
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15))
+        demo.tap()
+
+        let style = app.descendants(matching: .any)["lyricStyleMenu"].firstMatch
+        XCTAssertTrue(style.waitForExistence(timeout: 15))
+        XCTAssertTrue(style.isHittable)
+        style.tap()
+        let mistOption = app.buttons["霧盞"]
+        XCTAssertTrue(mistOption.waitForExistence(timeout: 10))
+        mistOption.tap()
+        let mist = app.descendants(matching: .any)["mistLyricCurrentLine"].firstMatch
+        XCTAssertTrue(mist.waitForExistence(timeout: 15))
+
+        let toggle = app.buttons["playerToggle"]
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        for control in [toggle, progress] {
+            XCTAssertTrue(control.isHittable)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            XCTAssertTrue(app.frame.contains(control.frame))
+        }
+        if toggle.label == "暫停" { toggle.tap() }
+        waitForPausedNativeClock(app.staticTexts["localTransportProbe"])
+        capture(app, name: "Syllume-large-text-playback")
+    }
+
     func testMistRenderingResourceSample() {
         continueAfterFailure = false
         let app = XCUIApplication()

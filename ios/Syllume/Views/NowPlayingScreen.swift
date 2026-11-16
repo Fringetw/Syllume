@@ -333,6 +333,7 @@ struct PlaybackStylePicker: View {
             }
             .pickerStyle(.menu)
             .frame(minHeight: 44)
+            .accessibilityIdentifier("lyricStyleMenu")
         } else {
             Picker("歌詞樣式", selection: $mode) {
                 options

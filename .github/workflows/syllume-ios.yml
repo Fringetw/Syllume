@@ -181,6 +181,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/SyllumeIOS26.xcresult" \
             -only-testing:SyllumeUITests/SyllumeUITests/testMistStylePersistsAndProgressControlsSeekPausedAudio \
             -only-testing:SyllumeUITests/SyllumeUITests/testMistRenderingResourceSample \
+            -only-testing:SyllumeUITests/SyllumeUITests/testLargeTextPlaybackKeepsStyleMenuAndControlsUsable \
             -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test
       - name: Export iOS 26 test evidence
         if: always()
