@@ -38,7 +38,8 @@ final class LocalLibrary {
 
     func matchingAudio(for song: SyncedYouTubeSong) -> [DownloadAudioCandidate] {
         tracks.compactMap { track in
-            guard DownloadSongMatch.matches(song, title: track.title, artists: [track.artist ?? ""], duration: track.duration),
+            guard track.matchesDownloadOrigin(song.videoID),
+                  DownloadSongMatch.matches(song, title: track.title, artists: [track.artist ?? ""], duration: track.duration),
                   let url = assetURL(for: track), FileManager.default.fileExists(atPath: url.path) else { return nil }
             let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             var candidate = DownloadAudioCandidate(url: url, title: track.title, artist: track.artist ?? "", duration: track.duration ?? 0,
@@ -46,6 +47,28 @@ final class LocalLibrary {
             candidate.localTrackID = track.id; candidate.recording = track.recording
             return candidate
         }
+    }
+
+    func verifiedDownload(_ track: Track, asset: AVURLAsset, expected: Double?) async throws -> DownloadVerification {
+        guard track.isDownloaded, let existing = availableTrack(track.id), assetURL(for: existing) == asset.url else {
+            throw DiagnosticProblem(code: .invalidMedia, mediaIssue: .notPlayable)
+        }
+        let verification = try await AudioIntegrity.verifyDownload(asset, expected: expected, previous: existing.downloadVerification)
+        try Task.checkCancellation()
+        guard let position = tracks.firstIndex(where: { $0.id == track.id }),
+              AudioIntegrity.hasDownloadStamp(asset.url, verification) else {
+            throw DiagnosticProblem(code: .invalidMedia, mediaIssue: .changedDownload)
+        }
+        let saved = tracks[position].downloadVerification
+        if let saved, saved.digest != verification.digest {
+            throw DiagnosticProblem(code: .invalidMedia, mediaIssue: .changedDownload)
+        }
+        if saved != verification {
+            var updated = tracks
+            updated[position].downloadVerification = verification
+            try save(updated)
+        }
+        return verification
     }
 
     func importDownload(_ url: URL, candidate: DownloadAudioCandidate) async throws -> Track {
@@ -132,10 +155,16 @@ final class LocalLibrary {
             let artist = await Self.metadataString(.commonIdentifierArtist, in: metadata)
             let album = await Self.metadataString(.commonIdentifierAlbumName, in: metadata)
             let seconds = (try? await asset.load(.duration))?.seconds
-            if let download { _ = try await AudioIntegrity.inspect(destination, expected: download.duration, decode: true) }
+            let verification: DownloadVerification?
+            if let download {
+                verification = try await AudioIntegrity.verifyDownload(asset, expected: download.duration, previous: nil)
+            } else {
+                verification = nil
+            }
             var track = Track(id: id, source: .local, title: download?.title ?? title ?? url.deletingPathExtension().lastPathComponent,
-                              artist: download?.artist ?? artist, album: album, duration: seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil },
-                              audioFile: name, recording: download?.recording, integrityChecked: download != nil ? true : nil)
+                              artist: download?.artist ?? artist, album: album,
+                              duration: verification?.duration ?? seconds.flatMap { $0.isFinite && $0 > 0 ? $0 : nil },
+                              audioFile: name, recording: download?.recording)
             if let artwork = AVMetadataItem.metadataItems(from: metadata, filteredByIdentifier: .commonIdentifierArtwork).first,
                let data = try? await artwork.load(.dataValue), data.count <= 8_000_000 {
                 try data.write(to: folder.appending(path: "cover"), options: .atomic)
@@ -157,7 +186,16 @@ final class LocalLibrary {
                 track.lyricFile = name
             }
             try Task.checkCancellation()
-            if download != nil { try FileManager.default.moveItem(at: folder, to: finalFolder) }
+            if let verification {
+                try FileManager.default.moveItem(at: folder, to: finalFolder)
+                let publishedAsset = AVURLAsset(url: finalFolder.appending(path: name))
+                let published = try await AudioIntegrity.verifyDownload(publishedAsset, expected: nil, previous: verification)
+                guard AudioIntegrity.hasDownloadStamp(publishedAsset.url, published) else {
+                    throw DiagnosticProblem(code: .invalidMedia, mediaIssue: .changedDownload)
+                }
+                track.downloadVerification = published
+            }
+            try Task.checkCancellation()
             try save(tracks + [track])
             return (track, invalidSidecar)
         } catch {

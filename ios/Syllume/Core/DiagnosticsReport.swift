@@ -82,7 +82,7 @@ enum DiagnosticCode: String, Codable, Sendable {
 }
 
 enum DiagnosticMediaIssue: String, Codable, Sendable {
-    case missingAudioTrack, unexpectedVideoTrack, notPlayable, durationUnavailable, durationMismatch
+    case missingAudioTrack, unexpectedVideoTrack, notPlayable, durationUnavailable, durationMismatch, changedDownload
 }
 
 // Store a bounded classification instead of NSError.userInfo or the server response.

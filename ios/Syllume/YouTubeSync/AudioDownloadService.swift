@@ -58,35 +58,55 @@ actor AudioDownloadService {
         let elapsedMs: Int
     }
 
-    // Return as soon as one provider has playable candidates. If all its candidates fail,
-    // the resolver can retry the providers that had not yet responded.
-    func streamingSearch(for song: SyncedYouTubeSong, account: NavidromeAccount?,
-                         excluding searched: Set<DiagnosticSource>) async throws -> [SourceAttempt] {
+    // Keep the other requests alive while the first candidate is validated and starts playing.
+    // The resolver consumes each reply once, even if AVPlayer reports a later startup failure.
+    nonisolated func streamingSearch(for song: SyncedYouTubeSong, account: NavidromeAccount?,
+                                    excluding searched: Set<DiagnosticSource>) -> SourceLookup {
         let all: [DiagnosticSource] = account == nil ? [.netease, .qq] : [.netease, .qq, .navidrome]
-        let pending = all.filter { !searched.contains($0) }
-        guard !pending.isEmpty else { return [] }
-        return try await withThrowingTaskGroup(of: SourceAttempt?.self) { group in
-            defer { group.cancelAll() }
-            for source in pending {
-                group.addTask { await self.streamingSource(source, song: song, account: account) }
-            }
-            let budget = 14
-            group.addTask { try await Task.sleep(for: .seconds(budget)); return nil }
-            var results: [SourceAttempt] = []
-            for _ in pending {
-                guard let reply = try await group.next(), let attempt = reply else {
-                    let completed = Set(results.map(\.source))
-                    results += pending.filter { !completed.contains($0) }.map {
-                        SourceAttempt(source: $0, candidates: [], problem: DiagnosticProblem(code: .timeout), elapsedMs: budget * 1000)
-                    }
-                    break
-                }
-                results.append(attempt)
-                if !attempt.candidates.isEmpty { break }
-            }
-            try Task.checkCancellation()
-            return results
+        return SourceLookup(sources: all.filter { !searched.contains($0) }) { source in
+            await self.streamingSource(source, song: song, account: account)
         }
+    }
+
+    final class SourceLookup: Sendable {
+        private let replies: AsyncStream<SourceAttempt>
+        private let producer: Task<Void, Never>
+
+        init(sources: [DiagnosticSource], budgetMs: Int = 14_000,
+             resolve: @escaping @Sendable (DiagnosticSource) async -> SourceAttempt) {
+            let (stream, continuation) = AsyncStream<SourceAttempt>.makeStream()
+            replies = stream
+            producer = Task {
+                guard !sources.isEmpty else { continuation.finish(); return }
+                await withTaskGroup(of: SourceAttempt?.self) { group in
+                    defer { continuation.finish(); group.cancelAll() }
+                    for source in sources { group.addTask { await resolve(source) } }
+                    group.addTask { try? await Task.sleep(for: .milliseconds(budgetMs)); return nil }
+                    var remaining = Set(sources)
+                    while !remaining.isEmpty, let reply = await group.next(), !Task.isCancelled {
+                        guard let attempt = reply else {
+                            for source in sources where remaining.contains(source) {
+                                continuation.yield(SourceAttempt(source: source, candidates: [],
+                                    problem: DiagnosticProblem(code: .timeout), elapsedMs: budgetMs))
+                            }
+                            return
+                        }
+                        remaining.remove(attempt.source)
+                        continuation.yield(attempt)
+                    }
+                }
+            }
+        }
+
+        // The playback resolver is the only consumer. A new iterator resumes the buffered sequence
+        // after AVPlayer has accepted or rejected the preceding provider's candidates.
+        func next() async -> SourceAttempt? {
+            var iterator = replies.makeAsyncIterator()
+            return await iterator.next()
+        }
+
+        func cancel() { producer.cancel() }
+        deinit { producer.cancel() }
     }
 
     func streamingSource(_ source: DiagnosticSource, song: SyncedYouTubeSong, account: NavidromeAccount?) async -> SourceAttempt {

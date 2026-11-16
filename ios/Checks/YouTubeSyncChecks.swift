@@ -35,6 +35,24 @@ enum YouTubeSyncChecks {
         precondition(DownloadSongMatch.matches(enriched, title: "JANE DOE", artists: ["米津玄師", "宇多田ヒカル"], duration: 236))
         precondition(!DownloadSongMatch.matches(enriched, title: "JANE DOE", artists: ["米津玄師"], duration: 236))
         precondition(!DownloadSongMatch.matches(enriched, title: "JANE DOE", artists: ["米津玄師", "宇多田ヒカル"], duration: 30))
+        precondition(DownloadSongMatch.matches(enriched, title: "JANE DOE", artists: ["宇多田ヒカル & 米津玄師"], duration: 236))
+        precondition(DownloadSongMatch.samePerformers("甲甲、Alpha", "甲甲 Alpha、甲甲"),
+            "A credit with two possible matches can yield its first match to another credit")
+        precondition(!DownloadSongMatch.samePerformers("甲甲、Alpha、Gamma", "甲甲 Alpha、Gamma、Gamma"),
+            "Matching each credit somewhere does not establish a one-to-one match")
+
+        let neteaseCredits = Data(#"""
+            {"code":200,"result":{"songs":[
+              {"id":31,"name":"JANE DOE","ar":[{"name":"米津玄師","alias":["Kenshi Yonezu","宇多田光"]}],"dt":236007},
+              {"id":32,"name":"JANE DOE","ar":[{"name":"Hikaru Utada","alia":["宇多田光"]},{"name":"米津玄師"}],"dt":236007},
+              {"id":33,"name":"JANE DOE","ar":[{"name":"米津玄師"},{"name":"宇多田光"},{"name":"其他歌手"}],"dt":236007},
+              {"id":34,"name":"JANE DOE","ar":[{"name":"別名甲","alias":["米津玄師"]},{"name":"別名乙","alia":["宇多田光"]}],"dt":236007}
+            ]}}
+            """#.utf8)
+        for request in [duet, enriched] {
+            let matches = try DownloadSourceDecoders.search(neteaseCredits, for: request)
+            precondition(matches.map(\.id) == [32, 34], "A provider alias identifies one artist, regardless of the number of spellings")
+        }
         let lemon = SyncedYouTubeSong(LibraryEntry(id: "recording-lemon", title: "Lemon", subtitle: "Kenshi Yonezu - Topic",
             url: URL(string: "https://music.youtube.com/watch?v=3NNhrqHZqlI")!, duration: 256))!
         precondition(DownloadSongMatch.matches(lemon, title: "Lemon", artists: ["米津玄師"], duration: 256))
@@ -43,7 +61,9 @@ enum YouTubeSyncChecks {
 
         let restrictedMedia = AudioDownloadService(authorizedMediaProviders: [])
         for recording in [enriched, lemon] {
-            let attempted = try await restrictedMedia.streamingSearch(for: recording, account: nil, excluding: [])
+            let lookup = restrictedMedia.streamingSearch(for: recording, account: nil, excluding: [])
+            var attempted: [AudioDownloadService.SourceAttempt] = []
+            while let attempt = await lookup.next() { attempted.append(attempt) }
             precondition(Set(attempted.map(\.source)) == [.netease, .qq])
             precondition(attempted.allSatisfy { $0.candidates.isEmpty && $0.problem?.code == .providerAuthorizationRequired })
         }

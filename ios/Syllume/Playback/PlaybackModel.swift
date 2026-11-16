@@ -129,7 +129,7 @@ final class PlaybackModel {
     private var activeRecording: SubtitleSong?
     @ObservationIgnored private var account: NavidromeAccount?
     @ObservationIgnored private var candidates: [DownloadAudioCandidate] = []
-    @ObservationIgnored private var searchedCatalogue = false
+    @ObservationIgnored private var catalogueSourceLookup: AudioDownloadService.SourceLookup?
     @ObservationIgnored private var attemptedCatalogueSources: Set<DiagnosticSource> = []
     @ObservationIgnored private var triedLocal = false
     @ObservationIgnored private var sourceFailures: [(source: String, problem: DiagnosticProblem, elapsedMs: Int?)] = []
@@ -217,6 +217,14 @@ final class PlaybackModel {
             return
         }
         guard resolveTask == nil else { return }
+        if let index, let activeLocalTrackID, activeLocalTrackID.hasPrefix("download-"),
+           let url = (player.currentItem?.asset as? AVURLAsset)?.url {
+            let verification = library.availableTrack(activeLocalTrackID)?.downloadVerification
+            if verification.map({ AudioIntegrity.hasDownloadStamp(url, $0) }) != true {
+                load(index)
+                return
+            }
+        }
         if let track = current, track.source == .catalogue, error == nil,
            player.currentItem == nil || player.currentItem?.status == .failed {
             resolveCatalogue(track)
@@ -260,6 +268,7 @@ final class PlaybackModel {
         if resolveTask != nil {
             resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
         }
+        catalogueSourceLookup?.cancel(); catalogueSourceLookup = nil
         refreshTransport()
     }
 
@@ -321,18 +330,28 @@ final class PlaybackModel {
         guard let item = player.currentItem, time.isFinite else { return }
         let target = duration > 0 ? min(duration, max(0, time)) : max(0, time)
         DiagnosticsEvents.shared.record(.seek)
+        seekNativeItem(item, to: target)
+    }
+
+    private func seekNativeItem(_ item: AVPlayerItem, to target: Double, restarting: Bool = false) {
         let revision = UUID()
+        let itemID = ObjectIdentifier(item)
         seekGeneration = revision
         seeking = true
         lyricClockRunning = false
         position = target
         let precise = CMTime(seconds: target, preferredTimescale: 600)
-        item.seek(to: precise, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] _ in
+        item.seek(to: precise, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             Task { @MainActor [weak self] in
-                guard let self, seekGeneration == revision else { return }
+                guard let self, seekGeneration == revision, let current = player.currentItem,
+                      ObjectIdentifier(current) == itemID else { return }
                 seeking = false
                 let actual = player.currentTime().seconds
                 if actual.isFinite { position = max(0, actual) }
+                if restarting, wantsPlayback, !externalPlayback {
+                    guard finished else { playbackFailed(item: current); return }
+                    player.play()
+                }
                 refreshTransport()
             }
         }
@@ -483,7 +502,8 @@ final class PlaybackModel {
 
     func didEnd(item: AVPlayerItem) {
         guard player.currentItem === item else { return }
-        if wantsPlayback, canAdvance { next() }
+        if wantsPlayback, repeatQueue, queue.count == 1 { seekNativeItem(item, to: 0, restarting: true) }
+        else if wantsPlayback, canAdvance { next() }
         else { pause(); if duration > 0 { position = duration; publishNowPlaying() } }
     }
 
@@ -539,7 +559,7 @@ final class PlaybackModel {
             videoRequested = requestingVideo ?? videoSurfaceVisible
             system?.updateCommands(model: self)
             if let song = track.playlistSong {
-                loadCatalogueArtwork(song, localID: track.preferredLocalID)
+                loadArtwork(artworkSource(for: track), song: song)
                 prepareCatalogue(track, song: song)
             }
             resolveCatalogue(track)
@@ -550,20 +570,26 @@ final class PlaybackModel {
             activeLocalTrackID = track.id
             activeRecording = track.recording
             refreshArtworkIfNeeded()
-            if track.id.hasPrefix("download-"), track.integrityChecked != true, let url, let expected = track.duration {
+            if track.isDownloaded, let url {
                 let revision = generation
                 wantsPlayback = true; isBuffering = true
                 resolveTask = Task { [weak self] in
                     guard let self else { return }
+                    let asset = AVURLAsset(url: url)
                     do {
-                        _ = try await AudioIntegrity.inspect(url, expected: expected, decode: true)
+                        let verification = try await library.verifiedDownload(track, asset: asset, expected: track.duration)
                         guard generation == revision, !Task.isCancelled else { return }
                         resolveTask = nil
-                        reloadLocalLyrics(track); install(url)
+                        duration = verification.duration
+                        reloadLocalLyrics(track); install(asset)
                     } catch {
                         guard generation == revision, !Task.isCancelled else { return }
                         resolveTask = nil
-                        fail("這份舊下載無法完整解碼。請從播放清單重新下載。")
+                        let problem = DiagnosticProblem.classify(error, fallback: .invalidMedia)
+                        let message = problem.mediaIssue == .changedDownload
+                            ? "這份下載的音檔已變更。請從播放清單重新下載。"
+                            : "這份下載無法完整讀取。請從播放清單重新下載。"
+                        fail(message, problem: problem)
                     }
                 }
                 return
@@ -656,11 +682,11 @@ final class PlaybackModel {
                 try check()
                 if !triedLocal {
                     var locals = library.matchingAudio(for: target).sorted(by: DownloadAudioCandidate.preferred)
-                    if let id = track.preferredLocalID, let local = library.availableTrack(id),
+                    if let local = preferredCatalogueLocalTrack(track, for: target),
                        let url = library.assetURL(for: local), let length = local.duration {
-                        locals.removeAll { $0.localTrackID == id }
+                        locals.removeAll { $0.localTrackID == local.id }
                         locals.insert(DownloadAudioCandidate(url: url, title: local.title, artist: local.artist ?? "",
-                            duration: length, format: url.pathExtension, bitrate: 0, source: "本機音檔", localTrackID: id,
+                            duration: length, format: url.pathExtension, bitrate: 0, source: "本機音檔", localTrackID: local.id,
                             recording: local.recording), at: 0)
                     }
                     candidates += locals
@@ -673,10 +699,18 @@ final class PlaybackModel {
                         let url = candidate.streamingURL ?? candidate.url
                         let started = Date()
                         do {
+                            if candidate.localTrackID != nil, local == nil {
+                                throw DiagnosticProblem(code: .invalidMedia, mediaIssue: .notPlayable)
+                            }
                             let asset = AVURLAsset(url: url)
-                            let length = try await AudioIntegrity.inspect(asset, expected: candidate.duration,
-                                decode: local?.id.hasPrefix("download-") == true && local?.integrityChecked != true,
-                                deadline: url.isFileURL ? nil : .seconds(5))
+                            let length: Double
+                            if let local, local.isDownloaded {
+                                let verification = try await library.verifiedDownload(local, asset: asset, expected: candidate.duration)
+                                length = verification.duration
+                            } else {
+                                length = try await AudioIntegrity.inspect(asset, expected: candidate.duration,
+                                    decode: false, deadline: url.isFileURL ? nil : .seconds(5))
+                            }
                             try check()
                             candidates.removeFirst()
                             duration = length; position = 0
@@ -697,25 +731,25 @@ final class PlaybackModel {
                             DiagnosticsEvents.shared.record(.assetRejected, source: candidate.diagnosticSource,
                                 problem: problem, elapsedMs: elapsedMs)
                         }
-                    } else if !searchedCatalogue {
-                        let attempts = try await service.streamingSearch(for: target, account: account,
-                            excluding: attemptedCatalogueSources)
-                        try check()
-                        attemptedCatalogueSources.formUnion(attempts.map(\.source))
-                        var seen = Set<URL>()
-                        candidates = attempts.flatMap(\.candidates).sorted(by: DownloadAudioCandidate.preferredForStreaming)
-                            .filter { seen.insert($0.url).inserted }
-                        for attempt in attempts {
-                            DiagnosticsEvents.shared.record(attempt.problem == nil ? .providerMatched : .providerUnavailable,
-                                source: attempt.source, problem: attempt.problem, elapsedMs: attempt.elapsedMs)
-                            if let problem = attempt.problem {
-                                sourceFailures.append((attempt.source.title, problem, attempt.elapsedMs))
-                            }
-                        }
-                        searchedCatalogue = attempts.isEmpty || candidates.isEmpty
                     } else {
-                        catalogueFailed(problem: DiagnosticProblem.afterExhaustingAudioSources(sourceFailures.map(\.problem)))
-                        return
+                        let lookup = catalogueSourceLookup ?? service.streamingSearch(for: target, account: account,
+                            excluding: attemptedCatalogueSources)
+                        catalogueSourceLookup = lookup
+                        let reply = await lookup.next()
+                        try check()
+                        guard let attempt = reply else {
+                            catalogueFailed(problem: DiagnosticProblem.afterExhaustingAudioSources(sourceFailures.map(\.problem)))
+                            return
+                        }
+                        attemptedCatalogueSources.insert(attempt.source)
+                        var seen = Set<URL>()
+                        candidates = attempt.candidates.sorted(by: DownloadAudioCandidate.preferredForStreaming)
+                            .filter { seen.insert($0.url).inserted }
+                        DiagnosticsEvents.shared.record(attempt.problem == nil ? .providerMatched : .providerUnavailable,
+                            source: attempt.source, problem: attempt.problem, elapsedMs: attempt.elapsedMs)
+                        if let problem = attempt.problem {
+                            sourceFailures.append((attempt.source.title, problem, attempt.elapsedMs))
+                        }
                     }
                 }
             } catch {
@@ -904,7 +938,11 @@ final class PlaybackModel {
             diagnosticPlaybackProblem = problem
             DiagnosticsEvents.shared.record(.playbackFailed, source: .youtube, problem: problem)
         }
-        if video.didReachEnd && canAdvance { next() }
+        if video.didReachEnd, video.visible, !externalPlayback, video.error == nil, canAdvance {
+            // At an acknowledged end, replay the same visible embed instead of loading its page again.
+            if queue.count == 1 { resume() }
+            else { next() }
+        }
     }
 
     private func loadCatalogueDetails(_ track: Track, recording: SubtitleSong) {
@@ -932,16 +970,19 @@ final class PlaybackModel {
         manualLyrics = false
     }
 
-    private func loadCatalogueArtwork(_ song: SyncedYouTubeSong, localID: String?) {
-        let file = localID.flatMap(library.availableTrack).flatMap(library.artworkURL)
-        loadArtwork(SongArtworkSource(file: file, song: song), song: song)
+    private func preferredCatalogueLocalTrack(_ track: Track, for song: SyncedYouTubeSong) -> Track? {
+        guard let local = track.preferredLocalID.flatMap(library.availableTrack),
+              local.matchesDownloadOrigin(song.videoID) else { return nil }
+        return local
     }
 
     func artworkSource(for track: Track) -> SongArtworkSource {
-        let local = track.preferredLocalID.flatMap(library.availableTrack) ??
-            (track.source == .local ? library.availableTrack(track.id) ?? track : nil)
+        if let song = track.playlistSong {
+            let file = preferredCatalogueLocalTrack(track, for: song).flatMap(library.artworkURL)
+            return SongArtworkSource(file: file, song: song)
+        }
+        let local = track.source == .local ? library.availableTrack(track.id) ?? track : nil
         let file = local.flatMap(library.artworkURL)
-        if let song = track.playlistSong { return SongArtworkSource(file: file, song: song) }
         return SongArtworkSource(file: file, videoID: track.recording?.originVideoID)
     }
 
@@ -1023,7 +1064,8 @@ final class PlaybackModel {
         catalogueMetadataTask?.cancel(); catalogueMetadataTask = nil
         lyricReferenceDuration = nil; manualLyrics = false
         activeCatalogueSource = nil
-        candidates = []; searchedCatalogue = false; attemptedCatalogueSources = []
+        catalogueSourceLookup?.cancel(); catalogueSourceLookup = nil
+        candidates = []; attemptedCatalogueSources = []
         triedLocal = false; sourceFailures = []
         audioSource = nil; activeRecording = nil; activeLocalTrackID = nil; lyricClockRunning = false
         resumeAfterInterruption = false

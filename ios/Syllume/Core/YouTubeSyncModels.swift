@@ -226,17 +226,19 @@ enum DownloadSongMatch {
     }
 
     static func artistKeys(_ text: String) -> Set<String> {
+        artistNames(text).reduce(into: Set<String>()) { $0.formUnion(keysForArtist($1)) }
+    }
+
+    private static func keysForArtist(_ name: String) -> Set<String> {
         var keys = Set<String>()
-        for name in artistNames(text) {
-            let bare = name.replacingOccurrences(of: #"[（(][\p{Hiragana}\p{Katakana}ー\s]+[）)]$"#, with: "", options: .regularExpression)
-            let full = normalized(bare)
-            if !full.isEmpty { keys.insert(full) }
-            if bare.range(of: #"\p{Latin}"#, options: .regularExpression) != nil,
-               bare.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}]"#, options: .regularExpression) != nil {
-                for pattern in [#"[^\p{Han}\p{Hiragana}\p{Katakana}ー・]"#, #"[^\p{Latin}]"#] {
-                    let alias = normalized(bare.replacingOccurrences(of: pattern, with: "", options: .regularExpression))
-                    if alias.count >= 2 { keys.insert(alias) }
-                }
+        let bare = name.replacingOccurrences(of: #"[（(][\p{Hiragana}\p{Katakana}ー\s]+[）)]$"#, with: "", options: .regularExpression)
+        let full = normalized(bare)
+        if !full.isEmpty { keys.insert(full) }
+        if bare.range(of: #"\p{Latin}"#, options: .regularExpression) != nil,
+           bare.range(of: #"[\p{Han}\p{Hiragana}\p{Katakana}]"#, options: .regularExpression) != nil {
+            for pattern in [#"[^\p{Han}\p{Hiragana}\p{Katakana}ー・]"#, #"[^\p{Latin}]"#] {
+                let alias = normalized(bare.replacingOccurrences(of: pattern, with: "", options: .regularExpression))
+                if alias.count >= 2 { keys.insert(alias) }
             }
         }
         for aliases in artistAliases where !keys.isDisjoint(with: aliases.keys) { keys.formUnion(aliases.keys) }
@@ -244,13 +246,36 @@ enum DownloadSongMatch {
     }
 
     static func samePerformers(_ lhs: String, _ rhs: String) -> Bool {
-        let a = artistNames(lhs).map(artistKeys), b = artistNames(rhs).map(artistKeys)
-        return !a.isEmpty && a.count == b.count
-            && a.allSatisfy { one in b.contains { !$0.isDisjoint(with: one) } }
-            && b.allSatisfy { one in a.contains { !$0.isDisjoint(with: one) } }
+        samePerformers(artistNames(lhs).map(keysForArtist), artistNames(rhs).map(keysForArtist))
+    }
+
+    private static func samePerformers(_ expected: [Set<String>], _ candidate: [Set<String>]) -> Bool {
+        guard !expected.isEmpty, expected.count == candidate.count else { return false }
+        let possibleMatches = expected.map { credit in candidate.indices.filter { !credit.isDisjoint(with: candidate[$0]) } }
+        var matchedCredits = Array<Int?>(repeating: nil, count: candidate.count)
+
+        func assign(_ credit: Int, visited: inout Set<Int>) -> Bool {
+            for match in possibleMatches[credit] where visited.insert(match).inserted {
+                // An alias can match multiple credits. Reassign an earlier credit if it has another option.
+                if let previous = matchedCredits[match], !assign(previous, visited: &visited) { continue }
+                matchedCredits[match] = credit
+                return true
+            }
+            return false
+        }
+
+        return expected.indices.allSatisfy { credit in
+            var visited = Set<Int>()
+            return assign(credit, visited: &visited)
+        }
     }
 
     static func matches(_ song: SyncedYouTubeSong, title: String, artists: [String], duration: Double?) -> Bool {
+        // Imported and server tracks can store a composite credit in one string.
+        matches(song, title: title, performerNames: artists.flatMap(artistNames).map { [$0] }, duration: duration)
+    }
+
+    static func matches(_ song: SyncedYouTubeSong, title: String, performerNames: [[String]], duration: Double?) -> Bool {
         let versionTags = versions(song.title)
         guard let expected = song.duration, let duration, expected.isFinite, duration.isFinite,
               expected > 0, duration > 0, duration <= 5400, versionTags == versions(title) else { return false }
@@ -266,17 +291,14 @@ enum DownloadSongMatch {
         let labelledVideoLength = videoPresentation && difference >= -3 && difference <= 18
         let creditedVideoLength = hasMultipleCredits && difference > 0 && difference <= min(18, expected * 0.06)
         guard sameDuration(expected, duration) || labelledVideoLength || creditedVideoLength else { return false }
-        let keys = artists.reduce(into: Set<String>()) { $0.formUnion(artistKeys($1)) }
-        let requested = artistKeys(metadata.artist).union(artistKeys(song.artist))
-        guard !keys.isDisjoint(with: requested) else { return false }
-        if let credit = song.creditedArtist, !samePerformers(credit, artists.joined(separator: "、")) { return false }
-        if performers.count > 1 {
-            guard performers.allSatisfy({ !keys.isDisjoint(with: artistKeys($0)) }) else { return false }
+        let candidatePerformers = performerNames.map { names in
+            names.reduce(into: Set<String>()) { $0.formUnion(keysForArtist($1)) }
         }
+        guard samePerformers(performers.map(keysForArtist), candidatePerformers) else { return false }
         let candidate = titleKeys(title)
         guard !candidate.isEmpty else { return false }
         var forms = titleKeys(metadata.title).union(titleKeys(song.title))
-        for name in artists {
+        for name in performerNames.joined() where !name.isEmpty {
             forms.formUnion(titleKeys(searchTitle(song.title).replacingOccurrences(of: name, with: "", options: .caseInsensitive)))
         }
         return !candidate.isDisjoint(with: forms)

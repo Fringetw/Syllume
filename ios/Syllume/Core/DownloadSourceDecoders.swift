@@ -11,8 +11,9 @@ enum DownloadSourceDecoders {
         let dt: Double?
         struct Artist: Decodable, Sendable { let name: String; let alias: [String]?; let alia: [String]? }
         var seconds: Double { (duration ?? dt ?? 0) / 1000 }
-        var names: [String] { (artists ?? ar ?? []).flatMap { [$0.name] + ($0.alias ?? []) + ($0.alia ?? []) } }
-        var artist: String { (artists ?? ar ?? []).map(\.name).joined(separator: "、") }
+        private var credits: [Artist] { artists ?? ar ?? [] }
+        var performerNames: [[String]] { credits.map { [$0.name] + ($0.alias ?? []) + ($0.alia ?? []) } }
+        var artist: String { credits.map(\.name).joined(separator: "、") }
     }
 
     static func search(_ data: Data, for song: SyncedYouTubeSong) throws -> [Song] {
@@ -24,7 +25,7 @@ enum DownloadSourceDecoders {
         let page = try JSONDecoder().decode(Page.self, from: data)
         guard page.code == 200 else { throw PlatformError.message("網易雲暫時無法搜尋音源。") }
         return (page.result?.songs ?? []).filter {
-            DownloadSongMatch.matches(song, title: $0.name, artists: $0.names, duration: $0.seconds)
+            DownloadSongMatch.matches(song, title: $0.name, performerNames: $0.performerNames, duration: $0.seconds)
         }
     }
 
@@ -83,7 +84,7 @@ enum DownloadSourceDecoders {
         func valid(_ value: String) -> Bool { value.range(of: #"^[A-Za-z0-9]{1,32}$"#, options: .regularExpression) != nil }
         return (page.data?.song?.list ?? []).filter {
             valid($0.mid) && valid($0.mediaID)
-                && DownloadSongMatch.matches(song, title: $0.songname, artists: $0.singer.map(\.name), duration: $0.interval)
+                && DownloadSongMatch.matches(song, title: $0.songname, performerNames: $0.singer.map { [$0.name] }, duration: $0.interval)
         }
     }
 

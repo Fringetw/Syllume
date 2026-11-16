@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreGraphics
 import CoreText
 import Foundation
@@ -9,6 +10,7 @@ struct Checks {
         try PlatformChecks.run()
         try YouTubeChecks.run()
         try await YouTubeSyncChecks.run()
+        try await StreamingSourceChecks.run()
         try SubtitleSourceChecks.run()
         try await DiagnosticsChecks.run()
         if ProcessInfo.processInfo.environment["FOLIA_PROBE_SUBTITLE_SOURCES"] == "1" {
@@ -59,6 +61,7 @@ struct Checks {
             preconditionFailure("Truncated audio was accepted")
         } catch {}
         print("PASS: fully decode bundled audio; reject a truncated copy")
+        try await checkDownloadVerification()
         let lrc = LyricTimeline(lrc: """
             [offset:500]
             [00:04.0][00:18.00]Then
@@ -190,6 +193,69 @@ struct Checks {
         precondition((info["UIBackgroundModes"] as? [String])?.contains("audio") == true)
         precondition(info["UIApplicationSceneManifest"] != nil)
         print("PASS: Xcode project references, app resources, and background-audio declaration")
+    }
+
+    private static func checkDownloadVerification() async throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString, directoryHint: .isDirectory)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let original = root.appending(path: "download.wav")
+        let replacement = root.appending(path: "replacement.wav")
+        try writeTone(to: original, frequency: 330)
+        try writeTone(to: replacement, frequency: 660)
+
+        let legacyJSON = Data(#"{"id":"download-legacy","source":"local","title":"Download","duration":2,"integrityChecked":true}"#.utf8)
+        let legacy = try JSONDecoder().decode(Track.self, from: legacyJSON)
+        precondition(legacy.isDownloaded && legacy.downloadVerification == nil)
+        let videoID = "M7lc1UVf-VE"
+        let otherVideoID = "dQw4w9WgXcQ"
+        var boundDownload = legacy
+        boundDownload.recording = SubtitleSong(id: videoID, source: "catalogue", title: "Download", artist: "Artist",
+                                              durationMs: 2000, originVideoID: videoID)
+        precondition(boundDownload.matchesDownloadOrigin(videoID) && !boundDownload.matchesDownloadOrigin(otherVideoID))
+        precondition(boundDownload.matchesDownloadOrigin("file-" + UUID().uuidString))
+        precondition(legacy.matchesDownloadOrigin(otherVideoID))
+        let first = try await AudioIntegrity.verifyDownload(AVURLAsset(url: original), expected: legacy.duration,
+                                                            previous: legacy.downloadVerification)
+        precondition(AudioIntegrity.hasDownloadStamp(original, first))
+        let persisted = try JSONDecoder().decode(DownloadVerification.self, from: JSONEncoder().encode(first))
+        let unchanged = try await AudioIntegrity.verifyDownload(AVURLAsset(url: original), expected: 2, previous: persisted)
+        precondition(unchanged == first)
+        do {
+            _ = try await AudioIntegrity.verifyDownload(AVURLAsset(url: original), expected: 30, previous: first)
+            preconditionFailure("The cached verification ignored a new duration mismatch")
+        } catch let problem as DiagnosticProblem { precondition(problem.mediaIssue == .durationMismatch) }
+
+        let touched = Date(timeIntervalSince1970: 1_700_000_000)
+        try FileManager.default.setAttributes([.modificationDate: touched], ofItemAtPath: original.path)
+        precondition(!AudioIntegrity.hasDownloadStamp(original, first))
+        let refreshed = try await AudioIntegrity.verifyDownload(AVURLAsset(url: original), expected: 2, previous: first)
+        precondition(refreshed.digest == first.digest && refreshed.file != first.file)
+        let replacementDuration = try await AudioIntegrity.inspect(replacement, expected: 2, decode: true)
+        precondition(replacementDuration == first.duration)
+        let replacementData = try Data(contentsOf: replacement)
+        precondition(Int64(replacementData.count) == refreshed.file.size)
+        try replacementData.write(to: original, options: .atomic)
+        try FileManager.default.setAttributes([.modificationDate: touched], ofItemAtPath: original.path)
+        do {
+            _ = try await AudioIntegrity.verifyDownload(AVURLAsset(url: original), expected: 2, previous: refreshed)
+            preconditionFailure("A playable replacement with the same size, duration and mtime was accepted")
+        } catch let problem as DiagnosticProblem { precondition(problem.mediaIssue == .changedDownload) }
+        print("PASS: reopen a verified download, migrate a legacy record, and reject audio replacement or a mismatched recording")
+    }
+
+    private static func writeTone(to url: URL, frequency: Double) throws {
+        let sampleRate = 8_000.0
+        let frames = AVAudioFrameCount(sampleRate * 2)
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 1),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames),
+              let samples = buffer.floatChannelData?.pointee else { throw CocoaError(.fileWriteUnknown) }
+        buffer.frameLength = frames
+        for index in 0..<Int(frames) {
+            samples[index] = 0.25 * Float(sin(2 * .pi * frequency * Double(index) / sampleRate))
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
     }
 
     private static func readPlist(_ url: URL) throws -> [String: Any] {

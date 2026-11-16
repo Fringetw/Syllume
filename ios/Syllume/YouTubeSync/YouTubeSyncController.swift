@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import Observation
 
@@ -60,7 +61,9 @@ final class YouTubeSyncController {
     }
 
     func localTrack(for song: SyncedYouTubeSong, library: LocalLibrary) -> Track? {
-        (snapshot.bindings[song.videoID]?.trackID ?? song.localTrackID).flatMap(library.availableTrack)
+        let id = snapshot.bindings[song.videoID]?.trackID ?? song.localTrackID
+        guard let track = id.flatMap(library.availableTrack), track.matchesDownloadOrigin(song.videoID) else { return nil }
+        return track
     }
 
     func rename(_ name: String) {
@@ -172,10 +175,17 @@ final class YouTubeSyncController {
             }
             @MainActor func install(_ candidate: DownloadAudioCandidate) async throws {
                 try check()
-                if let id = candidate.localTrackID, let track = library.availableTrack(id), track.id.hasPrefix("download-") {
-                    _ = try await AudioIntegrity.inspect(candidate.url, expected: candidate.duration, decode: track.integrityChecked != true)
-                    try bind(track, candidate.quality)
-                    return
+                if let id = candidate.localTrackID {
+                    guard let track = library.availableTrack(id) else {
+                        throw DiagnosticProblem(code: .invalidMedia, mediaIssue: .notPlayable)
+                    }
+                    if track.isDownloaded {
+                        guard track.matchesDownloadOrigin(song.videoID) else { throw DiagnosticProblem(code: .noMatch) }
+                        let asset = AVURLAsset(url: candidate.url)
+                        _ = try await library.verifiedDownload(track, asset: asset, expected: candidate.duration)
+                        try bind(track, candidate.quality)
+                        return
+                    }
                 }
                 statuses[song.videoID] = "下載並檢查 · " + candidate.quality
                 let file = candidate.url.isFileURL ? candidate.url : try await downloader.download(candidate)
@@ -243,7 +253,10 @@ final class YouTubeSyncController {
     }
 
     private static func message(_ error: Error) -> String {
-        if let error = error as? DiagnosticProblem { return error.code.title }
+        if let error = error as? DiagnosticProblem {
+            if error.mediaIssue == .changedDownload { return "這份下載的音檔已變更。請選擇其他音源。" }
+            return error.code.title
+        }
         if let error = error as? SubtitleReadError { return error.explanation }
         if let error = error as? PlatformError { return error.localizedDescription }
         if let error = error as? NavidromeError { return error.localizedDescription }
