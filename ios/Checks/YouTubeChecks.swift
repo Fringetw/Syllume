@@ -54,6 +54,8 @@ enum YouTubeChecks {
         precondition(model.position == 41 && model.isSeeking, "An older command and a buffering snapshot cannot finish the seek")
         model.receive(sample(3, 3.2, seek: latestSeek), now: seekStart.advanced(by: .seconds(5)))
         precondition(model.position == 41 && model.isSeeking, "Long buffering must not return the playhead to its previous position")
+        model.receive(sample(0, 60, seek: latestSeek), now: seekStart.advanced(by: .seconds(5)))
+        precondition(model.current?.id == a.id && model.isSeeking, "A stale end must not advance the queue after seeking away from the end")
         model.receive(sample(1, 41.1, seek: latestSeek), now: seekStart.advanced(by: .seconds(6)))
         precondition(model.position == 41.1 && !model.isSeeking)
         model.setVisible(false); model.receive(sample(1, 42, seek: latestSeek)); precondition(!model.isPlaying && !model.wantsPlayback)

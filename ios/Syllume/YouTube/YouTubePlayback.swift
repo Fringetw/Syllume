@@ -110,6 +110,7 @@ final class YouTubePlayback {
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
         if let seek = pendingSeek, [-1, 3, 5].contains(snapshot.state) ||
+           (snapshot.state == 0 && duration > 0 && seek.time < duration - 1) ||
            (now - seek.requestedAt < .seconds(2) && abs(snapshot.time - seek.time) > 1.5) {
             // Hold the preview until the iframe settles. The reported time can be the old position during buffering.
         } else if !stalePlay && !stalePause {
