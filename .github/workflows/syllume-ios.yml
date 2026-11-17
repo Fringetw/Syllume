@@ -210,10 +210,12 @@ jobs:
             name="$1"; test_name="$2"; mode="$3"
             fixture="$RUNNER_TEMP/$name"
             mkdir -p "$fixture" || exit 1
+            rate=0
+            if [ "$mode" = paced ]; then rate=65536; fi
             if [ "$mode" = stalled ]; then touch "$fixture/stalled" || exit 1; fi
             python3 ios/Checks/range_audio_server.py --media ios/Syllume/Resources/tide.m4a \
               --ready-file "$fixture/ready.json" --log "$fixture/http.jsonl" \
-              --stall-file "$fixture/stalled" &
+              --stall-file "$fixture/stalled" --bytes-per-second "$rate" &
             fixture_pid=$!
             trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
             for ((attempt=0; attempt<150; attempt++)); do
@@ -243,12 +245,13 @@ jobs:
             exit "$status"
           )
           run_http_check SyllumeIOS26HTTP testNativeLoopbackStreamsAndSeeks playing || failed=1
+          run_http_check SyllumeIOS26HTTPPaced testNativeLoopbackStreamsAndSeeks paced || failed=1
           run_http_check SyllumeIOS26HTTPStall testNativeLoopbackFallsBackAfterTimeout stalled || failed=1
           exit "$failed"
       - name: Export iOS 26 test evidence
         if: always()
         run: |
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26HTTP SyllumeIOS26HTTPStall; do
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"

@@ -31,6 +31,7 @@ final class PlaybackModel {
     private(set) var diagnosticPlaybackDetails: String?
     private var nativeReady = false
     private var nativeHasAdvanced = false
+    @ObservationIgnored private var nativeClock = NativePlaybackClock()
     private var videoHasAdvanced = false
     @ObservationIgnored private var queuedVideoReplay: UUID?
     @ObservationIgnored private var videoSurfaceVisible = false
@@ -360,7 +361,10 @@ final class PlaybackModel {
                       ObjectIdentifier(current) == itemID else { return }
                 seeking = false
                 let actual = player.currentTime().seconds
-                if actual.isFinite { position = max(0, actual) }
+                if actual.isFinite {
+                    position = max(0, actual)
+                    nativeClock.rebase(to: position)
+                }
                 if restarting, wantsPlayback, !externalPlayback {
                     guard finished else { playbackFailed(item: current); return }
                     player.play()
@@ -489,19 +493,23 @@ final class PlaybackModel {
     func tick() {
         guard let item = player.currentItem else { return }
         let seconds = player.currentTime().seconds
-        if !seeking, seconds.isFinite, abs(position - seconds) > 0.01 {
-            let advance = seconds - position
-            position = max(0, seconds)
-            if nativeTransportRunning, advance > 0.01, advance <= 1.5 {
-                DiagnosticsEvents.shared.observeAdvance(advance)
-                if !nativeHasAdvanced {
-                    nativeHasAdvanced = true
-                    didAdvancePlayback = true
-                    diagnosticPlaybackProblem = nil
-                    diagnosticPlaybackDetails = nil
-                    DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
-                    refreshTransport()
+        if !seeking, seconds.isFinite {
+            if abs(position - seconds) > 0.01 { position = max(0, seconds) }
+            if wantsPlayback {
+                let advance = nativeClock.observe(seconds, at: ContinuousClock().now)
+                if nativeTransportRunning, advance > 0 {
+                    DiagnosticsEvents.shared.observeAdvance(advance)
+                    if !nativeHasAdvanced {
+                        nativeHasAdvanced = true
+                        didAdvancePlayback = true
+                        diagnosticPlaybackProblem = nil
+                        diagnosticPlaybackDetails = nil
+                        DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
+                        refreshTransport()
+                    }
                 }
+            } else {
+                nativeClock.rebase(to: seconds)
             }
         }
         let itemDuration = item.duration.seconds
@@ -636,6 +644,8 @@ final class PlaybackModel {
         seeking = false
         nativeReady = false
         nativeHasAdvanced = false
+        nativeClock = NativePlaybackClock()
+        nativeClock.rebase(to: 0)
         statusObservation?.invalidate()
         let item = AVPlayerItem(asset: asset)
         if !asset.url.isFileURL { item.preferredForwardBufferDuration = 4 }
@@ -1052,6 +1062,7 @@ final class PlaybackModel {
         offersVideoFallback = false
         nativeReady = false
         nativeHasAdvanced = false
+        nativeClock = NativePlaybackClock()
         videoHasAdvanced = false
         didAdvancePlayback = false
         diagnosticPlaybackProblem = nil
@@ -1131,11 +1142,19 @@ final class PlaybackModel {
         if !isBuffering || !remote {
             streamTimeout?.cancel(); streamTimeout = nil
         } else if streamTimeout == nil, let item = player.currentItem {
-            let wait: Duration = position < 0.1 ? .seconds(7) : .seconds(12)
+            let clock = ContinuousClock()
+            let waitingSince = clock.now
+            var deadline = nativeClock.bufferDeadline(since: waitingSince)
             streamTimeout = Task { [weak self, weak item] in
-                try? await Task.sleep(for: wait)
-                guard let self, let item, !Task.isCancelled, isBuffering, player.currentItem === item else { return }
-                playbackFailed(item: item)
+                while !Task.isCancelled {
+                    do { try await clock.sleep(until: deadline) } catch { return }
+                    guard let self, let item, !Task.isCancelled, isBuffering, player.currentItem === item else { return }
+                    // A delayed transport notification may have hidden real motion from the UI.
+                    tick()
+                    guard !Task.isCancelled, isBuffering, player.currentItem === item else { return }
+                    deadline = nativeClock.bufferDeadline(since: waitingSince)
+                    if clock.now >= deadline { playbackFailed(item: item); return }
+                }
             }
         }
         publishNowPlaying()

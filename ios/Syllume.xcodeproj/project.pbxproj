@@ -19,6 +19,7 @@
 		00000000000000000000002A /* NavidromeViews.swift */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001A; };
 		00000000000000000000002B /* NowPlayingScreen.swift */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001B; };
 		F10000000000000000000020 /* PlaybackProgressBar.swift */ = {isa = PBXBuildFile; fileRef = F10000000000000000000010; };
+		F10000000000000000000021 /* PlaybackClock.swift */ = {isa = PBXBuildFile; fileRef = F10000000000000000000011; };
 		00000000000000000000002C /* Assets.xcassets */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001C; };
 		00000000000000000000002D /* tide.m4a */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001D; };
 		00000000000000000000002E /* tide.lrc */ = {isa = PBXBuildFile; fileRef = 00000000000000000000001E; };
@@ -75,6 +76,7 @@
 		00000000000000000000001A = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/NavidromeViews.swift"; sourceTree = "<group>"; };
 		00000000000000000000001B = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/NowPlayingScreen.swift"; sourceTree = "<group>"; };
 		F10000000000000000000010 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Views/PlaybackProgressBar.swift"; sourceTree = "<group>"; };
+		F10000000000000000000011 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Core/PlaybackClock.swift"; sourceTree = "<group>"; };
 		00000000000000000000001C = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = "Resources/Assets.xcassets"; sourceTree = "<group>"; };
 		00000000000000000000001D = {isa = PBXFileReference; lastKnownFileType = file; path = "Resources/tide.m4a"; sourceTree = "<group>"; };
 		00000000000000000000001E = {isa = PBXFileReference; lastKnownFileType = text; path = "Resources/tide.lrc"; sourceTree = "<group>"; };
@@ -123,6 +125,7 @@
 		000000000000000000000002 = {isa = PBXGroup; children = (000000000000000000000300, 000000000000000000000210, 000000000000000000000003, 000000000000000000000004, ); sourceTree = "<group>";};
 		000000000000000000000003 = {isa = PBXGroup; children = (D40000000000000000000001, D40000000000000000000002,
                 F10000000000000000000010,
+                F10000000000000000000011,
                 E00000000000000000000010,
                 E00000000000000000000011,
                 E00000000000000000000012,
@@ -171,7 +174,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		000000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F10000000000000000000020, D50000000000000000000001, D50000000000000000000003,
+		000000000000000000000007 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (F10000000000000000000020, F10000000000000000000021, D50000000000000000000001, D50000000000000000000003,
                 E00000000000000000000020,
                 E00000000000000000000021,
                 E00000000000000000000022,
