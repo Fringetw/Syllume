@@ -1,19 +1,48 @@
 import { getConverter, transformLines } from './upstream/mods/opencc-traditional-lyrics/converter.mjs';
 import { createChineseSelector } from './upstream/mods/opencc-traditional-lyrics/selectChinese.mjs';
-import { chineseTranslation, repairWordTimings } from './upstream/mods/opencc-traditional-lyrics/lyricQuality.mjs';
+import { chineseTranslation, repairWordTimings, translationQuality } from './upstream/mods/opencc-traditional-lyrics/lyricQuality.mjs';
 
 export const defaults = Object.freeze({ active: true, enabled: true, target: 'tw', convertOriginal: true,
     convertTranslation: true, protectJapanese: true, autoSelectChinese: true, fallbackOnFailure: true,
     searchDepth: 'standard', reportVisible: true });
+
+const CHINESE_LANGUAGE = /^(?:zh|cmn|yue)(?:-|$)/i;
+const QUOTED_SPAN = /(「[^「」]+」|『[^『』]+』|“[^“”]+”)/u;
+const KANA_OR_HANGUL = /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+// Keep explicit Chinese translations eligible when their only kana or Hangul is inside a quotation.
+function chooseQuotedTranslation(line, choice, canonicalize, convert) {
+    for (const { role, language, text } of line.alternateTexts ?? []) {
+        if (choice.quality === 1) break;
+        if (role !== 'translation' || !CHINESE_LANGUAGE.test(language ?? '') || typeof text !== 'string') continue;
+        const parts = text.split(QUOTED_SPAN);
+        const preserve = parts.map((part, index) => index % 2 === 1 && KANA_OR_HANGUL.test(part));
+        if (!preserve.includes(true)) continue;
+
+        // Retain the length without creating a repeated-character run that fails the quality check.
+        const context = parts.map((part, index) => preserve[index]
+            ? ' \t'.repeat(Math.ceil(part.length / 2)).slice(0, part.length) : part).join('');
+        const quality = translationQuality(context, line.fullText, language, canonicalize);
+        if (quality > choice.quality) {
+            const shown = parts.map((part, index) => preserve[index] ? part : convert(part)).join('').trim();
+            choice = { text: shown, quality };
+        }
+    }
+    return choice;
+}
 
 // FIA can carry a previously rendered translation. Recompute it from the converted
 // fields so the native lyric list and visualizers never prefer an old simplified copy.
 export function displayLines(lines, settings) {
     if (!settings.active) return lines;
     const canonicalize = getConverter();
+    const convertAroundQuotes = settings.enabled !== false && settings.convertTranslation !== false
+        && settings.protectJapanese !== false ? getConverter(settings.target) : null;
     return lines.map(line => {
         const [converted] = transformLines([line], settings);
-        const displayTranslation = chineseTranslation(converted, canonicalize).text || converted.translation
+        let choice = chineseTranslation(converted, canonicalize);
+        if (convertAroundQuotes) choice = chooseQuotedTranslation(converted, choice, canonicalize, convertAroundQuotes);
+        const displayTranslation = choice.text || converted.translation
             || transformLines([{ translation: converted.displayTranslation }], settings)[0].translation;
         return displayTranslation && (converted.displayTranslation || displayTranslation !== converted.translation)
             ? { ...converted, displayTranslation } : converted;

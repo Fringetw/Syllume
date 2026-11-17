@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
-import { createSubtitleEngine, defaults } from '../engine.mjs';
+import { createSubtitleEngine, defaults, displayLines } from '../engine.mjs';
 
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const song = { id: 'native', source: 'local', title: '夜に駆ける', artist: 'YOASOBI', durationMs: 60000 };
@@ -11,6 +11,12 @@ const originals = ['青い紙飛行機を折る', '机の上で地図を広げ�
 const translations = ['摺一架藍色紙飛機', '在桌面上攤開地圖', '替窗邊的小盆栽澆水', '記住新車站的名字'];
 const lines = originals.map((fullText, i) => ({ fullText, startTime: 10 + i * 5, endTime: 14 + i * 5,
     words: [{ text: fullText, startTime: 10 + i * 5, endTime: 14 + i * 5 }] }));
+const quotedTranslation = '她在图书馆听见「学校へ行こう」，后来决定买张车票。';
+const traditionalQuotedTranslation = '她在圖書館聽見「学校へ行こう」，後來決定買張車票。';
+const withQuotedTranslation = { ...lines[0], translation: 'An English sentence', alternateTexts: [{
+    role: 'translation', language: 'zh-CN', text: quotedTranslation,
+    syllables: [{ text: '她在图书馆', startTime: 10, endTime: 11 }],
+}] };
 function harness(request = async () => ({ items: [] })) {
     const shown = [], reports = [], messages = [];
     const engine = createSubtitleEngine({ request, publish: value => shown.push(value), report: value => reports.push(value),
@@ -155,6 +161,21 @@ test('native display uses the plugin’s Chinese alternate-text choice without r
     h.engine.dispose();
 });
 
+test('explicitly Chinese subtitles convert around quoted Japanese without changing the source timeline', () => {
+    const raw = [withQuotedTranslation, { ...withQuotedTranslation, translation: quotedTranslation }];
+    const before = structuredClone(raw);
+    assert.deepEqual(displayLines(raw, defaults), before.map(line => ({ ...line, displayTranslation: traditionalQuotedTranslation })));
+    assert.deepEqual(raw, before);
+
+    for (const setting of [{ enabled: false }, { convertTranslation: false }, { active: false }]) {
+        assert.deepEqual(displayLines(raw, { ...defaults, ...setting }), before);
+    }
+    const unlabelled = { ...raw[0], alternateTexts: [{ ...raw[0].alternateTexts[0], language: undefined }] };
+    assert.deepEqual(displayLines([unlabelled], defaults), [unlabelled]);
+    const withUnquotedKana = { ...raw[0], alternateTexts: [{ ...raw[0].alternateTexts[0], text: '后来决定买张车票。学校へ行こう' }] };
+    assert.deepEqual(displayLines([withUnquotedKana], defaults), [withUnquotedKana]);
+});
+
 test('reenabling the built-in module restarts search for the current song', async () => {
     let reads = 0;
     const h = harness(async () => { reads++; return { items: [] }; });
@@ -198,12 +219,13 @@ test('the shipped conversion works without window, WebKit, timers or providers',
     const original = { ...lines[0], translation: '风里的回声', displayTranslation: '风里的回声',
         alternateTexts: [null], backgroundVocals: [null] };
     const storedDisplayOnly = { ...lines[1], displayTranslation: '蓝色的天空' };
-    const result = JSON.parse(context.FoliaConvertSubtitles(JSON.stringify([original, storedDisplayOnly]), JSON.stringify(defaults)));
+    const result = JSON.parse(context.FoliaConvertSubtitles(JSON.stringify([original, storedDisplayOnly, withQuotedTranslation]), JSON.stringify(defaults)));
     assert.equal(result[0].fullText, original.fullText);
     assert.deepEqual(result[0].words, original.words);
     assert.equal(result[0].translation, '風裡的回聲');
     assert.equal(result[0].displayTranslation, '風裡的回聲');
     assert.equal(result[1].displayTranslation, '藍色的天空');
+    assert.deepEqual(result[2], { ...withQuotedTranslation, displayTranslation: traditionalQuotedTranslation });
     const off = JSON.parse(context.FoliaConvertSubtitles(JSON.stringify([original]), JSON.stringify({ ...defaults, convertTranslation: false })));
     assert.equal(off[0].displayTranslation, '风里的回声');
 });
