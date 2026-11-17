@@ -380,17 +380,18 @@ final class SyllumeUITests: XCTestCase {
         let clock = app.staticTexts["localTransportProbe"]
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "測試 HTTP 音源")).firstMatch
             .waitForExistence(timeout: 20))
-        waitForLoopbackAdvance(clock)
+        waitForLoopbackAdvance(clock, media: "http")
 
         let toggle = app.buttons["playerToggle"]
         if toggle.label == "暫停" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
-        waitForPausedNativeClock(clock)
+        let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|0.0|http|none"), evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
         let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 10))
         progress.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
         let sought = expectation(for: NSPredicate { _, _ in
             let sample = (clock.value as? String ?? "").split(separator: "|")
-            guard sample.count == 2, let time = Double(sample[0]), sample[1] == "0.0" else { return false }
+            guard sample.count == 4, let time = Double(sample[0]), sample[1] == "0.0", sample[2] == "http" else { return false }
             return abs(time - 12) < 1.2
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 20), .completed,
@@ -403,7 +404,7 @@ final class SyllumeUITests: XCTestCase {
         let app = try openLoopbackPlaylistTrack()
         let fallback = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "測試本機備援")).firstMatch
         XCTAssertTrue(fallback.waitForExistence(timeout: 25), "An unresponsive HTTP stream should give way to the local candidate")
-        waitForLoopbackAdvance(app.staticTexts["localTransportProbe"])
+        waitForLoopbackAdvance(app.staticTexts["localTransportProbe"], media: "file", after: "timeout")
         XCTAssertFalse(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.exists)
         capture(app, name: "Syllume-HTTP-stream-fallback")
     }
@@ -426,14 +427,15 @@ final class SyllumeUITests: XCTestCase {
         return app
     }
 
-    private func waitForLoopbackAdvance(_ clock: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+    private func waitForLoopbackAdvance(_ clock: XCUIElement, media: String, after problem: String = "none",
+                                        file: StaticString = #filePath, line: UInt = #line) {
         let advancing = expectation(for: NSPredicate { _, _ in
             let sample = (clock.value as? String ?? "").split(separator: "|")
-            guard sample.count == 2, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
-            return time > 0.3 && time.isFinite && rate > 0
+            guard sample.count == 4, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
+            return time > 0.3 && time.isFinite && rate > 0 && sample[2] == media && sample[3] == problem
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 20), .completed,
-                       "Expected AVPlayer to advance; observed \(String(describing: clock.value))", file: file, line: line)
+                       "Expected \(media) after \(problem) to advance; observed \(String(describing: clock.value))", file: file, line: line)
     }
 
     func testYouTubePlaylistDownloadRequiresConfirmation() {

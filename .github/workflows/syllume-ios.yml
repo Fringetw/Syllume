@@ -213,7 +213,7 @@ jobs:
             if [ "$mode" = stalled ]; then touch "$fixture/stalled" || exit 1; fi
             python3 ios/Checks/range_audio_server.py --media ios/Syllume/Resources/tide.m4a \
               --ready-file "$fixture/ready.json" --log "$fixture/http.jsonl" \
-              --stall-file "$fixture/stalled" --bytes-per-second 65536 &
+              --stall-file "$fixture/stalled" &
             fixture_pid=$!
             trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
             for ((attempt=0; attempt<150; attempt++)); do

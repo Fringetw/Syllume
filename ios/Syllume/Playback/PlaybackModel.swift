@@ -100,7 +100,13 @@ final class PlaybackModel {
     var mediaProbe: String {
         // Observe the clock even in cover mode or when a downloaded track has no lyrics.
         _ = position; _ = isPlaying; _ = isBuffering
-        return String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
+        let sample = String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
+        guard ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") else { return sample }
+        _ = audioSource
+        let url = (player.currentItem?.asset as? AVURLAsset)?.url
+        let media = url.map { $0.isFileURL ? "file" : "http" } ?? "none"
+        let problem = sourceFailures.last?.problem.code.rawValue ?? "none"
+        return "\(sample)|\(media)|\(problem)"
     }
     var nowPlayingProbe: String {
         _ = position; _ = artwork; _ = isPlaying
