@@ -105,9 +105,9 @@ struct YouTubeNowPlayingScreen: View {
             }
             .background(PlaybackAtmosphere(playing: player.isPlaying && !player.isBuffering).ignoresSafeArea())
             .buttonStyle(SyllumePressStyle())
-            .onAppear { player.setVisible(true) }
+            .onAppear { player.setVisible(scenePhase == .active) }
             .onDisappear { player.setVisible(false) }
-            .onChange(of: scenePhase) { _, phase in if phase != .active { player.pause() } }
+            .onChange(of: scenePhase) { _, phase in player.setVisible(phase == .active) }
             .onChange(of: SubtitleInput(song: SubtitleSong(id: track.id, source: "ytm", title: track.title,
                 artist: track.artist, durationMs: player.duration * 1000),
                 revision: player.timelineRevision, loading: player.lyricsLoading), initial: true) { _, next in

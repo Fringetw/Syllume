@@ -14,7 +14,7 @@ enum YouTubeChecks {
         }
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
-        let model = YouTubePlayback(lyricDirectory: root) { _, _, _ in nil }
+        let model = YouTubePlayback(lyricDirectory: root, lookup: { _, _, _ in nil })
         let a = YouTubeVideo(id: id, title: "A", artist: "Artist")
         let b = YouTubeVideo(id: "dQw4w9WgXcQ", title: "B", artist: "Artist")
         var duplicateA = a, duplicateB = a
@@ -85,6 +85,76 @@ enum YouTubeChecks {
         precondition(model.timeline.lines.first?.fullText == "Hello")
         model.stop(); model.play([b], selected: b)
         precondition(model.timeline.lines.first?.fullText == "Hello")
-        print("PASS: YouTube link validation, stale sessions, pause/seek ordering, hidden playback, queue and lyric matching")
+        checkTransportWatchdog(a, b, directory: root)
+        print("PASS: YouTube link validation, stale sessions, pause/seek ordering, playback watchdog, queue and lyric matching")
+    }
+
+    @MainActor private static func checkTransportWatchdog(_ a: YouTubeVideo, _ b: YouTubeVideo, directory: URL) {
+        var updates = 0
+        let player = YouTubePlayback(lyricDirectory: directory, automaticallyMatchesLyrics: false,
+                                     onTransportWatchdogChange: { updates += 1 })
+        player.play([a, b], selected: a)
+        player.setVisible(true)
+        let base = ContinuousClock().now
+        let firstSession = player.session
+        func frame(_ state: Int, _ time: Double, _ after: Duration, seek: UUID? = nil) {
+            guard let video = player.current else { preconditionFailure("Test video is missing") }
+            player.receive(YouTubeSnapshot(session: player.session.uuidString, videoID: video.id, state: state,
+                                           time: time, duration: 60, title: nil, author: nil,
+                                           commandRevision: player.playbackRevision, seekRevision: seek),
+                           now: base + after)
+        }
+
+        frame(1, 0, .zero)
+        frame(1, 0.5, .milliseconds(500))
+        player.checkTransportWatchdog(session: firstSession, now: base + .seconds(4))
+        precondition(player.isBuffering && !player.isPlaying && player.wantsPlayback && updates == 1,
+                     "A silent bridge should stop claiming playback before its recovery deadline")
+        frame(1, 0.5, .seconds(5))
+        precondition(player.isBuffering && !player.isPlaying, "An unchanged playing snapshot cannot clear a stall")
+        frame(1, 1.0, .seconds(7))
+        precondition(player.isPlaying && !player.isBuffering, "Actual progress should recover a short stall")
+        player.checkTransportWatchdog(session: firstSession, now: base + .seconds(24))
+        precondition(player.failure == nil && player.wantsPlayback, "Recovery must refresh the clock deadline")
+        player.checkTransportWatchdog(session: firstSession, now: base + .seconds(26))
+        precondition(player.failure == DiagnosticProblem(code: .timeout, nativeCode: -3) && !player.wantsPlayback,
+                     "Only a prolonged stall after valid progress should report the stopped clock")
+
+        player.next()
+        let nextSession = player.session
+        player.checkTransportWatchdog(session: firstSession, now: base + .seconds(60))
+        precondition(player.current?.id == b.id && player.wantsPlayback && player.failure == nil,
+                     "An old watchdog must not interrupt the next song")
+        player.checkTransportWatchdog(session: nextSession, now: base + .seconds(60))
+        precondition(player.failure == DiagnosticProblem(code: .timeout, nativeCode: -2),
+                     "Waiting for the first media frame has its own diagnostic")
+        player.retry()
+        let secondSession = player.session
+        player.pause()
+        frame(2, 2, .seconds(27))
+        player.seek(to: 50, now: base + .seconds(28))
+        let frozenSeek = player.seekRevision
+        frame(2, 2, .seconds(33), seek: frozenSeek)
+        precondition(player.isSeeking && player.position == 50, "Acknowledging the command without a new position cannot settle a seek")
+        player.checkTransportWatchdog(session: secondSession, now: base + .seconds(41))
+        precondition(player.failure == DiagnosticProblem(code: .timeout, nativeCode: -4)
+                     && !player.isSeeking && !player.isPlaying && !player.wantsPlayback && player.position == 2,
+                     "A timed-out pause seek must restore its last confirmed position")
+        frame(2, 50, .seconds(42), seek: frozenSeek)
+        precondition(player.position == 2, "A late acknowledgment must not reopen a timed-out seek")
+        player.seek(to: 48, now: base + .seconds(43))
+        player.seek(to: 47, now: base + .seconds(46))
+        player.checkTransportWatchdog(session: secondSession, now: base + .seconds(56))
+        precondition(player.isSeeking && player.failure == nil, "The older deadline must not time out the newer seek")
+        frame(2, 46.5, .seconds(57), seek: player.seekRevision)
+        precondition(!player.isSeeking && !player.wantsPlayback && player.position == 46.5 && player.failure == nil)
+
+        player.seek(to: 55, now: base + .seconds(58))
+        let beforeHide = updates
+        player.setVisible(false)
+        player.checkTransportWatchdog(session: secondSession, now: base + .seconds(90))
+        precondition(updates == beforeHide && !player.isSeeking && player.failure == nil,
+                     "Leaving the visible surface must cancel an unresolved seek")
+        player.stop()
     }
 }

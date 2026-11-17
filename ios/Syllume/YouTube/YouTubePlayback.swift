@@ -4,6 +4,30 @@ import Observation
 // One visible embedded player owns the YouTube clock; old-page messages cannot advance a new song.
 @MainActor @Observable
 final class YouTubePlayback {
+    private enum TransportTimeout: Int {
+        case startup = -2
+        case stalled = -3
+        case seek = -4
+    }
+    private static let seekTimeout: Duration = .seconds(12)
+    private static let stallGrace: Duration = .seconds(3)
+
+    private struct PendingSeek {
+        let time: Double
+        let previousPosition: Double
+        let requestedAt: ContinuousClock.Instant
+
+        func canSettle(_ snapshot: YouTubeSnapshot, duration: Double, now: ContinuousClock.Instant) -> Bool {
+            guard ![-1, 3, 5].contains(snapshot.state),
+                  !(snapshot.state == 0 && duration > 0 && time < duration - 1) else { return false }
+            let distance = abs(snapshot.time - time)
+            if distance <= 1.5 { return true }
+            // YouTube can settle on an earlier keyframe. A stable sample at the old position is not an acknowledgment.
+            return now - requestedAt >= .seconds(2) && abs(snapshot.time - previousPosition) > 0.08
+                && distance < abs(previousPosition - time)
+        }
+    }
+
     private(set) var queue: [YouTubeVideo] = []
     private(set) var index = 0
     private(set) var session = UUID()
@@ -38,19 +62,27 @@ final class YouTubePlayback {
     @ObservationIgnored private var attemptedMatch: String?
     @ObservationIgnored private var matchAttempts = 0
     @ObservationIgnored private var pendingPlayback: Bool?
-    private var pendingSeek: (time: Double, requestedAt: ContinuousClock.Instant)?
+    private var pendingSeek: PendingSeek?
+    @ObservationIgnored private var lastClockAdvance: ContinuousClock.Instant?
+    @ObservationIgnored private var hasAdvanced = false
+    @ObservationIgnored private var transportWatchdog: Task<Void, Never>?
+    @ObservationIgnored private var watchdogWake: ContinuousClock.Instant?
+    @ObservationIgnored private let onTransportWatchdogChange: @MainActor () -> Void
     @ObservationIgnored private let manualLyricRoot: URL?
     @ObservationIgnored private let lookup: @Sendable (String, String, Double) async throws -> LyricSearchRecord?
     @ObservationIgnored private let automaticallyMatchesLyrics: Bool
     var current: YouTubeVideo? { queue.indices.contains(index) ? queue[index] : nil }
     var canAdvance: Bool { index + 1 < queue.count }
+    private var playbackTimeout: Duration { .seconds(hasAdvanced ? 18 : 25) }
 
     init(lyricDirectory: URL? = nil, automaticallyMatchesLyrics: Bool = true,
+         onTransportWatchdogChange: @escaping @MainActor () -> Void = {},
          lookup: @escaping @Sendable (String, String, Double) async throws -> LyricSearchRecord? = {
              try await OnlineLyrics.shared.exact(title: $0, artist: $1, duration: $2)
          }) {
         manualLyricRoot = lyricDirectory; self.lookup = lookup
         self.automaticallyMatchesLyrics = automaticallyMatchesLyrics
+        self.onTransportWatchdogChange = onTransportWatchdogChange
     }
 
     func play(_ videos: [YouTubeVideo], selected: YouTubeVideo) {
@@ -60,6 +92,7 @@ final class YouTubePlayback {
     }
 
     func stop() {
+        discardPendingSeek()
         pause(); lyricTask?.cancel(); session = UUID(); queue = []; index = 0
         timeline = LyricTimeline(lines: []); timelineRevision = UUID()
     }
@@ -70,8 +103,14 @@ final class YouTubePlayback {
             return
         }
         visible = value
-        if !value { pause() }
-        else if wantsPlayback { playbackRevision += 1; pendingPlayback = true }
+        if !value {
+            discardPendingSeek()
+            pause()
+        } else if wantsPlayback {
+            playbackRevision += 1; pendingPlayback = true
+            lastClockAdvance = ContinuousClock().now
+            scheduleTransportWatchdog()
+        }
     }
     func prepareToPlay() {
         guard current != nil else { return }
@@ -82,55 +121,82 @@ final class YouTubePlayback {
         didBlockAutoplay = false
         failure = nil
         pendingPlayback = true
+        lastClockAdvance = ContinuousClock().now
+        scheduleTransportWatchdog()
     }
     func retry() { guard current != nil else { return }; load() }
     func toggle() { wantsPlayback ? pause() : resume() }
-    func resume() { guard current != nil, visible else { return }; error = nil; prepareToPlay() }
-    func pause() { playbackRevision += 1; wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = false }
+    func resume() {
+        guard current != nil, visible else { return }
+        if failure?.nativeCode == TransportTimeout.seek.rawValue { retry(); return }
+        error = nil; prepareToPlay()
+    }
+    func pause() {
+        playbackRevision += 1; wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = false
+        lastClockAdvance = nil
+        scheduleTransportWatchdog()
+    }
     func autoplayBlocked(revision: Int?) {
         guard visible, wantsPlayback, revision == playbackRevision else { return }
         wantsPlayback = false; isPlaying = false; isBuffering = false; pendingPlayback = nil
         didBlockAutoplay = true
         failure = DiagnosticProblem(code: .playbackInteractionRequired)
         error = "請點上方 YouTube 播放器的播放鍵，開始播放。"
+        scheduleTransportWatchdog()
     }
     func next() { guard canAdvance else { return }; index += 1; load() }
     func previous() { if position > 3 || index == 0 { seek(to: 0) } else { index -= 1; load() } }
     func seek(to time: Double, now: ContinuousClock.Instant = ContinuousClock().now) {
-        guard time.isFinite, duration > 0 else { return }
+        guard visible, time.isFinite, duration > 0 else { return }
+        let previousPosition = pendingSeek?.previousPosition ?? position
         seekTime = min(duration, max(0, time)); position = seekTime; seekRevision = UUID()
-        pendingSeek = (seekTime, now)
+        pendingSeek = PendingSeek(time: seekTime, previousPosition: previousPosition, requestedAt: now)
+        if failure?.nativeCode == TransportTimeout.seek.rawValue { error = nil; failure = nil }
+        scheduleTransportWatchdog()
     }
 
     func receive(_ snapshot: YouTubeSnapshot, now: ContinuousClock.Instant = ContinuousClock().now) {
         guard let track = current, snapshot.belongs(to: session, videoID: track.id) else { return }
         guard visible else { if wantsPlayback || isPlaying { pause() }; return }
         guard snapshot.commandRevision == playbackRevision, snapshot.seekRevision == seekRevision else { return }
+        // A late seek acknowledgment cannot update the position after that command timed out.
+        guard failure?.nativeCode != TransportTimeout.seek.rawValue else { return }
         sampledTime = snapshot.time
         let stalePlay = pendingPlayback == false && snapshot.state == 1
         let stalePause = pendingPlayback == true && snapshot.state == 2
-        if let seek = pendingSeek, [-1, 3, 5].contains(snapshot.state) ||
-           (snapshot.state == 0 && duration > 0 && seek.time < duration - 1) ||
-           (now - seek.requestedAt < .seconds(2) && abs(snapshot.time - seek.time) > 1.5) {
-            // Hold the preview until the iframe settles. The reported time can be the old position during buffering.
-        } else if !stalePlay && !stalePause {
+        if !stalePlay && !stalePause, pendingSeek?.canSettle(snapshot, duration: duration, now: now) != false {
+            let advance = snapshot.time - position
+            if pendingSeek != nil { lastClockAdvance = now }
+            else if snapshot.state == 1, advance > 0.02, advance <= 1.5 {
+                hasAdvanced = true
+                lastClockAdvance = now
+            }
             if abs(position - snapshot.time) > 0.001 { position = snapshot.time }
             pendingSeek = nil
         }
         if snapshot.duration > 0, duration != snapshot.duration { duration = snapshot.duration }
         if !stalePlay && !stalePause {
-            let playing = snapshot.state == 1, buffering = wantsPlayback && [-1, 3, 5].contains(snapshot.state)
+            if snapshot.state == 1 && !wantsPlayback {
+                wantsPlayback = true
+                lastClockAdvance = now
+            }
+            let stalled = pendingSeek == nil && clockIsStalled(at: now)
+            let playing = snapshot.state == 1 && !stalled
+            let buffering = wantsPlayback && (stalled || [-1, 3, 5].contains(snapshot.state))
             if isPlaying != playing { isPlaying = playing }
             if isBuffering != buffering { isBuffering = buffering }
             if snapshot.state == 1 {
-                if !wantsPlayback { wantsPlayback = true }
                 pendingPlayback = nil
                 didReachEnd = false
                 didBlockAutoplay = false
                 error = nil
                 failure = nil
             }
-            if snapshot.state == 2 { if wantsPlayback { wantsPlayback = false }; pendingPlayback = nil }
+            if snapshot.state == 2 {
+                if wantsPlayback { wantsPlayback = false }
+                pendingPlayback = nil
+                lastClockAdvance = nil
+            }
             if pendingPlayback == false, [-1, 0, 5].contains(snapshot.state) { pendingPlayback = nil }
         }
         if let title = snapshot.title, !title.isEmpty, title != queue[index].title { queue[index].title = title }
@@ -140,6 +206,7 @@ final class YouTubePlayback {
             else { didReachEnd = true; pause() }
             return
         }
+        scheduleTransportWatchdog()
         if automaticallyMatchesLyrics, attemptedMatch != "manual", matchAttempts < 4, duration > 0, let track = current {
             let signature = [track.title, track.artist, String(Int(duration.rounded()))].joined(separator: "|")
             if signature != attemptedMatch {
@@ -152,14 +219,14 @@ final class YouTubePlayback {
 
     func failed(_ code: Int, session: String) {
         guard self.session.uuidString == session else { return }
+        discardPendingSeek()
         pause()
-        pendingSeek = nil
         didBlockAutoplay = false
         let reason: DiagnosticCode = switch code {
         case 101, 150: .permission
         case 100: .unavailable
         case 153: .configuration
-        case -2: .timeout
+        case -2, -3, -4: .timeout
         default: .transport
         }
         failure = DiagnosticProblem(code: reason, nativeCode: code)
@@ -168,8 +235,63 @@ final class YouTubePlayback {
         case 100: error = "這支影片已移除、設為私人或無法提供播放。"
         case 153: error = "YouTube 無法辨識此安裝版本的播放來源。"
         case -2: error = "YouTube 尚未開始播放。可重試或在 YouTube Music 開啟。"
+        case -3: error = "YouTube 播放已停滯。請檢查網路後重試。"
+        case -4: error = "YouTube 定位逾時。可重新選擇進度或重試播放。"
         default: error = "YouTube 播放未完成。請檢查網路後重試。"
         }
+    }
+
+    private func discardPendingSeek() {
+        if let seek = pendingSeek { position = seek.previousPosition }
+        pendingSeek = nil
+    }
+
+    private func clockIsStalled(at now: ContinuousClock.Instant) -> Bool {
+        guard hasAdvanced, let lastClockAdvance else { return false }
+        return now - lastClockAdvance >= Self.stallGrace
+    }
+
+    // The single scheduled check also covers a WebKit bridge that has stopped sending messages.
+    private func scheduleTransportWatchdog() {
+        let wake: ContinuousClock.Instant?
+        if !visible || current == nil { wake = nil }
+        else if let seek = pendingSeek { wake = seek.requestedAt + Self.seekTimeout }
+        else if wantsPlayback, let lastClockAdvance {
+            wake = lastClockAdvance + (hasAdvanced && isPlaying ? Self.stallGrace : playbackTimeout)
+        } else { wake = nil }
+
+        if let wake, let watchdogWake, watchdogWake <= wake { return }
+        transportWatchdog?.cancel()
+        watchdogWake = wake
+        transportWatchdog = nil
+        guard let wake else { return }
+        let expectedSession = session
+        transportWatchdog = Task { [weak self] in
+            do { try await ContinuousClock().sleep(until: wake) } catch { return }
+            guard let self, !Task.isCancelled, session == expectedSession, watchdogWake == wake else { return }
+            watchdogWake = nil
+            transportWatchdog = nil
+            checkTransportWatchdog(session: expectedSession, now: ContinuousClock().now)
+            scheduleTransportWatchdog()
+        }
+    }
+
+    func checkTransportWatchdog(session expectedSession: UUID, now: ContinuousClock.Instant) {
+        guard session == expectedSession, visible, current != nil else { return }
+        if let seek = pendingSeek {
+            guard now - seek.requestedAt >= Self.seekTimeout else { return }
+            failed(TransportTimeout.seek.rawValue, session: session.uuidString)
+        } else {
+            guard wantsPlayback, let lastClockAdvance else { return }
+            if now - lastClockAdvance >= playbackTimeout {
+                let timeout: TransportTimeout = hasAdvanced ? .stalled : .startup
+                failed(timeout.rawValue, session: session.uuidString)
+            } else if isPlaying && clockIsStalled(at: now) {
+                isPlaying = false
+                isBuffering = true
+            } else { return }
+        }
+        onTransportWatchdogChange()
     }
 
     func useLyrics(_ record: LyricSearchRecord) {
@@ -203,6 +325,10 @@ final class YouTubePlayback {
         isPlaying = false; isBuffering = true; wantsPlayback = true; attemptedMatch = nil
         matchAttempts = 0
         playbackRevision += 1; pendingPlayback = true; pendingSeek = nil
+        hasAdvanced = false
+        lastClockAdvance = visible ? ContinuousClock().now : nil
+        transportWatchdog?.cancel(); watchdogWake = nil
+        scheduleTransportWatchdog()
         timeline = LyricTimeline(lines: []); timelineRevision = UUID(); lyricsSource = nil; lyricsLoading = false
         guard let track = current, let directory = try? lyricDirectory() else { return }
         for ext in ["fia", "lrc"] {

@@ -32,7 +32,6 @@ final class PlaybackModel {
     private var nativeReady = false
     private var nativeHasAdvanced = false
     private var videoHasAdvanced = false
-    @ObservationIgnored private var videoDeadline: Task<Void, Never>?
     @ObservationIgnored private var queuedVideoReplay: UUID?
     @ObservationIgnored private var videoSurfaceVisible = false
     @ObservationIgnored private var videoRequested = false
@@ -852,7 +851,8 @@ final class PlaybackModel {
         player.replaceCurrentItem(with: nil)
         nativeReady = false
         let video = YouTubeVideo(id: song.videoID, title: song.title, artist: song.artist)
-        let transport = YouTubePlayback(automaticallyMatchesLyrics: false)
+        let transport = YouTubePlayback(automaticallyMatchesLyrics: false,
+            onTransportWatchdogChange: { [weak self] in self?.refreshEmbeddedVideo() })
         let needsOriginalLyrics = activeRecording != nil || (timeline.lines.isEmpty && !lyricsLoading)
         activeRecording = nil
         activeLocalTrackID = nil
@@ -931,18 +931,6 @@ final class PlaybackModel {
         if wasPlaying && !isPlaying {
             DiagnosticsEvents.shared.record(.playbackPaused, source: .youtube)
             videoHasAdvanced = false
-        }
-        if !video.visible || !wantsPlayback || videoHasAdvanced {
-            videoDeadline?.cancel()
-            videoDeadline = nil
-        } else if videoDeadline == nil {
-            let session = video.session
-            videoDeadline = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(25))
-                guard let self, !Task.isCancelled, let video = embeddedVideo, video.session == session else { return }
-                video.failed(-2, session: session.uuidString)
-                refreshEmbeddedVideo()
-            }
         }
         if let problem = video.failure, error != previousError {
             diagnosticPlaybackProblem = problem
@@ -1055,7 +1043,6 @@ final class PlaybackModel {
         embeddedVideo = nil
         queuedVideoReplay = nil
         videoRequested = false
-        videoDeadline?.cancel(); videoDeadline = nil
         offersVideoFallback = false
         nativeReady = false
         nativeHasAdvanced = false
