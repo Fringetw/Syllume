@@ -204,7 +204,7 @@ final class SyllumeUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--accessibility-text-fixture", "--subtitle-fixture", "--subtitle-reset",
-                               "--presentation-reset", "--playback-probe"]
+                               "--presentation-reset", "--playback-probe", "-Folia.EnergySavingAnimation", "YES"]
         app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
         app.launch()
 
@@ -212,10 +212,11 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(demo.waitForExistence(timeout: 15))
         demo.tap()
 
-        let style = app.descendants(matching: .any)["lyricStyleMenu"].firstMatch
+        let style = app.buttons["lyricStyleMenu"]
         XCTAssertTrue(style.waitForExistence(timeout: 15))
-        XCTAssertTrue(style.isHittable)
-        style.tap()
+        let menuReady = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: style)
+        XCTAssertEqual(XCTWaiter.wait(for: [menuReady], timeout: 15), .completed)
+        style.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         let mistOption = app.buttons["霧盞"]
         XCTAssertTrue(mistOption.waitForExistence(timeout: 10))
         mistOption.tap()
@@ -371,6 +372,68 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(playlistSync.value as? String, "已暫停")
         closePlayer.tap()
         XCTAssertTrue(loadingPages.waitForExistence(timeout: 10))
+    }
+
+    func testNativeLoopbackStreamsAndSeeks() throws {
+        continueAfterFailure = false
+        let app = try openLoopbackPlaylistTrack()
+        let clock = app.staticTexts["localTransportProbe"]
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "測試 HTTP 音源")).firstMatch
+            .waitForExistence(timeout: 20))
+        waitForLoopbackAdvance(clock)
+
+        let toggle = app.buttons["playerToggle"]
+        if toggle.label == "暫停" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        waitForPausedNativeClock(clock)
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        XCTAssertTrue(progress.waitForExistence(timeout: 10))
+        progress.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
+        let sought = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), sample[1] == "0.0" else { return false }
+            return abs(time - 12) < 1.2
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 20), .completed,
+                       "Expected a paused HTTP audio stream near 12 seconds; observed \(String(describing: clock.value))")
+        capture(app, name: "Syllume-HTTP-stream-seek")
+    }
+
+    func testNativeLoopbackFallsBackAfterTimeout() throws {
+        continueAfterFailure = false
+        let app = try openLoopbackPlaylistTrack()
+        let fallback = app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "測試本機備援")).firstMatch
+        XCTAssertTrue(fallback.waitForExistence(timeout: 25), "An unresponsive HTTP stream should give way to the local candidate")
+        waitForLoopbackAdvance(app.staticTexts["localTransportProbe"])
+        XCTAssertFalse(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.exists)
+        capture(app, name: "Syllume-HTTP-stream-fallback")
+    }
+
+    private func openLoopbackPlaylistTrack() throws -> XCUIApplication {
+        guard let endpoint = ProcessInfo.processInfo.environment["SYLLUME_TEST_RANGE_AUDIO_URL"] else {
+            throw XCTSkip("Requires the loopback HTTP audio fixture from the macOS workflow.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--loopback-stream-fixture", "--youtube-sync-fixture", "--youtube-sync-reset",
+                               "--subtitle-fixture", "--playback-probe", "-Folia.EnergySavingAnimation", "YES",
+                               "-Folia.LyricDisplayMode", "cover"]
+        app.launchEnvironment["SYLLUME_TEST_RANGE_AUDIO_URL"] = endpoint
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let audio = app.buttons["youtubeSong-fixture-row"]
+        XCTAssertTrue(audio.waitForExistence(timeout: 15)); audio.tap()
+        return app
+    }
+
+    private func waitForLoopbackAdvance(_ clock: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        let advancing = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
+            return time > 0.3 && time.isFinite && rate > 0
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 20), .completed,
+                       "Expected AVPlayer to advance; observed \(String(describing: clock.value))", file: file, line: line)
     }
 
     func testYouTubePlaylistDownloadRequiresConfirmation() {

@@ -139,6 +139,8 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSyncedAudioPausesWithoutVideo \
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSongAutomaticallyPlaysVisibleOriginal \
             -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStreamsAndSeeks \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackFallsBackAfterTimeout \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator test summaries, screenshots and diagnostic reports
         if: always()
@@ -167,7 +169,7 @@ jobs:
   ios-26-player:
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - name: Prepare lyric font
@@ -175,6 +177,8 @@ jobs:
       - name: Build the iOS 26 simulator tests
         run: |
           xcodebuild -version
+          # The loopback fixture is used only by this Debug simulator build. The device IPA uses the repository plist.
+          plutil -insert NSAppTransportSecurity -json '{"NSAllowsLocalNetworking":true}' ios/Syllume/Resources/Info.plist
           simulator_id=$(xcrun simctl list devices available -j | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(x["udid"] for key, group in d["devices"].items() if "iOS-26" in key for x in group if x["name"].startswith("iPhone")))')
           echo "FOLIA_IOS26_SIMULATOR_ID=$simulator_id" >> "$GITHUB_ENV"
           xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
@@ -202,17 +206,59 @@ jobs:
           run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
           run_player_check SyllumeIOS26Resources testMistRenderingResourceSample || failed=1
           run_player_check SyllumeIOS26Scrub testMistStylePersistsAndProgressControlsSeekPausedAudio || failed=1
+          run_http_check() (
+            name="$1"; test_name="$2"; mode="$3"
+            fixture="$RUNNER_TEMP/$name"
+            mkdir -p "$fixture" || exit 1
+            if [ "$mode" = stalled ]; then touch "$fixture/stalled" || exit 1; fi
+            python3 ios/Checks/range_audio_server.py --media ios/Syllume/Resources/tide.m4a \
+              --ready-file "$fixture/ready.json" --log "$fixture/http.jsonl" \
+              --stall-file "$fixture/stalled" --bytes-per-second 65536 &
+            fixture_pid=$!
+            trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
+            for ((attempt=0; attempt<50; attempt++)); do
+              [ ! -f "$fixture/ready.json" ] || break
+              sleep 0.1
+            done
+            endpoint=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["url"])' "$fixture/ready.json") || exit 1
+            export TEST_RUNNER_SYLLUME_TEST_RANGE_AUDIO_URL="$endpoint"
+            status=0
+            run_player_check "$name" "$test_name" || status=1
+            kill "$fixture_pid" 2>/dev/null || true
+            wait "$fixture_pid" || status=1
+            trap - EXIT
+            python3 - "$fixture/http.jsonl" "$mode" <<'PY' || status=1
+          import json, sys
+          with open(sys.argv[1]) as logfile:
+              records = [json.loads(line) for line in logfile]
+          requests = {r['id']: r for r in records if r['event'] == 'request' and r['method'] == 'GET'}
+          transferred = sum(r['bodyBytes'] for r in records if r['event'] == 'response' and r['id'] in requests)
+          print(f"Loopback {sys.argv[2]}: GETs={len(requests)}, media body bytes={transferred}")
+          assert requests, "The simulator must reach the HTTP audio fixture"
+          if sys.argv[2] == 'stalled':
+              assert transferred == 0, "The blocked stream must send no media body"
+          else:
+              assert transferred > 0 and any(r['status'] == 206 for r in requests.values()), "Expected HTTP range playback"
+          PY
+            exit "$status"
+          )
+          run_http_check SyllumeIOS26HTTP testNativeLoopbackStreamsAndSeeks playing || failed=1
+          run_http_check SyllumeIOS26HTTPStall testNativeLoopbackFallsBackAfterTimeout stalled || failed=1
           exit "$failed"
       - name: Export iOS 26 test evidence
         if: always()
         run: |
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub; do
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26HTTP SyllumeIOS26HTTPStall; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
               mkdir -p "$evidence"
               xcrun xcresulttool get test-results summary --path "$result" > "$evidence/test-summary.json"
               xcrun xcresulttool export attachments --path "$result" --output-path "$evidence/attachments"
+            fi
+            if [ -f "$RUNNER_TEMP/$name/http.jsonl" ]; then
+              mkdir -p "$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
+              cp "$RUNNER_TEMP/$name/http.jsonl" "$RUNNER_TEMP/SyllumeIOS26Evidence/$name/"
             fi
           done
       - uses: actions/upload-artifact@v4

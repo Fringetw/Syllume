@@ -325,22 +325,26 @@ struct NowPlayingScreen: View {
 struct PlaybackStylePicker: View {
     @Binding var mode: LyricDisplayMode
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var choosingStyle = false
 
     var body: some View {
         if dynamicTypeSize.isAccessibilitySize {
-            Menu {
-                Picker("歌詞樣式", selection: $mode) {
-                    options
-                }
-                .pickerStyle(.inline)
+            Button {
+                choosingStyle = true
             } label: {
                 Label(mode.title, systemImage: "textformat")
                     .font(.headline)
                     .frame(minHeight: 44)
+                    .contentShape(Rectangle())
             }
             .accessibilityLabel("歌詞樣式")
             .accessibilityValue(mode.title)
             .accessibilityIdentifier("lyricStyleMenu")
+            .confirmationDialog("歌詞樣式", isPresented: $choosingStyle, titleVisibility: .visible) {
+                ForEach(LyricDisplayMode.allCases) { option in
+                    Button(option.title) { mode = option }
+                }
+            }
         } else {
             Picker("歌詞樣式", selection: $mode) {
                 options

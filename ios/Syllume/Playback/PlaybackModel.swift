@@ -680,6 +680,7 @@ final class PlaybackModel {
                    !ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
+                   !ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture"),
                    let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
                     if let file = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
                        let text = try? String(contentsOf: file, encoding: .utf8) { timeline = LyricTimeline(lrc: text) }

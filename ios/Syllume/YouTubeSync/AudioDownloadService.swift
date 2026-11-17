@@ -127,6 +127,30 @@ actor AudioDownloadService {
     private func streamingOptions(_ source: DiagnosticSource, song: SyncedYouTubeSong, duration: Double,
                                   account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
+            let url: URL
+            let label: String
+            switch source {
+            case .netease:
+                guard let endpoint = ProcessInfo.processInfo.environment["SYLLUME_TEST_RANGE_AUDIO_URL"],
+                      let parts = URLComponents(string: endpoint), parts.scheme == "http",
+                      parts.host == "127.0.0.1", let port = parts.port, (1...65535).contains(port),
+                      parts.path == "/audio", parts.user == nil, parts.password == nil,
+                      parts.query == nil, parts.fragment == nil, let localURL = parts.url else {
+                    throw DiagnosticProblem(code: .configuration)
+                }
+                url = localURL
+                label = "測試 HTTP 音源"
+            case .qq:
+                try await Task.sleep(for: .milliseconds(250))
+                guard let bundled = Bundle.main.url(forResource: "tide", withExtension: "m4a") else { return [] }
+                url = bundled
+                label = "測試本機備援"
+            default: return []
+            }
+            return [DownloadAudioCandidate(url: url, title: song.title, artist: song.artist,
+                                           duration: duration, format: "m4a", bitrate: 96_000, source: label)]
+        }
         if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
             if song.title == "Lemon", source == .netease,
                let file = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
