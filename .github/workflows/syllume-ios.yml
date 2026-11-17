@@ -216,7 +216,7 @@ jobs:
               --stall-file "$fixture/stalled" --bytes-per-second 65536 &
             fixture_pid=$!
             trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
-            for ((attempt=0; attempt<50; attempt++)); do
+            for ((attempt=0; attempt<150; attempt++)); do
               [ ! -f "$fixture/ready.json" ] || break
               sleep 0.1
             done

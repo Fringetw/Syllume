@@ -1,6 +1,7 @@
 """Exercise the AVPlayer fixture's HTTP contract on loopback."""
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import closing
 from http.client import HTTPConnection
 import io
 import json
@@ -11,6 +12,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from urllib.parse import urlsplit
 
 from range_audio_server import AudioServer
@@ -58,6 +60,11 @@ class RangeAudioServerTests(unittest.TestCase):
             if time.monotonic() >= deadline:
                 self.fail(f"Expected {count} log records, got {rows!r}")
             time.sleep(0.01)
+
+    def test_loopback_binding_does_not_resolve_hostnames(self):
+        with patch("socket.getfqdn", side_effect=AssertionError("Unexpected DNS lookup")):
+            self.start_server()
+        self.assertEqual(self.request()[::2], (200, MEDIA))
 
     def test_head_full_get_and_partial_gets_log_actual_body_bytes(self):
         self.start_server()
@@ -129,23 +136,22 @@ class RangeAudioServerTests(unittest.TestCase):
         ready = self.root / "ready.json"
         log = self.root / "requests.jsonl"
         script = Path(__file__).with_name("range_audio_server.py")
+        published = False
         with subprocess.Popen([sys.executable, str(script), "--media", str(media),
                                "--ready-file", str(ready), "--log", str(log)],
                               stderr=subprocess.PIPE, text=True) as server:
             try:
-                deadline = time.monotonic() + 5
+                deadline = time.monotonic() + 15
                 while not ready.exists() and server.poll() is None and time.monotonic() < deadline:
                     time.sleep(0.02)
-                self.assertTrue(ready.exists(), "The fixture did not create its readiness file")
-                url = urlsplit(json.loads(ready.read_text(encoding="utf-8"))["url"])
-                self.assertEqual((url.scheme, url.hostname, url.path), ("http", "127.0.0.1", "/audio"))
-                client = HTTPConnection(url.hostname, url.port, timeout=3)
-                try:
-                    client.request("GET", url.path, headers={"Range": "bytes=0-2"})
-                    response = client.getresponse()
-                    self.assertEqual((response.status, response.read()), (206, b"012"))
-                finally:
-                    client.close()
+                published = ready.exists()
+                if published:
+                    url = urlsplit(json.loads(ready.read_text(encoding="utf-8"))["url"])
+                    self.assertEqual((url.scheme, url.hostname, url.path), ("http", "127.0.0.1", "/audio"))
+                    with closing(HTTPConnection(url.hostname, url.port, timeout=3)) as client:
+                        client.request("GET", url.path, headers={"Range": "bytes=0-2"})
+                        response = client.getresponse()
+                        self.assertEqual((response.status, response.read()), (206, b"012"))
             finally:
                 server.terminate()
                 try:
@@ -155,6 +161,7 @@ class RangeAudioServerTests(unittest.TestCase):
                     server.communicate()
                     self.fail("The range fixture did not shut down after termination")
 
+        self.assertTrue(published, f"The fixture did not create its readiness file. Exit {server.returncode}. {errors}")
         if sys.platform != "win32":
             # Windows terminates this process directly instead of delivering SIGTERM.
             self.assertEqual(server.returncode, 0, errors)

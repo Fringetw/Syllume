@@ -10,6 +10,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from socketserver import TCPServer
 
 
 class AudioServer(ThreadingHTTPServer):
@@ -27,6 +28,12 @@ class AudioServer(ThreadingHTTPServer):
         self.sequence = itertools.count(1)
         self.log_lock = threading.Lock()
         super().__init__(("127.0.0.1", port), AudioHandler)
+
+    def server_bind(self):
+        # HTTPServer's default bind also does a reverse lookup, which this IPv4-only fixture does not need.
+        TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.server_address[1]
 
     def record(self, **event):
         with self.log_lock:
