@@ -34,10 +34,17 @@ struct Checks {
         let line = LyricLine(startTime: 1, endTime: 3, fullText: "头发发现", translation: "风里的回声",
             words: [LyricWord(text: "头发", startTime: 1, endTime: 2), LyricWord(text: "发现", startTime: 2, endTime: 3)],
             extra: ["displayTranslation": .string("风里的回声"), "backgroundVocals": .array([.null])])
+        let quoted = LyricLine(startTime: 3, endTime: 5, fullText: "ここから始めよう", translation: "Let's start here",
+            words: [LyricWord(text: "ここから始めよう", startTime: 3, endTime: 5)],
+            extra: ["alternateTexts": .array([.object(["role": .string("translation"), "language": .string("zh-CN"),
+                "text": .string("她在图书馆听见「学校へ行こう」，后来决定买张车票。")])])])
         var preferences = SubtitlePreferences()
-        let converted = try await converter.convert([line], preferences: preferences)
+        let converted = try await converter.convert([line, quoted], preferences: preferences)
         precondition(converted[0].fullText == "頭髮發現" && converted[0].translationText == "風裡的回聲")
         precondition(converted[0].words.map(\.text) == ["頭髮", "發現"] && converted[0].words.map(\.startTime) == [1, 2])
+        precondition(converted[1].translationText == "她在圖書館聽見「学校へ行こう」，後來決定買張車票。")
+        precondition(converted[1].fullText == quoted.fullText && converted[1].words == quoted.words
+                     && converted[1].extra["alternateTexts"] == quoted.extra["alternateTexts"])
         preferences.enabled = false
         let raw = try await converter.convert([line], preferences: preferences)
         precondition(raw[0].fullText == line.fullText && raw[0].translationText == line.translationText)
