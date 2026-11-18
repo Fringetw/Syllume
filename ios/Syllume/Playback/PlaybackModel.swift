@@ -169,6 +169,7 @@ final class PlaybackModel {
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var nativeSeek = NativeSeekState()
     @ObservationIgnored private var seekTimeout: Task<Void, Never>?
+    @ObservationIgnored private var nativeSeekPreroll: UUID?
     private var seeking = false
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var streamTimeout: Task<Void, Never>?
@@ -300,7 +301,7 @@ final class PlaybackModel {
             resumeAfterInterruption = false
             error = nil
             wantsPlayback = true
-            player.play()
+            if nativeSeekPreroll == nil { player.play() }
             refreshTransport()
         } catch {
             fail("無法啟用音訊。請檢查目前的音訊輸出。")
@@ -392,6 +393,8 @@ final class PlaybackModel {
         let clock = ContinuousClock()
         let request = nativeSeek.begin(from: player.currentTime().seconds, at: clock.now)
         let itemID = ObjectIdentifier(item)
+        nativeSeekPreroll = nil
+        player.cancelPendingPrerolls()
         seekTimeout?.cancel()
         streamTimeout?.cancel(); streamTimeout = nil
         if diagnosticPlaybackProblem?.nativeCode == -5 {
@@ -414,22 +417,49 @@ final class PlaybackModel {
         item.seek(to: precise, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             Task { @MainActor [weak self] in
                 guard let self, let current = player.currentItem, ObjectIdentifier(current) == itemID,
-                      let completed = nativeSeek.complete(request.id) else { return }
-                seekTimeout?.cancel(); seekTimeout = nil
-                seeking = false
-                guard finished else { nativeSeekFailed(current, request: completed, timedOut: false); return }
-                let actual = player.currentTime().seconds
-                if actual.isFinite {
-                    position = max(0, actual)
-                    nativeClock.rebase(to: position)
+                      nativeSeek.request?.id == request.id else { return }
+                let pausedRemote = !wantsPlayback && (current.asset as? AVURLAsset)?.url.isFileURL == false
+                if finished, pausedRemote, target < duration - 0.05 {
+                    guard player.status == .readyToPlay, player.rate == 0 else {
+                        completeNativeSeek(current, requestID: request.id, finished: false, restarting: false)
+                        return
+                    }
+                    // A paused remote seek can finish before its target has any readable audio.
+                    nativeSeekPreroll = request.id
+                    #if DEBUG
+                    recordNativeTransportTrace("seek-preroll", item: current)
+                    #endif
+                    player.preroll(atRate: 1) { [weak self] prepared in
+                        Task { @MainActor [weak self] in
+                            guard let self, let active = player.currentItem, ObjectIdentifier(active) == itemID,
+                                  nativeSeekPreroll == request.id, nativeSeek.request?.id == request.id else { return }
+                            nativeSeekPreroll = nil
+                            #if DEBUG
+                            recordNativeTransportTrace(prepared ? "seek-preroll-ready" : "seek-preroll-incomplete", item: active)
+                            #endif
+                            completeNativeSeek(active, requestID: request.id, finished: prepared, restarting: true)
+                        }
+                    }
+                } else {
+                    completeNativeSeek(current, requestID: request.id, finished: finished, restarting: restarting)
                 }
-                if restarting, wantsPlayback, !externalPlayback {
-                    player.play()
-                }
-                refreshTransport()
             }
         }
         publishNowPlaying()
+    }
+
+    private func completeNativeSeek(_ item: AVPlayerItem, requestID: UUID, finished: Bool, restarting: Bool) {
+        guard let completed = nativeSeek.complete(requestID) else { return }
+        seekTimeout?.cancel(); seekTimeout = nil
+        seeking = false
+        guard finished else { nativeSeekFailed(item, request: completed, timedOut: false); return }
+        let actual = player.currentTime().seconds
+        if actual.isFinite {
+            position = max(0, actual)
+            nativeClock.rebase(to: position)
+        }
+        if restarting, wantsPlayback, !externalPlayback { player.play() }
+        refreshTransport()
     }
 
     private func nativeSeekFailed(_ item: AVPlayerItem, request: NativeSeekState.Request, timedOut: Bool) {
@@ -437,6 +467,8 @@ final class PlaybackModel {
         recordNativeTransportTrace(timedOut ? "seek-timeout" : "seek-incomplete", item: item)
         #endif
         // Expire the request before cancellation invokes its completion with finished=false.
+        nativeSeekPreroll = nil
+        player.cancelPendingPrerolls()
         item.cancelPendingSeeks()
         player.pause()
         let actual = player.currentTime().seconds
@@ -450,6 +482,8 @@ final class PlaybackModel {
     private func cancelNativeSeek() {
         nativeSeek.reset()
         seekTimeout?.cancel(); seekTimeout = nil
+        nativeSeekPreroll = nil
+        player.cancelPendingPrerolls()
         seeking = false
         player.currentItem?.cancelPendingSeeks()
     }
@@ -1229,7 +1263,7 @@ final class PlaybackModel {
         } else if streamTimeout == nil, let item = player.currentItem {
             let clock = ContinuousClock()
             let waitingSince = clock.now
-            var deadline = nativeClock.bufferDeadline(since: waitingSince)
+            var deadline = nativeBufferDeadline(item: item, since: waitingSince)
             #if DEBUG
             recordNativeTransportTrace("buffer-armed", item: item, deadline: deadline)
             #endif
@@ -1243,7 +1277,7 @@ final class PlaybackModel {
                     // A delayed transport notification may have hidden real motion from the UI.
                     tick()
                     guard !Task.isCancelled, isBuffering, player.currentItem === item else { return }
-                    deadline = nativeClock.bufferDeadline(since: waitingSince)
+                    deadline = nativeBufferDeadline(item: item, since: waitingSince)
                     if clock.now >= deadline {
                         #if DEBUG
                         recordNativeTransportTrace("buffer-timeout", item: item, deadline: deadline)
@@ -1258,6 +1292,14 @@ final class PlaybackModel {
             }
         }
         publishNowPlaying()
+    }
+
+    private func nativeBufferDeadline(item: AVPlayerItem, since start: ContinuousClock.Instant) -> ContinuousClock.Instant {
+        let reason = player.reasonForWaitingToPlay
+        let waitingForBuffer = item.status == .readyToPlay && !item.isPlaybackBufferEmpty &&
+            player.timeControlStatus == .waitingToPlayAtSpecifiedRate &&
+            (reason == .toMinimizeStalls || reason == .evaluatingBufferingRate)
+        return nativeClock.bufferDeadline(since: start, waitingForBufferedPlayback: waitingForBuffer)
     }
 
     private func publishNowPlaying() {

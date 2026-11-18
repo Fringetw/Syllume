@@ -4,6 +4,8 @@ enum NativePlaybackClockChecks {
         var clock = NativePlaybackClock()
         precondition(clock.observe(0, at: start) == 0)
         precondition(clock.bufferDeadline(since: start) == start + .seconds(7))
+        precondition(clock.bufferDeadline(since: start, waitingForBufferedPlayback: true) == start + .seconds(34),
+                     "A ready item with buffered data can finish the player's startup buffering window")
 
         let coarseSample = start + .seconds(3)
         precondition(clock.observe(3, at: coarseSample) == 3,
@@ -12,6 +14,8 @@ enum NativePlaybackClockChecks {
         precondition(clock.observe(6, at: renewed) == 3)
         precondition(clock.bufferDeadline(since: start) == renewed + .seconds(12),
                      "The stream has a post-start budget since its latest observed motion")
+        precondition(clock.bufferDeadline(since: start, waitingForBufferedPlayback: true) == renewed + .seconds(12),
+                     "Buffered startup grace must not extend a later playback stall")
         precondition(clock.observe(6, at: renewed + .seconds(3)) == 0)
         precondition(clock.bufferDeadline(since: start) == renewed + .seconds(12),
                      "Repeated stale snapshots must not extend the deadline")
