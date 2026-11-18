@@ -173,6 +173,11 @@ struct NowPlayingScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
                     LocalTransportProbe(player: player)
                 }
+                if ProcessInfo.processInfo.arguments.contains("--loopback-seek-fixture") {
+                    Text("定位狀態檢查").font(.system(size: 1)).frame(height: 1)
+                        .accessibilityIdentifier("nativeSeekProbe")
+                        .accessibilityValue("\(player.isSeeking ? "locating" : "idle")|\(player.diagnosticPlaybackProblem?.nativeCode ?? 0)")
+                }
                 if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
                     ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
                     Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
@@ -367,6 +372,11 @@ private struct LocalTransportProbe: View {
     var body: some View {
         Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
             .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+        if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
+            Text("原生串流取樣").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("nativeTransportDebugProbe")
+                .accessibilityValue(player.nativeTransportDebugProbe)
+        }
     }
 }
 #endif

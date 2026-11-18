@@ -172,7 +172,8 @@ final class PlatformConnection {
                 return LibraryPage(entries: [], next: nil)
             }
             return LibraryPage(entries: [LibraryEntry(id: "fixture-row", title: "潮汐之間", subtitle: "Syllume 示範音軌",
-                url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 30)], next: slow ? "fixture-next" : nil)
+                url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!,
+                duration: ProcessInfo.processInfo.arguments.contains("--loopback-seek-fixture") ? 150 : 30)], next: slow ? "fixture-next" : nil)
         }
         #endif
         let revision = sessionID

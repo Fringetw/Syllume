@@ -27,9 +27,9 @@ class RangeAudioServerTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
 
-    def start_server(self, **options):
+    def start_server(self, media=MEDIA, **options):
         self.log = io.StringIO()
-        self.server = AudioServer(MEDIA, self.log, **options)
+        self.server = AudioServer(media, self.log, **options)
         self.worker = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.02})
         self.worker.start()
         self.addCleanup(self.stop_server)
@@ -41,20 +41,22 @@ class RangeAudioServerTests(unittest.TestCase):
         self.server.server_close()
         self.assertFalse(self.worker.is_alive())
 
-    def request(self, method="GET", headers=None):
+    def request(self, method="GET", headers=None, path="/audio"):
         client = HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)
         try:
-            client.request(method, "/audio", headers=headers or {})
+            client.request(method, path, headers=headers or {})
             response = client.getresponse()
             return response.status, dict(response.getheaders()), response.read()
         finally:
             client.close()
 
-    def records(self, count):
+    def records(self, count, event=None):
         deadline = time.monotonic() + 2
         while True:
             with self.server.log_lock:
                 rows = [json.loads(line) for line in self.log.getvalue().splitlines()]
+            if event is not None:
+                rows = [row for row in rows if row["event"] == event]
             if len(rows) >= count:
                 return rows
             if time.monotonic() >= deadline:
@@ -113,9 +115,9 @@ class RangeAudioServerTests(unittest.TestCase):
             finally:
                 gate.unlink(missing_ok=True)
             self.assertEqual(pending.result(timeout=2)[::2], (200, MEDIA))
-        self.assertGreaterEqual(self.records(2)[1]["elapsedMs"], 140)
+        self.assertGreaterEqual(self.records(1, event="response")[0]["elapsedMs"], 140)
         self.assertEqual(self.request()[::2], (200, MEDIA))
-        self.assertGreaterEqual(self.records(4)[3]["elapsedMs"], 95)
+        self.assertGreaterEqual(self.records(2, event="response")[1]["elapsedMs"], 95)
 
     def test_shutdown_releases_a_stalled_response(self):
         gate = self.root / "stall"
@@ -126,19 +128,75 @@ class RangeAudioServerTests(unittest.TestCase):
         client.request("GET", "/audio")
         self.assertEqual(client.getresponse().status, 200)
         self.server.stopping.set()
-        response = self.records(2)[1]
+        response = self.records(1, event="response")[0]
         self.assertEqual(response["bodyBytes"], 0)
         self.assertTrue(gate.exists())
 
+    def test_control_routes_require_opt_in(self):
+        self.start_server()
+        for path in ("/control/stall", "/control/resume"):
+            self.assertEqual(self.request("POST", path=path)[0], 404)
+        self.assertEqual(self.request()[::2], (200, MEDIA))
+
+    def test_prefix_limit_applies_across_ranges_until_resume(self):
+        self.start_server(allow_control=True, stall_after_byte=5)
+        self.assertEqual(self.request(headers={"Range": "bytes=0-4"})[::2], (206, b"01234"))
+        with ThreadPoolExecutor(max_workers=2) as readers:
+            full = readers.submit(self.request)
+            suffix = readers.submit(self.request, headers={"Range": "bytes=10-15"})
+            try:
+                stalled = self.records(2, event="stall")
+                self.assertEqual(sorted((row["offset"], row["bodyBytes"]) for row in stalled), [(5, 5), (10, 0)])
+                for pending in (full, suffix):
+                    with self.assertRaises(TimeoutError):
+                        pending.result(timeout=0.05)
+            finally:
+                status, headers, body = self.request("POST", path="/control/resume")
+                self.assertEqual((status, headers["Connection"], body), (204, "close", b""))
+            self.assertEqual(full.result(timeout=2)[::2], (200, MEDIA))
+            self.assertEqual(suffix.result(timeout=2)[::2], (206, b"abcdef"))
+        self.assertEqual(self.records(1, event="control")[0]["action"], "resume")
+
+    def test_control_stall_holds_ongoing_and_new_bodies(self):
+        media = MEDIA * 4
+        self.start_server(media, allow_control=True, bytes_per_second=128)
+        with closing(HTTPConnection("127.0.0.1", self.server.server_port, timeout=3)) as client:
+            client.request("GET", "/audio")
+            response = client.getresponse()
+            prefix = response.read(12)
+            self.assertEqual(prefix, media[:12])
+            for _ in range(2):
+                self.assertEqual(self.request("POST", path="/control/stall")[0], 204)
+            with ThreadPoolExecutor(max_workers=2) as readers:
+                remainder = readers.submit(response.read)
+                suffix = readers.submit(self.request, headers={"Range": "bytes=40-63"})
+                try:
+                    stalled = self.records(2, event="stall")
+                    offsets = {row["id"]: row for row in stalled}
+                    self.assertGreaterEqual(offsets[1]["offset"], 12)
+                    self.assertLess(offsets[1]["offset"], len(media))
+                    self.assertEqual((offsets[2]["offset"], offsets[2]["bodyBytes"]), (40, 0))
+                    for pending in (remainder, suffix):
+                        with self.assertRaises(TimeoutError):
+                            pending.result(timeout=0.05)
+                finally:
+                    for _ in range(2):
+                        self.assertEqual(self.request("POST", path="/control/resume")[0], 204)
+                self.assertEqual(prefix + remainder.result(timeout=2), media)
+                self.assertEqual(suffix.result(timeout=2)[::2], (206, media[40:]))
+        self.assertEqual([row["action"] for row in self.records(4, event="control")],
+                         ["stall", "stall", "resume", "resume"])
+
     def test_cli_publishes_loopback_url_after_listening(self):
-        media = self.root / "tide.m4a"
+        media = self.root / "tide.WAV"
         media.write_bytes(MEDIA)
         ready = self.root / "ready.json"
         log = self.root / "requests.jsonl"
         script = Path(__file__).with_name("range_audio_server.py")
         published = False
         with subprocess.Popen([sys.executable, str(script), "--media", str(media),
-                               "--ready-file", str(ready), "--log", str(log)],
+                               "--ready-file", str(ready), "--log", str(log),
+                               "--allow-control", "--stall-after-byte", "3"],
                               stderr=subprocess.PIPE, text=True) as server:
             try:
                 deadline = time.monotonic() + 15
@@ -152,6 +210,14 @@ class RangeAudioServerTests(unittest.TestCase):
                         client.request("GET", url.path, headers={"Range": "bytes=0-2"})
                         response = client.getresponse()
                         self.assertEqual((response.status, response.read()), (206, b"012"))
+                        self.assertEqual(response.getheader("Content-Type"), "audio/wav")
+                    with closing(HTTPConnection(url.hostname, url.port, timeout=3)) as client:
+                        client.request("POST", "/control/resume")
+                        self.assertEqual(client.getresponse().status, 204)
+                    with closing(HTTPConnection(url.hostname, url.port, timeout=3)) as client:
+                        client.request("GET", url.path, headers={"Range": "bytes=3-4"})
+                        response = client.getresponse()
+                        self.assertEqual((response.status, response.read()), (206, b"34"))
             finally:
                 server.terminate()
                 try:

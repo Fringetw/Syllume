@@ -1,4 +1,5 @@
 import XCTest
+import Network
 
 @MainActor
 final class SyllumeUITests: XCTestCase {
@@ -113,13 +114,20 @@ final class SyllumeUITests: XCTestCase {
         let ready = expectation(for: NSPredicate(format: "value == %@", "已就緒 · GenSenRounded2JP-M"), evaluatedWith: stage)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 90), .completed, "Sonnet: \(String(describing: stage.value))")
         if toggle.label == "播放" { toggle.tap() }
+        let mediaProbe = app.staticTexts["localTransportProbe"]
+        let playing = expectation(for: NSPredicate { _, _ in
+            let fields = (mediaProbe.value as? String ?? "").split(separator: "|")
+            guard fields.count == 2, let time = Double(fields[0]), let rate = Double(fields[1]) else { return false }
+            return time.isFinite && time > 0.2 && rate > 0
+        }, evaluatedWith: mediaProbe)
+        XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 20), .completed,
+                       "Expected the native sample to advance; got \(String(describing: mediaProbe.value))")
         XCTAssertEqual(toggle.label, "暫停")
         wait(2)
         capture(app, name: "Lyrics-playing-02")
         wait(3)
         capture(app, name: "Lyrics-playing-05")
         toggle.tap()
-        let mediaProbe = app.staticTexts["localTransportProbe"]
         let pausedTime = waitForPausedNativeClock(mediaProbe)
         XCTAssertEqual(toggle.label, "播放")
         capture(app, name: "Lyrics-paused")
@@ -378,9 +386,10 @@ final class SyllumeUITests: XCTestCase {
         continueAfterFailure = false
         let app = try openLoopbackPlaylistTrack()
         let clock = app.staticTexts["localTransportProbe"]
+        let trace = app.staticTexts["nativeTransportDebugProbe"]
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "測試 HTTP 音源")).firstMatch
             .waitForExistence(timeout: 20))
-        waitForLoopbackAdvance(clock, media: "http")
+        waitForLoopbackAdvance(clock, media: "http", trace: trace)
 
         let toggle = app.buttons["playerToggle"]
         if toggle.label == "暫停" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
@@ -409,7 +418,69 @@ final class SyllumeUITests: XCTestCase {
         capture(app, name: "Syllume-HTTP-stream-fallback")
     }
 
-    private func openLoopbackPlaylistTrack() throws -> XCUIApplication {
+    func testNativePausedSeekEndsWhenHTTPStopsResponding() throws {
+        continueAfterFailure = false
+        let app = try openLoopbackPlaylistTrack(seekFixture: true)
+        let clock = app.staticTexts["localTransportProbe"]
+        waitForLoopbackAdvance(clock, media: "http", trace: app.staticTexts["nativeTransportDebugProbe"])
+        let toggle = app.buttons["playerToggle"]
+        if toggle.label == "暫停" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|0.0|http|none"), evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
+        try setLoopbackControl("stall")
+
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        progress.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
+        let seek = app.staticTexts["nativeSeekProbe"]
+        let ended = expectation(for: NSPredicate(format: "value == %@", "idle|-5"), evaluatedWith: seek)
+        XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 20), .completed,
+                       "The stalled paused seek must terminate. State \(String(describing: seek.value)), clock \(String(describing: clock.value))")
+        XCTAssertTrue((clock.value as? String ?? "").contains("|0.0|http|"))
+        XCTAssertEqual(toggle.label, "播放")
+        capture(app, name: "Syllume-HTTP-paused-seek-timeout")
+
+        try setLoopbackControl("resume")
+        progress.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.5)).tap()
+        let retried = expectation(for: NSPredicate { _, _ in
+            let fields = (clock.value as? String ?? "").split(separator: "|")
+            guard fields.count == 4, let time = Double(fields[0]), fields[1] == "0.0", fields[2] == "http" else { return false }
+            return abs(time - 7.5) < 1.2 && seek.value as? String == "idle|0"
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [retried], timeout: 20), .completed,
+                       "A new paused seek must recover after HTTP resumes. \(String(describing: clock.value))")
+        capture(app, name: "Syllume-HTTP-paused-seek-recovered")
+    }
+
+    private func setLoopbackControl(_ action: String) throws {
+        guard ["stall", "resume"].contains(action),
+              let endpoint = ProcessInfo.processInfo.environment["SYLLUME_TEST_RANGE_AUDIO_URL"],
+              let parts = URLComponents(string: endpoint), parts.host == "127.0.0.1", let port = parts.port,
+              (1...65535).contains(port),
+              let networkPort = NWEndpoint.Port(rawValue: UInt16(port)) else {
+            throw XCTSkip("Requires a loopback audio fixture with control enabled.")
+        }
+        let connection = NWConnection(host: "127.0.0.1", port: networkPort, using: .tcp)
+        defer { connection.cancel() }
+        let completed = expectation(description: "Loopback HTTP control \(action)")
+        let request = "POST /control/\(action) HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        connection.stateUpdateHandler = { state in
+            if case .ready = state {
+                connection.send(content: Data(request.utf8), completion: .contentProcessed { error in
+                    XCTAssertNil(error)
+                    connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, _, receiveError in
+                        XCTAssertNil(receiveError)
+                        let response = data.flatMap { String(data: $0, encoding: .utf8) } ?? ""
+                        XCTAssertTrue(response.hasPrefix("HTTP/1.1 204"), response)
+                        completed.fulfill()
+                    }
+                })
+            }
+        }
+        connection.start(queue: .global(qos: .userInitiated))
+        XCTAssertEqual(XCTWaiter.wait(for: [completed], timeout: 10), .completed)
+    }
+
+    private func openLoopbackPlaylistTrack(seekFixture: Bool = false) throws -> XCUIApplication {
         guard let endpoint = ProcessInfo.processInfo.environment["SYLLUME_TEST_RANGE_AUDIO_URL"] else {
             throw XCTSkip("Requires the loopback HTTP audio fixture from the macOS workflow.")
         }
@@ -417,6 +488,7 @@ final class SyllumeUITests: XCTestCase {
         app.launchArguments = ["--loopback-stream-fixture", "--youtube-sync-fixture", "--youtube-sync-reset",
                                "--subtitle-fixture", "--playback-probe", "-Folia.EnergySavingAnimation", "YES",
                                "-Folia.LyricDisplayMode", "cover"]
+        if seekFixture { app.launchArguments.append("--loopback-seek-fixture") }
         app.launchEnvironment["SYLLUME_TEST_RANGE_AUDIO_URL"] = endpoint
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
@@ -428,13 +500,23 @@ final class SyllumeUITests: XCTestCase {
     }
 
     private func waitForLoopbackAdvance(_ clock: XCUIElement, media: String, after problem: String = "none",
+                                        trace: XCUIElement? = nil,
                                         file: StaticString = #filePath, line: UInt = #line) {
         let advancing = expectation(for: NSPredicate { _, _ in
             let sample = (clock.value as? String ?? "").split(separator: "|")
             guard sample.count == 4, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
             return time > 0.3 && time.isFinite && rate > 0 && sample[2] == media && sample[3] == problem
         }, evaluatedWith: clock)
-        XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 20), .completed,
+        let result = XCTWaiter.wait(for: [advancing], timeout: 20)
+        if result != .completed, let trace {
+            let evidence = trace.value as? String ?? "No native transport trace"
+            let attachment = XCTAttachment(string: evidence)
+            attachment.name = "Native HTTP transport trace"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            print(evidence)
+        }
+        XCTAssertEqual(result, .completed,
                        "Expected \(media) after \(problem) to advance; observed \(String(describing: clock.value))", file: file, line: line)
     }
 

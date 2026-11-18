@@ -98,6 +98,46 @@ final class PlaybackModel {
         current != nil && !externalPlayback && embeddedVideo == nil && (current?.source != .catalogue || error == nil)
     }
     #if DEBUG
+    private var nativeTransportTrace: [String] = []
+    var nativeTransportDebugProbe: String {
+        _ = position; _ = isPlaying; _ = isBuffering
+        return (nativeTransportTrace + ["current " + nativeTransportSnapshot(item: player.currentItem)])
+            .joined(separator: "\n")
+    }
+
+    private func recordNativeTransportTrace(_ event: String, item: AVPlayerItem?, deadline: ContinuousClock.Instant? = nil) {
+        guard ProcessInfo.processInfo.arguments.contains("--playback-probe") else { return }
+        let details = nativeTransportSnapshot(item: item)
+        let remaining = deadline.map { ContinuousClock().now.duration(to: $0) }
+        let wait = remaining.map { String(describing: $0) } ?? "none"
+        let entry = String(format: "%.3f %@ ", ProcessInfo.processInfo.systemUptime, event)
+            + details + " deadlineIn=" + wait
+        nativeTransportTrace.append(entry)
+        if nativeTransportTrace.count > 12 { nativeTransportTrace.removeFirst(nativeTransportTrace.count - 12) }
+        print("Syllume native transport: " + entry)
+    }
+
+    private func nativeTransportSnapshot(item: AVPlayerItem?) -> String {
+        let state: String
+        switch player.timeControlStatus {
+        case .paused: state = "paused"
+        case .playing: state = "playing"
+        case .waitingToPlayAtSpecifiedRate: state = "waiting"
+        @unknown default: state = "unknown"
+        }
+        let ranges = (item?.loadedTimeRanges ?? []).map { $0.timeRangeValue }
+        let end = ranges.map { CMTimeRangeGetEnd($0).seconds }.filter { $0.isFinite }.max() ?? -1
+        let identity = item.map { String(describing: ObjectIdentifier($0)) } ?? "none"
+        let clock = String(format: "time=%.3f rate=%.1f bufferEnd=%.3f", player.currentTime().seconds, player.rate, end)
+        let fields = ["item=" + identity, clock, "state=" + state,
+            "waiting=" + (player.reasonForWaitingToPlay?.rawValue ?? "none"),
+            "empty=" + String(item?.isPlaybackBufferEmpty ?? false),
+            "keepUp=" + String(item?.isPlaybackLikelyToKeepUp ?? false),
+            "full=" + String(item?.isPlaybackBufferFull ?? false),
+            "wants=" + String(wantsPlayback), "seeking=" + String(seeking)]
+        return fields.joined(separator: " ")
+    }
+
     var mediaProbe: String {
         // Observe the clock even in cover mode or when a downloaded track has no lyrics.
         _ = position; _ = isPlaying; _ = isBuffering
@@ -127,7 +167,8 @@ final class PlaybackModel {
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
-    @ObservationIgnored private var seekGeneration = UUID()
+    @ObservationIgnored private var nativeSeek = NativeSeekState()
+    @ObservationIgnored private var seekTimeout: Task<Void, Never>?
     private var seeking = false
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var streamTimeout: Task<Void, Never>?
@@ -348,31 +389,69 @@ final class PlaybackModel {
     }
 
     private func seekNativeItem(_ item: AVPlayerItem, to target: Double, restarting: Bool = false) {
-        let revision = UUID()
+        let clock = ContinuousClock()
+        let request = nativeSeek.begin(from: player.currentTime().seconds, at: clock.now)
         let itemID = ObjectIdentifier(item)
-        seekGeneration = revision
+        seekTimeout?.cancel()
+        streamTimeout?.cancel(); streamTimeout = nil
+        if diagnosticPlaybackProblem?.nativeCode == -5 {
+            diagnosticPlaybackProblem = nil
+            diagnosticPlaybackDetails = nil
+            error = nil
+        }
         seeking = true
         lyricClockRunning = false
         position = target
+        seekTimeout = Task { [weak self, weak item] in
+            do { try await clock.sleep(until: request.deadline) } catch { return }
+            guard let self, let item, !Task.isCancelled, player.currentItem === item,
+                  let expired = nativeSeek.expire(request.id, at: clock.now) else { return }
+            seekTimeout = nil
+            seeking = false
+            nativeSeekFailed(item, request: expired, timedOut: true)
+        }
         let precise = CMTime(seconds: target, preferredTimescale: 600)
         item.seek(to: precise, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
             Task { @MainActor [weak self] in
-                guard let self, seekGeneration == revision, let current = player.currentItem,
-                      ObjectIdentifier(current) == itemID else { return }
+                guard let self, let current = player.currentItem, ObjectIdentifier(current) == itemID,
+                      let completed = nativeSeek.complete(request.id) else { return }
+                seekTimeout?.cancel(); seekTimeout = nil
                 seeking = false
+                guard finished else { nativeSeekFailed(current, request: completed, timedOut: false); return }
                 let actual = player.currentTime().seconds
                 if actual.isFinite {
                     position = max(0, actual)
                     nativeClock.rebase(to: position)
                 }
                 if restarting, wantsPlayback, !externalPlayback {
-                    guard finished else { playbackFailed(item: current); return }
                     player.play()
                 }
                 refreshTransport()
             }
         }
         publishNowPlaying()
+    }
+
+    private func nativeSeekFailed(_ item: AVPlayerItem, request: NativeSeekState.Request, timedOut: Bool) {
+        #if DEBUG
+        recordNativeTransportTrace(timedOut ? "seek-timeout" : "seek-incomplete", item: item)
+        #endif
+        // Expire the request before cancellation invokes its completion with finished=false.
+        item.cancelPendingSeeks()
+        player.pause()
+        let actual = player.currentTime().seconds
+        position = actual.isFinite && actual >= 0 ? actual : request.previousPosition
+        nativeClock.rebase(to: position)
+        let problem = DiagnosticProblem(code: timedOut ? .timeout : .timeline, nativeCode: -5)
+        fail(timedOut ? "音訊定位逾時。可重新選擇進度或重試播放。" : "音訊定位未完成。可重新選擇進度或重試播放。",
+             problem: problem)
+    }
+
+    private func cancelNativeSeek() {
+        nativeSeek.reset()
+        seekTimeout?.cancel(); seekTimeout = nil
+        seeking = false
+        player.currentItem?.cancelPendingSeeks()
     }
 
     func removeFromQueue(_ id: String) {
@@ -492,6 +571,10 @@ final class PlaybackModel {
 
     func tick() {
         guard let item = player.currentItem else { return }
+        if wantsPlayback, !seeking, let end = item.loadedTimeRanges.map({ CMTimeRangeGetEnd($0.timeRangeValue).seconds })
+            .filter({ $0.isFinite }).max() {
+            nativeClock.observeBuffer(through: end, at: ContinuousClock().now)
+        }
         let seconds = player.currentTime().seconds
         if !seeking, seconds.isFinite {
             if abs(position - seconds) > 0.01 { position = max(0, seconds) }
@@ -531,6 +614,7 @@ final class PlaybackModel {
 
     func playbackFailed(item: AVPlayerItem) {
         guard player.currentItem === item else { return }
+        cancelNativeSeek()
         if let track = current, track.source == .catalogue {
             let status = item.errorLog()?.events.last?.errorStatusCode
             let problem: DiagnosticProblem
@@ -640,8 +724,7 @@ final class PlaybackModel {
     }
 
     private func install(_ asset: AVURLAsset) {
-        seekGeneration = UUID()
-        seeking = false
+        cancelNativeSeek()
         nativeReady = false
         nativeHasAdvanced = false
         nativeClock = NativePlaybackClock()
@@ -1068,8 +1151,7 @@ final class PlaybackModel {
         diagnosticPlaybackProblem = nil
         diagnosticPlaybackDetails = nil
         generation = UUID()
-        seekGeneration = UUID()
-        seeking = false
+        cancelNativeSeek()
         resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
         streamTimeout?.cancel(); streamTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
@@ -1139,21 +1221,39 @@ final class PlaybackModel {
             }
         }
         let remote = (player.currentItem?.asset as? AVURLAsset)?.url.isFileURL == false
-        if !isBuffering || !remote {
+        if !isBuffering || !remote || seeking {
+            #if DEBUG
+            if streamTimeout != nil { recordNativeTransportTrace("buffer-ended", item: player.currentItem) }
+            #endif
             streamTimeout?.cancel(); streamTimeout = nil
         } else if streamTimeout == nil, let item = player.currentItem {
             let clock = ContinuousClock()
             let waitingSince = clock.now
             var deadline = nativeClock.bufferDeadline(since: waitingSince)
+            #if DEBUG
+            recordNativeTransportTrace("buffer-armed", item: item, deadline: deadline)
+            #endif
             streamTimeout = Task { [weak self, weak item] in
                 while !Task.isCancelled {
                     do { try await clock.sleep(until: deadline) } catch { return }
                     guard let self, let item, !Task.isCancelled, isBuffering, player.currentItem === item else { return }
+                    #if DEBUG
+                    recordNativeTransportTrace("buffer-check", item: item, deadline: deadline)
+                    #endif
                     // A delayed transport notification may have hidden real motion from the UI.
                     tick()
                     guard !Task.isCancelled, isBuffering, player.currentItem === item else { return }
                     deadline = nativeClock.bufferDeadline(since: waitingSince)
-                    if clock.now >= deadline { playbackFailed(item: item); return }
+                    if clock.now >= deadline {
+                        #if DEBUG
+                        recordNativeTransportTrace("buffer-timeout", item: item, deadline: deadline)
+                        #endif
+                        playbackFailed(item: item)
+                        return
+                    }
+                    #if DEBUG
+                    recordNativeTransportTrace("buffer-extended", item: item, deadline: deadline)
+                    #endif
                 }
             }
         }

@@ -141,6 +141,7 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStreamsAndSeeks \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackFallsBackAfterTimeout \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testNativePausedSeekEndsWhenHTTPStopsResponding \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator test summaries, screenshots and diagnostic reports
         if: always()
@@ -212,10 +213,28 @@ jobs:
             mkdir -p "$fixture" || exit 1
             rate=0
             if [ "$mode" = paced ]; then rate=65536; fi
+            media=ios/Syllume/Resources/tide.m4a
+            control=()
+            if [ "$mode" = seek ]; then
+              media="$fixture/long.wav"
+              rate=65536
+              control=(--allow-control)
+              python3 - "$media" <<'PY' || exit 1
+          import math, struct, sys, wave
+          sample_rate = 16000
+          samples = b''.join(struct.pack('<h', round(5000 * math.sin(2 * math.pi * 220 * n / sample_rate))) for n in range(sample_rate))
+          with wave.open(sys.argv[1], 'wb') as output:
+              output.setnchannels(1)
+              output.setsampwidth(2)
+              output.setframerate(sample_rate)
+              for _ in range(150):
+                  output.writeframesraw(samples)
+          PY
+            fi
             if [ "$mode" = stalled ]; then touch "$fixture/stalled" || exit 1; fi
-            python3 ios/Checks/range_audio_server.py --media ios/Syllume/Resources/tide.m4a \
+            python3 ios/Checks/range_audio_server.py --media "$media" \
               --ready-file "$fixture/ready.json" --log "$fixture/http.jsonl" \
-              --stall-file "$fixture/stalled" --bytes-per-second "$rate" &
+              --stall-file "$fixture/stalled" --bytes-per-second "$rate" "${control[@]}" &
             fixture_pid=$!
             trap 'kill "$fixture_pid" 2>/dev/null || true; wait "$fixture_pid" 2>/dev/null || true' EXIT
             for ((attempt=0; attempt<150; attempt++)); do
@@ -241,17 +260,21 @@ jobs:
               assert transferred == 0, "The blocked stream must send no media body"
           else:
               assert transferred > 0 and any(r['status'] == 206 for r in requests.values()), "Expected HTTP range playback"
+          if sys.argv[2] == 'seek':
+              assert [r['action'] for r in records if r['event'] == 'control'] == ['stall', 'resume'], "Expected a controlled seek stall and recovery"
+              assert any(r['event'] == 'stall' and r['offset'] > 0 for r in records), "The paused seek must require unavailable bytes"
           PY
             exit "$status"
           )
           run_http_check SyllumeIOS26HTTP testNativeLoopbackStreamsAndSeeks playing || failed=1
           run_http_check SyllumeIOS26HTTPPaced testNativeLoopbackStreamsAndSeeks paced || failed=1
           run_http_check SyllumeIOS26HTTPStall testNativeLoopbackFallsBackAfterTimeout stalled || failed=1
+          run_http_check SyllumeIOS26HTTPSeek testNativePausedSeekEndsWhenHTTPStopsResponding seek || failed=1
           exit "$failed"
       - name: Export iOS 26 test evidence
         if: always()
         run: |
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall; do
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
