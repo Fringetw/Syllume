@@ -24,7 +24,7 @@ jobs:
     # Same-repository branches are already checked on push; keep PR checks for forks.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
     runs-on: macos-15-intel
-    timeout-minutes: 70
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@v4
       - name: Configure maintainer Google login
@@ -145,12 +145,37 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStreamsAndSeeks \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackFallsBackAfterTimeout \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativePausedSeekEndsWhenHTTPStopsResponding \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText \
+            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+      - name: Verify large text on the iPhone SE YouTube player
+        if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
+        timeout-minutes: 12
+        run: |
+          compact_id=$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          groups = json.load(sys.stdin)["devices"].values()
+          device = next((d for group in groups if any(d["udid"] == sys.argv[1] for d in group)
+                         for d in group if d["name"] == "iPhone SE (3rd generation)"), None)
+          if device is None:
+              sys.exit("The current iOS runtime needs an iPhone SE (3rd generation) simulator.")
+          print(device["udid"])
+          ' "$FOLIA_SIMULATOR_ID")
+          if [ "$compact_id" != "$FOLIA_SIMULATOR_ID" ]; then
+            xcrun simctl shutdown "$FOLIA_SIMULATOR_ID" 2>/dev/null || true
+          fi
+          xcrun simctl boot "$compact_id" || xcrun simctl list devices booted | grep -F "$compact_id"
+          xcrun simctl bootstatus "$compact_id" -b
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+            -destination "platform=iOS Simulator,id=$compact_id" \
+            -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" \
+            -resultBundlePath "$RUNNER_TEMP/SyllumeCompactYouTube.xcresult" \
+            -only-testing:SyllumeUITests/SyllumeUITests/testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Export simulator test summaries, screenshots and diagnostic reports
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
-          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeRecordedSongsUI SyllumeUI; do
+          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeRecordedSongsUI SyllumeUI SyllumeCompactYouTube; do
             if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
               if summary=$(xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/$result.xcresult"); then
                 printf '%s\n' "$summary" > "$RUNNER_TEMP/SyllumeUIScreenshots/$result-summary.json"

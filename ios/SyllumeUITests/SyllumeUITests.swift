@@ -841,6 +841,77 @@ final class SyllumeUITests: XCTestCase {
                        "Expected the paused iframe fixture to seek near 90s. Got \(String(describing: transport.value)).")
     }
 
+    func testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText() {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["--accessibility-text-fixture", "--youtube-sync-fixture", "--youtube-sync-reset",
+                               "--syllume-recording-regression", "--youtube-playback-fixture", "--subtitle-fixture",
+                               "--subtitle-reset", "--presentation-reset", "-Folia.EnergySavingAnimation", "YES"]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
+        app.launch()
+        XCTAssertLessThanOrEqual(app.frame.width, 375)
+        XCTAssertLessThanOrEqual(app.frame.height, 667, "Run this case on the iPhone SE simulator.")
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let jane = app.buttons["youtubeSong-recording-jane"]
+        XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
+
+        let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+        let transport = app.staticTexts["youtubeTransportProbe"]
+        XCTAssertTrue(video.waitForExistence(timeout: 20))
+        let originalVideoFrame = video.frame
+        XCTAssertGreaterThanOrEqual(originalVideoFrame.width, 200)
+        XCTAssertGreaterThanOrEqual(originalVideoFrame.height, 200)
+        XCTAssertTrue(app.frame.contains(originalVideoFrame))
+        waitForYouTubePlayback(transport, above: 0.5, timeout: 45, "The visible fixture must start playing.")
+
+        let toggle = app.buttons["playerToggle"]
+        let rail = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        let style = app.buttons["lyricStyleMenu"]
+        for control in [toggle, rail, style] {
+            XCTAssertTrue(control.isHittable)
+            XCTAssertGreaterThanOrEqual(control.frame.height, 44)
+            XCTAssertTrue(app.frame.contains(control.frame))
+            XCTAssertFalse(originalVideoFrame.intersects(control.frame))
+        }
+        capture(app, name: "Compact-YouTube-SE-large-text-playback")
+
+        toggle.tap()
+        let stopped = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [stopped], timeout: 15), .completed)
+        // Seek within the fixture's final lyric cue (3–8 seconds).
+        rail.coordinate(withNormalizedOffset: CGVector(dx: 0.025, dy: 0.5)).tap()
+        let sought = expectation(for: NSPredicate { _, _ in
+            let value = (transport.value as? String ?? "").split(separator: "|")
+            guard value.count == 2, value[1] == "paused", let time = Double(value[0]) else { return false }
+            return time > 4 && time < 7.8
+        }, evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 18), .completed,
+                       "The paused iframe should acknowledge the seek. Got \(String(describing: transport.value)).")
+
+        style.tap()
+        let mistOption = app.buttons["霧盞"]
+        XCTAssertTrue(mistOption.waitForExistence(timeout: 10)); mistOption.tap()
+        let details = app.scrollViews["compactPlaybackDetails"].firstMatch
+        XCTAssertTrue(details.waitForExistence(timeout: 10))
+        let progressFrame = rail.frame
+        let title = details.staticTexts["JANE DOE"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        let titleY = title.frame.minY
+        details.swipeUp()
+        XCTAssertTrue(!title.isHittable || title.frame.minY < titleY, "Song details should scroll below the fixed player.")
+        let line = details.descendants(matching: .any)["mistLyricCurrentLine"].firstMatch
+        XCTAssertTrue(line.waitForExistence(timeout: 10))
+        XCTAssertTrue(details.frame.intersects(line.frame), "The synchronized lyrics should be visible after scrolling.")
+        XCTAssertEqual(line.label, "風聲")
+        XCTAssertEqual(video.frame, originalVideoFrame)
+        XCTAssertEqual(rail.frame, progressFrame)
+        XCTAssertTrue(toggle.isHittable)
+        capture(app, name: "Compact-YouTube-SE-large-text-lyrics")
+    }
+
     func testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics() {
         continueAfterFailure = false
         let app = XCUIApplication()

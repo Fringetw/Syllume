@@ -47,167 +47,41 @@ struct NowPlayingScreen: View {
 
     var body: some View {
         if let track = player.current {
-            VStack(spacing: player.embeddedVideo == nil ? 14 : 8) {
-              if controlsVisible {
-                HStack {
-                    Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }
-                        .accessibilityLabel("關閉播放畫面")
-                    Spacer()
-                    Text("現正播放").font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary).lineLimit(1)
-                    Spacer()
-                    Button { showingSearch = true } label: { Image(systemName: "text.magnifyingglass").frame(width: 44, height: 44) }
-                        .accessibilityLabel("尋找歌詞")
-                    Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
-                        .accessibilityLabel("進入沉浸模式")
-                    Button { queueCoversVideo = true; showingQueue = true } label: {
-                        Image(systemName: "list.bullet").frame(width: 44, height: 44)
-                    }
-                        .accessibilityLabel("播放佇列")
-                }
-                .buttonStyle(SyllumePressStyle(luminous: luminous))
+            GeometryReader { geometry in
+                let compactVideo = player.embeddedVideo != nil &&
+                    (dynamicTypeSize.isAccessibilitySize || geometry.size.height < 650)
+                VStack(spacing: player.embeddedVideo == nil ? 14 : 8) {
+                    if controlsVisible { playbackHeader }
+                    embeddedVideo
 
-                PlaybackStylePicker(mode: $mode)
-                    .frame(maxWidth: 340)
-              }
-
-                if let video = player.embeddedVideo {
-                    YouTubePlayerView(player: video, onUpdate: player.refreshEmbeddedVideo)
-                        .frame(minWidth: 200, maxWidth: .infinity, minHeight: 200, maxHeight: 200)
-                        .id(ObjectIdentifier(video))
-                        .onAppear {
-                            if player.embeddedVideo === video { player.setEmbeddedVideoVisible(videoVisible) }
-                        }
-                        .onDisappear {
-                            if player.embeddedVideo === video { player.setEmbeddedVideoVisible(false) }
-                        }
-                    #if DEBUG
-                    if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
-                        Text("YouTube 時間軸檢查").font(.system(size: 1)).frame(height: 1)
-                            .accessibilityIdentifier("youtubeTransportProbe")
-                            .accessibilityValue(String(format: "%.3f|%@", video.mediaSampleTime, player.isPlaying ? "playing" : "paused"))
-                    }
-                    #endif
-                }
-
-                Group {
-                    switch mode {
-                    case .lumiere:
-                        if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview) }
-                        else if let index = subtitles.timeline.activeIndex(at: stageTime),
-                                let translation = subtitles.timeline.lines[index].translationText {
-                            let focus = LyricFocus(line: subtitles.timeline.lines[index], position: stageTime)
-                            VStack {
-                                Spacer()
-                                Text(translation).font(SyllumeLyricFont.text(.callout, size: 16)).multilineTextAlignment(.center)
-                                    .padding(.horizontal, 16).padding(.vertical, 7)
-                                    .background(.black.opacity(0.45), in: Capsule())
-                                    .foregroundStyle(accent.opacity(reduceMotion ? 1 : 0.78 + 0.22 * focus.presence))
-                            }.allowsHitTesting(false)
-                        } else { Color.clear }
-                    case .sonnet:
-                        if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview) }
-                        else {
-                            SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
-                                        timeline: subtitles.timeline, revision: subtitles.revision,
-                                        position: stageTime, playing: stagePlaying,
-                                        style: mode.rawValue, rendering: !showingSearch && !showingQueue, translationAccent: accent,
-                                        clockProbe: stageClockProbe(mode.rawValue))
-                        }
-                    case .mist:
-                        if subtitles.timeline.lines.isEmpty {
-                            LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview)
-                        } else {
-                            MistLyricStage(timeline: subtitles.timeline, position: stageTime, accent: accent).id(track.id)
-                        }
-                    case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview).id(track.id)
-                    case .cover: artwork
-                    }
-                }
-                .frame(maxHeight: .infinity)
-                .layoutPriority(1)
-
-              if controlsVisible {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 10) {
-                        if mode != .cover, let image = player.artwork {
-                            Image(uiImage: image).resizable().scaledToFill()
-                                .frame(width: 42, height: 42).clipShape(.rect(cornerRadius: 8))
-                                .accessibilityLabel("目前歌曲封面")
-                                .accessibilityIdentifier("nowPlayingThumbnail")
-                        }
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(track.title).font(.system(.title2, design: .rounded, weight: .bold)).lineLimit(2)
-                                .accessibilityAddTraits(.isHeader)
-                            if !track.subtitle.isEmpty {
-                                Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(1)
+                    if compactVideo {
+                        if controlsVisible { playbackControls(for: track) }
+                        // Keep the official player and its transport outside the scrolling content.
+                        ScrollView {
+                            VStack(spacing: 12) {
+                                if controlsVisible { trackInfo(for: track, wrapsText: true) }
+                                lyricSurface(for: track)
+                                    .frame(height: max(220, min(280, geometry.size.height * 0.42)))
                             }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .accessibilityIdentifier("compactPlaybackDetails")
+                    } else {
+                        lyricSurface(for: track)
+                            .frame(maxHeight: .infinity)
+                            .layoutPriority(1)
+                        if controlsVisible {
+                            trackInfo(for: track, wrapsText: false)
+                            playbackControls(for: track)
                         }
                     }
-                    if let error = player.error {
-                        Text(error).font(.footnote).foregroundStyle(.orange)
-                        if player.offersVideoFallback, player.embeddedVideo == nil {
-                            Button("在 Syllume 播放 YouTube 原片", action: player.requestVideoPlayback)
-                                .font(.footnote.weight(.semibold)).foregroundStyle(accent)
-                                .accessibilityIdentifier("playYouTubeFallback")
-                        }
-                        if let videoID = track.playlistSong?.videoID, let url = YouTubeVideo.musicURL(for: videoID) {
-                            Link("在 YouTube Music 開啟", destination: url)
-                                .font(.footnote).foregroundStyle(accent)
-                                .accessibilityIdentifier("openYouTubeMusic")
-                        }
-                    } else if player.isBuffering, player.audioSource == nil, track.source == .catalogue {
-                        Text("正在尋找可播放的音源…")
-                            .font(.footnote).foregroundStyle(.secondary)
-                    } else if let source = player.audioSource {
-                        Text(source).font(.caption).foregroundStyle(accent)
-                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-
-                TransportControls(player: player, luminous: luminous, accent: accent, preview: $scrubPreview).id(track.id)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 6)
-                    .background { transportPanel }
-                #if DEBUG
-                if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
-                    LocalTransportProbe(player: player)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") ||
-                    ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
-                    Text("定位狀態檢查").font(.system(size: 1)).frame(height: 1)
-                        .accessibilityIdentifier("nativeSeekProbe")
-                        .accessibilityValue("\(player.isSeeking ? "locating" : "idle")|\(player.diagnosticPlaybackProblem?.nativeCode ?? 0)")
-                }
-                if ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
-                    HStack {
-                        Button("模擬延遲片尾") { player.simulateDelayedNativeEnd() }
-                            .accessibilityIdentifier("simulateDelayedNativeEnd")
-                        Button("定位到實際片尾") { player.seekToNativeEndForFixture() }
-                            .accessibilityIdentifier("seekToNativeEnd")
-                    }
-                    .font(.caption2)
-                    .buttonStyle(.bordered)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
-                    ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
-                    Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
-                        .accessibilityIdentifier("systemNowPlayingProbe").accessibilityValue(player.nowPlayingProbe)
-                }
-                if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
-                    Text("商籟動畫時鐘").font(.system(size: 1)).frame(height: 1)
-                        .accessibilityIdentifier("syllumeSonnetClockProbe").accessibilityValue(sonnetClockProbe)
-                    Text("繪光動畫時鐘").font(.system(size: 1)).frame(height: 1)
-                        .accessibilityIdentifier("syllumeLumiereClockProbe").accessibilityValue(lumiereClockProbe)
-                }
-                #endif
-              }
+                .padding(.horizontal, player.embeddedVideo == nil || dynamicTypeSize.isAccessibilitySize ? 18 : 14)
+                .padding(.top, 4)
+                .padding(.bottom, 12)
+                .frame(maxWidth: 630)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(.horizontal, player.embeddedVideo == nil || dynamicTypeSize.isAccessibilitySize ? 18 : 14)
-            .padding(.top, 4)
-            .padding(.bottom, 12)
-            .frame(maxWidth: 630)
-            .frame(maxWidth: .infinity)
             .background { playbackBackground(for: track) }
             .tint(accent)
             .onChange(of: videoVisible, initial: true) { _, visible in player.setVideoSurfaceVisible(visible) }
@@ -255,6 +129,168 @@ struct NowPlayingScreen: View {
         } else {
             Color.clear.onAppear { dismiss() }
         }
+    }
+
+    @ViewBuilder
+    private var playbackHeader: some View {
+        HStack {
+            Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }
+                .accessibilityLabel("關閉播放畫面")
+            Spacer()
+            Text("現正播放").font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary).lineLimit(1)
+            Spacer()
+            Button { showingSearch = true } label: { Image(systemName: "text.magnifyingglass").frame(width: 44, height: 44) }
+                .accessibilityLabel("尋找歌詞")
+            Button { controlsVisible = false } label: { Image(systemName: "viewfinder").frame(width: 44, height: 44) }
+                .accessibilityLabel("進入沉浸模式")
+            Button { queueCoversVideo = true; showingQueue = true } label: {
+                Image(systemName: "list.bullet").frame(width: 44, height: 44)
+            }
+                .accessibilityLabel("播放佇列")
+        }
+        .buttonStyle(SyllumePressStyle(luminous: luminous))
+
+        PlaybackStylePicker(mode: $mode)
+            .frame(maxWidth: 340)
+    }
+
+    @ViewBuilder
+    private var embeddedVideo: some View {
+        if let video = player.embeddedVideo {
+            YouTubePlayerView(player: video, onUpdate: player.refreshEmbeddedVideo)
+                .frame(minWidth: 200, maxWidth: .infinity, minHeight: 200, maxHeight: 200)
+                .id(ObjectIdentifier(video))
+                .onAppear {
+                    if player.embeddedVideo === video { player.setEmbeddedVideoVisible(videoVisible) }
+                }
+                .onDisappear {
+                    if player.embeddedVideo === video { player.setEmbeddedVideoVisible(false) }
+                }
+            #if DEBUG
+            if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+                Text("YouTube 時間軸檢查").font(.system(size: 1)).frame(height: 1)
+                    .accessibilityIdentifier("youtubeTransportProbe")
+                    .accessibilityValue(String(format: "%.3f|%@", video.mediaSampleTime, player.isPlaying ? "playing" : "paused"))
+            }
+            #endif
+        }
+    }
+
+    @ViewBuilder
+    private func lyricSurface(for track: Track) -> some View {
+        switch mode {
+        case .lumiere:
+            if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview) }
+            else if let index = subtitles.timeline.activeIndex(at: stageTime),
+                    let translation = subtitles.timeline.lines[index].translationText {
+                let focus = LyricFocus(line: subtitles.timeline.lines[index], position: stageTime)
+                VStack {
+                    Spacer()
+                    Text(translation).font(SyllumeLyricFont.text(.callout, size: 16)).multilineTextAlignment(.center)
+                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .background(.black.opacity(0.45), in: Capsule())
+                        .foregroundStyle(accent.opacity(reduceMotion ? 1 : 0.78 + 0.22 * focus.presence))
+                }.allowsHitTesting(false)
+            } else { Color.clear }
+        case .sonnet:
+            if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview) }
+            else {
+                SonnetStage(songID: track.id, title: track.title, artist: track.artist ?? "",
+                            timeline: subtitles.timeline, revision: subtitles.revision,
+                            position: stageTime, playing: stagePlaying,
+                            style: mode.rawValue, rendering: !showingSearch && !showingQueue, translationAccent: accent,
+                            clockProbe: stageClockProbe(mode.rawValue))
+            }
+        case .mist:
+            if subtitles.timeline.lines.isEmpty {
+                LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview)
+            } else {
+                MistLyricStage(timeline: subtitles.timeline, position: stageTime, accent: accent).id(track.id)
+            }
+        case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview).id(track.id)
+        case .cover: artwork
+        }
+    }
+
+    @ViewBuilder
+    private func trackInfo(for track: Track, wrapsText: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                if mode != .cover, let image = player.artwork {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: 42, height: 42).clipShape(.rect(cornerRadius: 8))
+                        .accessibilityLabel("目前歌曲封面")
+                        .accessibilityIdentifier("nowPlayingThumbnail")
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(track.title).font(.system(.title2, design: .rounded, weight: .bold)).lineLimit(wrapsText ? nil : 2)
+                        .accessibilityAddTraits(.isHeader)
+                    if !track.subtitle.isEmpty {
+                        Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(wrapsText ? nil : 1)
+                    }
+                }
+            }
+            if let error = player.error {
+                Text(error).font(.footnote).foregroundStyle(.orange)
+                if player.offersVideoFallback, player.embeddedVideo == nil {
+                    Button("在 Syllume 播放 YouTube 原片", action: player.requestVideoPlayback)
+                        .font(.footnote.weight(.semibold)).foregroundStyle(accent)
+                        .accessibilityIdentifier("playYouTubeFallback")
+                }
+                if let videoID = track.playlistSong?.videoID, let url = YouTubeVideo.musicURL(for: videoID) {
+                    Link("在 YouTube Music 開啟", destination: url)
+                        .font(.footnote).foregroundStyle(accent)
+                        .accessibilityIdentifier("openYouTubeMusic")
+                }
+            } else if player.isBuffering, player.audioSource == nil, track.source == .catalogue {
+                Text("正在尋找可播放的音源…")
+                    .font(.footnote).foregroundStyle(.secondary)
+            } else if let source = player.audioSource {
+                Text(source).font(.caption).foregroundStyle(accent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func playbackControls(for track: Track) -> some View {
+        TransportControls(player: player, luminous: luminous, accent: accent, preview: $scrubPreview).id(track.id)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+            .background { transportPanel }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
+            LocalTransportProbe(player: player)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") ||
+            ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
+            Text("定位狀態檢查").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("nativeSeekProbe")
+                .accessibilityValue("\(player.isSeeking ? "locating" : "idle")|\(player.diagnosticPlaybackProblem?.nativeCode ?? 0)")
+        }
+        if ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
+            HStack {
+                Button("模擬延遲片尾") { player.simulateDelayedNativeEnd() }
+                    .accessibilityIdentifier("simulateDelayedNativeEnd")
+                Button("定位到實際片尾") { player.seekToNativeEndForFixture() }
+                    .accessibilityIdentifier("seekToNativeEnd")
+            }
+            .font(.caption2)
+            .buttonStyle(.bordered)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
+            ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
+            Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("systemNowPlayingProbe").accessibilityValue(player.nowPlayingProbe)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") {
+            Text("商籟動畫時鐘").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("syllumeSonnetClockProbe").accessibilityValue(sonnetClockProbe)
+            Text("繪光動畫時鐘").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("syllumeLumiereClockProbe").accessibilityValue(lumiereClockProbe)
+        }
+        #endif
     }
 
     @ViewBuilder
