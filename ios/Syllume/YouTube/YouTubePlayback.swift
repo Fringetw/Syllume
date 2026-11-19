@@ -167,7 +167,8 @@ final class YouTubePlayback {
         if !stalePlay && !stalePause, pendingSeek?.canSettle(snapshot, duration: duration, now: now) != false {
             let advance = snapshot.time - position
             if pendingSeek != nil { lastClockAdvance = now }
-            else if snapshot.state == 1, advance > 0.02, advance <= 1.5 {
+            // A busy WebKit bridge can deliver valid playing samples several seconds apart.
+            else if snapshot.state == 1, advance.isFinite, advance > 0.02 {
                 hasAdvanced = true
                 lastClockAdvance = now
             }

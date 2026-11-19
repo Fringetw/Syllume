@@ -52,6 +52,7 @@ enum NativePlaybackClockChecks {
         precondition(loading.bufferDeadline(since: start) == start + .seconds(26))
         print("PASS: native playback clock accepts coarse samples and buffer delivery while bounding unchanged media")
         checkNativeSeekState()
+        checkNativeEndOrdering()
     }
 
     private static func checkNativeSeekState() {
@@ -80,5 +81,34 @@ enum NativePlaybackClockChecks {
         precondition(nextItem.previousPosition == 0 && seek.complete(nextItem.id) != nil,
                      "The next item's seek must not inherit the old item's confirmed time")
         print("PASS: native seek deadlines, superseded completions, retry and item reset")
+    }
+
+    private static func checkNativeEndOrdering() {
+        let duration = 30.0
+        // Simulate an end callback queued before the user's backward seek. The old
+        // media time can still be at the end while that request is pending.
+        precondition(!NativePlaybackEndPolicy.acceptsNotification(time: 30, duration: duration, seeking: true),
+                     "A queued end event must not replace a pending seek")
+        // Its delivery can also lag behind successful seek completion on the same item.
+        precondition(!NativePlaybackEndPolicy.acceptsNotification(time: 8, duration: duration, seeking: false),
+                     "An old end event must not advance after the real media clock moved away")
+        precondition(NativePlaybackEndPolicy.isAtEnd(time: 30, duration: duration),
+                     "A completed seek to the physical end must permit queue advance or repeat")
+        precondition(NativePlaybackEndPolicy.isAtEnd(time: 29.99, duration: duration))
+        precondition(!NativePlaybackEndPolicy.isAtEnd(time: 29.9, duration: duration),
+                     "A nearby lyric or progress selection is not an end")
+        precondition(!NativePlaybackEndPolicy.isAtEnd(time: 0, duration: 0.02),
+                     "Repeating a short audio item at zero must not recursively finish it")
+        for invalid in [Double.nan, .infinity, -.infinity, -1] {
+            precondition(!NativePlaybackEndPolicy.acceptsNotification(time: invalid, duration: duration, seeking: false))
+        }
+        for invalid in [Double.nan, .infinity, -.infinity, 0, -1] {
+            precondition(!NativePlaybackEndPolicy.isAtEnd(time: duration, duration: invalid),
+                         "An unknown duration cannot synthesize an end after a seek")
+            precondition(NativePlaybackEndPolicy.acceptsNotification(time: duration, duration: invalid, seeking: false),
+                         "An actual end notification still works for streams without a known duration")
+            precondition(!NativePlaybackEndPolicy.acceptsNotification(time: duration, duration: invalid, seeking: true))
+        }
+        print("PASS: simulated native end ordering rejects pending and stale callbacks while preserving seek-to-end")
     }
 }

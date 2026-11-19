@@ -208,6 +208,62 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(mist.waitForExistence(timeout: 15), "The last lyric style should survive relaunch.")
     }
 
+    func testNativeDelayedEndDoesNotReplaceSeekAndSeekingToEndRepeats() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-end-fixture", "--playback-probe", "--presentation-reset",
+                               "-Folia.EnergySavingAnimation", "YES"]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
+        app.launch()
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15)); demo.tap()
+        let clock = app.staticTexts["localTransportProbe"]
+        let seek = app.staticTexts["nativeSeekProbe"]
+        let toggle = app.buttons["playerToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        app.buttons["循環佇列"].tap()
+        func expectClock(_ accepts: @escaping (Double, Double) -> Bool, _ message: String) {
+            let observed = expectation(for: NSPredicate { _, _ in
+                let fields = (clock.value as? String ?? "").split(separator: "|")
+                guard fields.count == 2, let time = Double(fields[0]), time.isFinite,
+                      let rate = Double(fields[1]), rate.isFinite else { return false }
+                return seek.value as? String == "idle|0" && accepts(time, rate)
+            }, evaluatedWith: clock)
+            XCTAssertEqual(XCTWaiter.wait(for: [observed], timeout: 20), .completed,
+                           "\(message). Actual AVPlayer sample: \(String(describing: clock.value))")
+        }
+        expectClock({ $0 > 0.2 && $1 > 0 }, "The real demo audio must start")
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        waitForPausedNativeClock(clock)
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        progress.coordinate(withNormalizedOffset: CGVector(dx: 1.0 / 3.0, dy: 0.5)).tap()
+        expectClock({ abs($0 - 10) < 1 && $1 == 0 }, "The paused audio must seek near ten seconds")
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        expectClock({ $0 >= 9.5 && $0 < 20 && $1 > 0 }, "The sought audio must resume")
+
+        // The callback ordering is simulated; all time and playback checks use AVPlayer.
+        let delayedEnd = app.buttons["simulateDelayedNativeEnd"]
+        XCTAssertTrue(delayedEnd.waitForExistence(timeout: 10)); delayedEnd.tap()
+        var previousAfterCallback: Double?
+        expectClock({ time, rate in
+            guard time >= 9.5, time < 20, rate > 0 else { previousAfterCallback = nil; return false }
+            defer { previousAfterCallback = time }
+            return previousAfterCallback.map { time > $0 + 0.01 } ?? false
+        }, "A delayed old end must preserve two advancing samples after this seek")
+        capture(app, name: "Syllume-native-simulated-stale-end-after-seek")
+
+        let seekEnd = app.buttons["seekToNativeEnd"]
+        XCTAssertTrue(seekEnd.waitForExistence(timeout: 10)); seekEnd.tap()
+        expectClock({ $0 > 0.1 && $0 < 8 && $1 > 0 }, "A playing seek to the exact physical end must repeat")
+        capture(app, name: "Syllume-native-seek-to-end-repeated")
+
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        waitForPausedNativeClock(clock)
+        seekEnd.tap()
+        expectClock({ abs($0 - 30) < 0.2 && $1 == 0 }, "A paused seek to the physical end must stay paused")
+        capture(app, name: "Syllume-native-paused-seek-to-end")
+    }
+
     func testLargeTextPlaybackKeepsStyleMenuAndControlsUsable() {
         continueAfterFailure = false
         let app = XCUIApplication()

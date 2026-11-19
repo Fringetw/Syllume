@@ -173,10 +173,21 @@ struct NowPlayingScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
                     LocalTransportProbe(player: player)
                 }
-                if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
+                if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") ||
+                    ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
                     Text("定位狀態檢查").font(.system(size: 1)).frame(height: 1)
                         .accessibilityIdentifier("nativeSeekProbe")
                         .accessibilityValue("\(player.isSeeking ? "locating" : "idle")|\(player.diagnosticPlaybackProblem?.nativeCode ?? 0)")
+                }
+                if ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
+                    HStack {
+                        Button("模擬延遲片尾") { player.simulateDelayedNativeEnd() }
+                            .accessibilityIdentifier("simulateDelayedNativeEnd")
+                        Button("定位到實際片尾") { player.seekToNativeEndForFixture() }
+                            .accessibilityIdentifier("seekToNativeEnd")
+                    }
+                    .font(.caption2)
+                    .buttonStyle(.bordered)
                 }
                 if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
                     ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {

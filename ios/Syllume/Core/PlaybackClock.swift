@@ -70,3 +70,19 @@ struct NativeSeekState: Sendable {
 
     mutating func reset() { request = nil }
 }
+
+enum NativePlaybackEndPolicy {
+    // Compressed audio may report the final sample within one frame of its duration.
+    static func isAtEnd(time: Double, duration: Double) -> Bool {
+        guard time.isFinite, time >= 0, duration.isFinite, duration > 0 else { return false }
+        return time >= duration - min(0.05, duration * 0.001)
+    }
+
+    static func acceptsNotification(time: Double, duration: Double, seeking: Bool) -> Bool {
+        guard !seeking, time.isFinite, time >= 0 else { return false }
+        // Some streams report their duration only at completion. Preserve their real
+        // end notification when there is no known end against which to reject it.
+        if !duration.isFinite || duration <= 0 { return true }
+        return isAtEnd(time: time, duration: duration)
+    }
+}

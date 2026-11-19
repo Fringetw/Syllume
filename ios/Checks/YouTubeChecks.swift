@@ -86,6 +86,7 @@ enum YouTubeChecks {
         model.stop(); model.play([b], selected: b)
         precondition(model.timeline.lines.first?.fullText == "Hello")
         checkTransportWatchdog(a, b, directory: root)
+        checkCoarseTransportSamples(a, directory: root)
         print("PASS: YouTube link validation, stale sessions, pause/seek ordering, playback watchdog, queue and lyric matching")
     }
 
@@ -125,7 +126,10 @@ enum YouTubeChecks {
         player.checkTransportWatchdog(session: firstSession, now: base + .seconds(60))
         precondition(player.current?.id == b.id && player.wantsPlayback && player.failure == nil,
                      "An old watchdog must not interrupt the next song")
-        player.checkTransportWatchdog(session: nextSession, now: base + .seconds(60))
+        player.checkTransportWatchdog(session: nextSession, now: base + .seconds(24))
+        precondition(player.failure == nil && player.wantsPlayback,
+                     "The first media frame retains its bounded startup grace")
+        player.checkTransportWatchdog(session: nextSession, now: base + .seconds(26))
         precondition(player.failure == DiagnosticProblem(code: .timeout, nativeCode: -2),
                      "Waiting for the first media frame has its own diagnostic")
         player.retry()
@@ -156,5 +160,44 @@ enum YouTubeChecks {
         precondition(updates == beforeHide && !player.isSeeking && player.failure == nil,
                      "Leaving the visible surface must cancel an unresolved seek")
         player.stop()
+    }
+
+    @MainActor private static func checkCoarseTransportSamples(_ video: YouTubeVideo, directory: URL) {
+        for startsWithFineSample in [false, true] {
+            let player = YouTubePlayback(lyricDirectory: directory, automaticallyMatchesLyrics: false)
+            player.play([video], selected: video)
+            player.setVisible(true)
+            let base = ContinuousClock().now
+            let session = player.session
+            func frame(_ time: Double, after elapsed: Duration) {
+                player.receive(YouTubeSnapshot(session: session.uuidString, videoID: video.id, state: 1,
+                                               time: time, duration: 60, title: nil, author: nil,
+                                               commandRevision: player.playbackRevision), now: base + elapsed)
+            }
+            frame(0, after: .zero)
+            let initialTime = startsWithFineSample ? 0.5 : 0
+            let initialOffset: Duration = startsWithFineSample ? .milliseconds(500) : .zero
+            if startsWithFineSample { frame(initialTime, after: initialOffset) }
+            for step in 1...13 {
+                let elapsed = Duration.seconds(step * 2) + initialOffset
+                frame(Double(step * 2) + initialTime, after: elapsed)
+                player.checkTransportWatchdog(session: session, now: base + elapsed)
+                precondition(player.isPlaying && !player.isBuffering && player.wantsPlayback && player.failure == nil,
+                             "Two-second media samples must count as real progress, including at startup")
+            }
+
+            let lastTime = 26 + initialTime
+            let lastOffset = Duration.seconds(26) + initialOffset
+            frame(lastTime, after: lastOffset + .seconds(4))
+            precondition(player.isBuffering && !player.isPlaying,
+                         "An unchanged playing sample must still expose a frozen clock")
+            player.checkTransportWatchdog(session: session, now: base + lastOffset + .seconds(17))
+            precondition(player.failure == nil && player.wantsPlayback)
+            player.checkTransportWatchdog(session: session, now: base + lastOffset + .seconds(19))
+            precondition(player.failure == DiagnosticProblem(code: .timeout, nativeCode: -3) && !player.wantsPlayback,
+                         "Coarse samples must not disable the 18-second stalled-clock deadline")
+            player.stop()
+        }
+        print("PASS: coarse YouTube media samples at startup and during playback, with frozen-clock timeout")
     }
 }

@@ -1,4 +1,4 @@
-# Syllume 0.4.0 · build 34
+# Syllume 0.4.0 · build 35
 
 以 [Folia Major](https://github.com/chthollyphile/folia-major/tree/3125d376557182e25a12c915e39099db13ba63c8) 為基礎的非官方 iPhone 移植。介面使用 SwiftUI，播放使用 AVFoundation，鎖定畫面與控制中心使用 MediaPlayer。iPhone 最低系統版本為 iOS 17。Sonnet 的 JavaScript 與依賴已隨 App 離線打包。這版介面提供臺灣繁體中文。
 
@@ -13,6 +13,7 @@
 - 開發者診斷在 AVPlayer 有網路媒體取樣時列出最近一段播放的傳輸位元組、媒體請求次數、行動網路請求次數及傳輸時間。這些欄位涵蓋原生串流媒體，YouTube 嵌入播放器與歌單 API 的流量需另行觀測。
 - YouTube 播放時間停滯或定位無回應時，會顯示對應的錯誤和可重試的操作。定位逾時會回到上次確認的時間。
 - 原生音訊定位超過期限會暫停並顯示原因，可重新選擇進度或重試播放。遠端音訊暫停定位後，會等待目標音訊預備完成再結束定位。網路音源起播時，緩衝區有增加也會計入載入進展，並保留整體起播期限。
+- 延遲回報的 YouTube 時間仍可作為播放進展；沒有前進時仍有停滯期限。原生音訊的舊片尾通知不會取代正在進行或已完成的定位，定位到實際片尾則依當下播放與循環設定處理。
 
 本分支的測試範圍、失敗項目及實機待驗清單見 [播放驗證紀錄](docs/Playback-verification.zh-TW.md)。
 

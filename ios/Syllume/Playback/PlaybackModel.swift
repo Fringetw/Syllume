@@ -157,6 +157,19 @@ final class PlaybackModel {
         let hasArtwork = published?[MPMediaItemPropertyArtwork] != nil
         return String(format: "%.1f|%.1f|%@", time, rate, hasArtwork ? "artwork" : "empty")
     }
+
+    func simulateDelayedNativeEnd() {
+        guard ProcessInfo.processInfo.arguments.contains("--native-end-fixture"), let item = player.currentItem else { return }
+        didEnd(item: item)
+    }
+
+    func seekToNativeEndForFixture() {
+        guard ProcessInfo.processInfo.arguments.contains("--native-end-fixture"),
+              let item = player.currentItem else { return }
+        let end = item.duration.seconds
+        guard end.isFinite, end > 0 else { return }
+        seek(to: end)
+    }
     #endif
 
     @ObservationIgnored private let player = AVPlayer()
@@ -194,6 +207,9 @@ final class PlaybackModel {
     init(library: LocalLibrary) {
         self.library = library
         player.automaticallyWaitsToMinimizeStalling = true
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--native-end-fixture") { player.defaultRate = 0.25 }
+        #endif
         system = PlaybackSystem(model: self, player: player)
     }
 
@@ -458,6 +474,14 @@ final class PlaybackModel {
             position = max(0, actual)
             nativeClock.rebase(to: position)
         }
+        // An end event delivered during this seek was ignored. An explicit seek to the
+        // physical end must still follow the current queue/repeat and playback intent.
+        let itemDuration = item.duration.seconds
+        let end = itemDuration.isFinite && itemDuration > 0 ? itemDuration : duration
+        if wantsPlayback, NativePlaybackEndPolicy.isAtEnd(time: actual, duration: end) {
+            didEnd(item: item)
+            return
+        }
         if restarting, wantsPlayback, !externalPlayback { player.play() }
         refreshTransport()
     }
@@ -640,7 +664,11 @@ final class PlaybackModel {
     func transportChanged() { refreshTransport() }
 
     func didEnd(item: AVPlayerItem) {
-        guard player.currentItem === item else { return }
+        let itemDuration = item.duration.seconds
+        let end = itemDuration.isFinite && itemDuration > 0 ? itemDuration : duration
+        guard player.currentItem === item,
+              NativePlaybackEndPolicy.acceptsNotification(time: player.currentTime().seconds,
+                                                          duration: end, seeking: seeking) else { return }
         if wantsPlayback, repeatQueue, queue.count == 1 { seekNativeItem(item, to: 0, restarting: true) }
         else if wantsPlayback, canAdvance { next() }
         else { pause(); if duration > 0 { position = duration; publishNowPlaying() } }
@@ -1048,7 +1076,7 @@ final class PlaybackModel {
         let reportsPlaying = video.visible && video.isPlaying
         error = video.error
         let advance = position - previousPosition
-        if reportsPlaying, !video.isSeeking, advance > 0.02, advance <= 1.5 {
+        if reportsPlaying, !video.isSeeking, advance.isFinite, advance > 0.02 {
             DiagnosticsEvents.shared.observeAdvance(advance)
             if !videoHasAdvanced {
                 videoHasAdvanced = true
