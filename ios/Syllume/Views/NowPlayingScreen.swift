@@ -173,7 +173,7 @@ struct NowPlayingScreen: View {
                 if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
                     LocalTransportProbe(player: player)
                 }
-                if ProcessInfo.processInfo.arguments.contains("--loopback-seek-fixture") {
+                if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
                     Text("定位狀態檢查").font(.system(size: 1)).frame(height: 1)
                         .accessibilityIdentifier("nativeSeekProbe")
                         .accessibilityValue("\(player.isSeeking ? "locating" : "idle")|\(player.diagnosticPlaybackProblem?.nativeCode ?? 0)")

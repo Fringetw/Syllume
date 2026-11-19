@@ -397,15 +397,30 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
         let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
         XCTAssertTrue(progress.waitForExistence(timeout: 10))
+        let seek = app.staticTexts["nativeSeekProbe"]
+        XCTAssertTrue(seek.waitForExistence(timeout: 5))
         progress.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5)).tap()
         let sought = expectation(for: NSPredicate { _, _ in
             let sample = (clock.value as? String ?? "").split(separator: "|")
-            guard sample.count == 4, let time = Double(sample[0]), sample[1] == "0.0", sample[2] == "http" else { return false }
-            return abs(time - 12) < 1.2
+            guard sample.count == 4, let time = Double(sample[0]), sample[1] == "0.0",
+                  sample[2] == "http", sample[3] == "none" else { return false }
+            return abs(time - 12) < 1.2 && seek.value as? String == "idle|0"
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 20), .completed,
-                       "Expected a paused HTTP audio stream near 12 seconds; observed \(String(describing: clock.value))")
+                       "Expected prepared paused HTTP audio near 12 seconds; state \(String(describing: seek.value)), clock \(String(describing: clock.value))")
         capture(app, name: "Syllume-HTTP-stream-seek")
+
+        let soughtTime = probeTime(clock)
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        let resumed = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 4, let time = Double(sample[0]), let rate = Double(sample[1]),
+                  sample[2] == "http", sample[3] == "none" else { return false }
+            return time > soughtTime + 0.25 && rate > 0 && seek.value as? String == "idle|0"
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumed], timeout: 20), .completed,
+                       "Prepared HTTP audio must advance after resuming from \(soughtTime); observed \(String(describing: clock.value))")
+        capture(app, name: "Syllume-HTTP-stream-resumed-after-seek")
     }
 
     func testNativeLoopbackFallsBackAfterTimeout() throws {
@@ -507,7 +522,9 @@ final class SyllumeUITests: XCTestCase {
             guard sample.count == 4, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
             return time > 0.3 && time.isFinite && rate > 0 && sample[2] == media && sample[3] == problem
         }, evaluatedWith: clock)
-        let result = XCTWaiter.wait(for: [advancing], timeout: 20)
+        // Cover the bounded 34-second startup window and cross-process accessibility snapshots.
+        // Keep checking the real media source so a late local fallback cannot satisfy this wait.
+        let result = XCTWaiter.wait(for: [advancing], timeout: 45)
         if result != .completed, let trace {
             let evidence = trace.value as? String ?? "No native transport trace"
             let attachment = XCTAttachment(string: evidence)
@@ -597,7 +614,6 @@ final class SyllumeUITests: XCTestCase {
         let mini = app.buttons["openMiniPlayer"]
         let miniToggle = app.buttons["miniPlayerToggle"]
         let fullToggle = app.buttons["playerToggle"]
-        let probe = app.staticTexts["localTransportProbe"]
         for fromMini in [false, true] {
             XCTAssertTrue(external.waitForExistence(timeout: 10)); external.tap()
             XCUIDevice.shared.press(.home)
@@ -606,17 +622,35 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertEqual(miniToggle.label, "播放")
             if fromMini { miniToggle.tap() }
             mini.tap()
+            // Each presentation creates a new probe. Reusing the previous sheet's element can
+            // retain its paused accessibility snapshot after AVPlayer has already resumed.
+            let probe = app.staticTexts["localTransportProbe"]
             XCTAssertTrue(probe.waitForExistence(timeout: 10))
             if !fromMini {
                 let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|0.0"), evaluatedWith: probe)
                 XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
                 fullToggle.tap()
             }
+            var samples: [String] = []
+            var previousPlayingTime: Double?
             let playing = expectation(for: NSPredicate { _, _ in
-                self.probeTime(probe) > 0.2 && (probe.value as? String ?? "").hasSuffix("|1.0")
+                let value = probe.value as? String ?? "missing"
+                if samples.last != value {
+                    samples.append(value)
+                    if samples.count > 12 { samples.removeFirst() }
+                }
+                let fields = value.split(separator: "|")
+                guard fields.count == 2, let time = Double(fields[0]), time.isFinite,
+                      let rate = Double(fields[1]), rate.isFinite, rate > 0 else {
+                    previousPlayingTime = nil
+                    return false
+                }
+                defer { previousPlayingTime = time }
+                guard let previous = previousPlayingTime else { return false }
+                return time > 0.2 && time > previous + 0.01
             }, evaluatedWith: probe)
             XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 15), .completed,
-                           "Expected AVPlayer playback after returning from the external handoff.")
+                           "Expected an advancing AVPlayer clock after returning from the external handoff. Samples: \(samples)")
             close.tap()
         }
     }
