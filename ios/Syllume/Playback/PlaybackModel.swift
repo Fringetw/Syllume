@@ -127,11 +127,14 @@ final class PlaybackModel {
         }
         let ranges = (item?.loadedTimeRanges ?? []).map { $0.timeRangeValue }
         let end = ranges.map { CMTimeRangeGetEnd($0).seconds }.filter { $0.isFinite }.max() ?? -1
+        let loadedRanges = ranges.prefix(6).map {
+            String(format: "%.3f..%.3f", $0.start.seconds, CMTimeRangeGetEnd($0).seconds)
+        }.joined(separator: ",")
         let identity = item.map { String(describing: ObjectIdentifier($0)) } ?? "none"
         let clock = String(format: "time=%.3f rate=%.1f bufferEnd=%.3f", player.currentTime().seconds, player.rate, end)
         let fields = ["item=" + identity, clock, "state=" + state,
             "waiting=" + (player.reasonForWaitingToPlay?.rawValue ?? "none"),
-            "empty=" + String(item?.isPlaybackBufferEmpty ?? false),
+            "ranges=[" + loadedRanges + "]", "empty=" + String(item?.isPlaybackBufferEmpty ?? false),
             "keepUp=" + String(item?.isPlaybackLikelyToKeepUp ?? false),
             "full=" + String(item?.isPlaybackBufferFull ?? false),
             "wants=" + String(wantsPlayback), "seeking=" + String(seeking)]
@@ -183,6 +186,7 @@ final class PlaybackModel {
     @ObservationIgnored private var nativeSeek = NativeSeekState()
     @ObservationIgnored private var seekTimeout: Task<Void, Never>?
     @ObservationIgnored private var nativeSeekPreroll: UUID?
+    @ObservationIgnored private var nativeSeekBufferObservation: NSKeyValueObservation?
     private var seeking = false
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var streamTimeout: Task<Void, Never>?
@@ -409,6 +413,7 @@ final class PlaybackModel {
         let clock = ContinuousClock()
         let request = nativeSeek.begin(from: player.currentTime().seconds, at: clock.now)
         let itemID = ObjectIdentifier(item)
+        nativeSeekBufferObservation?.invalidate(); nativeSeekBufferObservation = nil
         nativeSeekPreroll = nil
         player.cancelPendingPrerolls()
         seekTimeout?.cancel()
@@ -465,24 +470,54 @@ final class PlaybackModel {
     }
 
     private func completeNativeSeek(_ item: AVPlayerItem, requestID: UUID, finished: Bool, restarting: Bool) {
+        guard player.currentItem === item, nativeSeek.request?.id == requestID else { return }
+        let actual = player.currentTime().seconds
+        let itemDuration = item.duration.seconds
+        let end = itemDuration.isFinite && itemDuration > 0 ? itemDuration : duration
+        if finished, (item.asset as? AVURLAsset)?.url.isFileURL == false,
+           !NativePlaybackEndPolicy.isAtEnd(time: actual, duration: end) {
+            let ranges = item.loadedTimeRanges.map { value in
+                let range = value.timeRangeValue
+                return (start: range.start.seconds, end: CMTimeRangeGetEnd(range).seconds)
+            }
+            if !NativeSeekBufferAvailability.contains(actual, in: ranges) {
+                if nativeSeekBufferObservation == nil {
+                    nativeSeekPreroll = requestID
+                    #if DEBUG
+                    recordNativeTransportTrace("seek-buffer-wait", item: item)
+                    #endif
+                    // The paused clock does not provide periodic ticks while target bytes arrive.
+                    nativeSeekBufferObservation = item.observe(\.loadedTimeRanges, options: [.initial, .new]) { [weak self] observed, _ in
+                        Task { @MainActor [weak self] in
+                            guard let self, player.currentItem === observed, nativeSeek.request?.id == requestID else { return }
+                            completeNativeSeek(observed, requestID: requestID, finished: true, restarting: restarting)
+                        }
+                    }
+                }
+                return
+            }
+        }
         guard let completed = nativeSeek.complete(requestID) else { return }
+        let shouldRestart = restarting || nativeSeekPreroll == requestID
+        #if DEBUG
+        if finished, nativeSeekBufferObservation != nil { recordNativeTransportTrace("seek-buffer-ready", item: item) }
+        #endif
+        nativeSeekBufferObservation?.invalidate(); nativeSeekBufferObservation = nil
+        nativeSeekPreroll = nil
         seekTimeout?.cancel(); seekTimeout = nil
         seeking = false
         guard finished else { nativeSeekFailed(item, request: completed, timedOut: false); return }
-        let actual = player.currentTime().seconds
         if actual.isFinite {
             position = max(0, actual)
             nativeClock.rebase(to: position)
         }
         // An end event delivered during this seek was ignored. An explicit seek to the
         // physical end must still follow the current queue/repeat and playback intent.
-        let itemDuration = item.duration.seconds
-        let end = itemDuration.isFinite && itemDuration > 0 ? itemDuration : duration
         if wantsPlayback, NativePlaybackEndPolicy.isAtEnd(time: actual, duration: end) {
             didEnd(item: item)
             return
         }
-        if restarting, wantsPlayback, !externalPlayback { player.play() }
+        if shouldRestart, wantsPlayback, !externalPlayback { player.play() }
         refreshTransport()
     }
 
@@ -491,6 +526,7 @@ final class PlaybackModel {
         recordNativeTransportTrace(timedOut ? "seek-timeout" : "seek-incomplete", item: item)
         #endif
         // Expire the request before cancellation invokes its completion with finished=false.
+        nativeSeekBufferObservation?.invalidate(); nativeSeekBufferObservation = nil
         nativeSeekPreroll = nil
         player.cancelPendingPrerolls()
         item.cancelPendingSeeks()
@@ -506,6 +542,7 @@ final class PlaybackModel {
     private func cancelNativeSeek() {
         nativeSeek.reset()
         seekTimeout?.cancel(); seekTimeout = nil
+        nativeSeekBufferObservation?.invalidate(); nativeSeekBufferObservation = nil
         nativeSeekPreroll = nil
         player.cancelPendingPrerolls()
         seeking = false

@@ -493,6 +493,14 @@ final class SyllumeUITests: XCTestCase {
         continueAfterFailure = false
         let app = try openLoopbackPlaylistTrack(seekFixture: true)
         let clock = app.staticTexts["localTransportProbe"]
+        func attachSeekTransport(_ name: String) {
+            let evidence = app.staticTexts["nativeTransportDebugProbe"].value as? String ?? "No native transport trace"
+            let attachment = XCTAttachment(string: evidence)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            add(attachment)
+            print("\(name)\n\(evidence)")
+        }
         waitForLoopbackAdvance(clock, media: "http", trace: app.staticTexts["nativeTransportDebugProbe"])
         let toggle = app.buttons["playerToggle"]
         if toggle.label == "暫停" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
@@ -504,7 +512,9 @@ final class SyllumeUITests: XCTestCase {
         progress.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.5)).tap()
         let seek = app.staticTexts["nativeSeekProbe"]
         let ended = expectation(for: NSPredicate(format: "value == %@", "idle|-5"), evaluatedWith: seek)
-        XCTAssertEqual(XCTWaiter.wait(for: [ended], timeout: 20), .completed,
+        let stalledSeekResult = XCTWaiter.wait(for: [ended], timeout: 20)
+        attachSeekTransport("Native HTTP paused seek after stopping transfer")
+        XCTAssertEqual(stalledSeekResult, .completed,
                        "The stalled paused seek must terminate. State \(String(describing: seek.value)), clock \(String(describing: clock.value))")
         XCTAssertTrue((clock.value as? String ?? "").contains("|0.0|http|"))
         XCTAssertEqual(toggle.label, "播放")
@@ -517,7 +527,9 @@ final class SyllumeUITests: XCTestCase {
             guard fields.count == 4, let time = Double(fields[0]), fields[1] == "0.0", fields[2] == "http" else { return false }
             return abs(time - 7.5) < 1.2 && seek.value as? String == "idle|0"
         }, evaluatedWith: clock)
-        XCTAssertEqual(XCTWaiter.wait(for: [retried], timeout: 20), .completed,
+        let recoveredSeekResult = XCTWaiter.wait(for: [retried], timeout: 20)
+        attachSeekTransport("Native HTTP paused seek after restoring transfer")
+        XCTAssertEqual(recoveredSeekResult, .completed,
                        "A new paused seek must recover after HTTP resumes. \(String(describing: clock.value))")
         capture(app, name: "Syllume-HTTP-paused-seek-recovered")
     }

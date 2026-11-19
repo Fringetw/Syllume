@@ -71,6 +71,16 @@ struct NativeSeekState: Sendable {
     mutating func reset() { request = nil }
 }
 
+enum NativeSeekBufferAvailability {
+    static func contains(_ time: Double, in ranges: [(start: Double, end: Double)]) -> Bool {
+        guard time.isFinite, time >= 0 else { return false }
+        return ranges.contains { range in
+            range.start.isFinite && range.end.isFinite && range.end > range.start &&
+                time >= range.start && time < range.end
+        }
+    }
+}
+
 enum NativePlaybackEndPolicy {
     // Compressed audio may report the final sample within one frame of its duration.
     static func isAtEnd(time: Double, duration: Double) -> Bool {

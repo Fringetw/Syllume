@@ -52,6 +52,7 @@ enum NativePlaybackClockChecks {
         precondition(loading.bufferDeadline(since: start) == start + .seconds(26))
         print("PASS: native playback clock accepts coarse samples and buffer delivery while bounding unchanged media")
         checkNativeSeekState()
+        checkNativeSeekBufferAvailability()
         checkNativeEndOrdering()
     }
 
@@ -110,5 +111,28 @@ enum NativePlaybackClockChecks {
             precondition(!NativePlaybackEndPolicy.acceptsNotification(time: duration, duration: invalid, seeking: true))
         }
         print("PASS: simulated native end ordering rejects pending and stale callbacks while preserving seek-to-end")
+    }
+
+    private static func checkNativeSeekBufferAvailability() {
+        let separated = [(start: 0.0, end: 15.0), (start: 120.0, end: 150.0)]
+        precondition(!NativeSeekBufferAvailability.contains(112.572, in: separated),
+                     "A moved playhead cannot confirm a seek when its target bytes are absent")
+        precondition(!NativeSeekBufferAvailability.contains(50, in: separated),
+                     "A later buffered range cannot fill an earlier gap")
+        precondition(NativeSeekBufferAvailability.contains(120, in: separated))
+        precondition(NativeSeekBufferAvailability.contains(149.999, in: separated))
+        precondition(!NativeSeekBufferAvailability.contains(150, in: separated),
+                     "The end of a loaded range is exclusive")
+        precondition(!NativeSeekBufferAvailability.contains(15, in: separated))
+        precondition(!NativeSeekBufferAvailability.contains(7.5, in: []))
+        precondition(NativeSeekBufferAvailability.contains(7.5, in: [(start: 7.5, end: 8.0)]),
+                     "The requested time becomes ready when its own range arrives")
+        let invalid = [(start: Double.nan, end: 20.0), (start: 0.0, end: Double.infinity),
+                       (start: 12.0, end: 8.0), (start: 7.5, end: 7.5)]
+        precondition(!NativeSeekBufferAvailability.contains(7.5, in: invalid))
+        for time in [Double.nan, .infinity, -.infinity, -1] {
+            precondition(!NativeSeekBufferAvailability.contains(time, in: separated))
+        }
+        print("PASS: native seek readiness requires a valid loaded range covering its actual target")
     }
 }
