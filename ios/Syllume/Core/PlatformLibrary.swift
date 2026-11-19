@@ -105,6 +105,7 @@ struct YouTubeVideoDetails: Decodable, Sendable {
         let title: String?
         let channelTitle: String?
         let description: String?
+        var channelId: String? = nil
     }
     struct Status: Decodable, Sendable {
         let embeddable: Bool?
@@ -135,6 +136,10 @@ struct YouTubeVideoDetails: Decodable, Sendable {
         guard id == song.videoID else { return song }
         var result = song
         if let duration { result.duration = duration }
+        if let owner = snippet?.channelTitle, let channelID = snippet?.channelId,
+           YouTubeArtwork.validChannelID(channelID) {
+            result.channelID = DownloadSongMatch.samePerformers(owner, song.artist) ? channelID : nil
+        }
         if let creditedArtist, let title = snippet?.title,
            DownloadSongMatch.normalized(title) == DownloadSongMatch.normalized(song.title) {
             result.creditedArtist = creditedArtist
@@ -250,6 +255,29 @@ enum YouTubeArtwork {
 
     static func thumbnailURL(_ value: String) -> URL? { imageURL(value, hosts: thumbnailHosts) }
     static func portraitURL(_ value: String) -> URL? { imageURL(value, hosts: portraitHosts) }
+    static func validChannelID(_ id: String) -> Bool {
+        id.range(of: #"^UC[A-Za-z0-9_-]{22}$"#, options: .regularExpression) != nil
+    }
+
+    static func matchedPortrait(in data: Data, credit: YouTubeArtistPortraitCredit) throws -> URL? {
+        struct Page: Decodable {
+            struct Channel: Decodable {
+                struct Snippet: Decodable {
+                    struct Image: Decodable { let url: String? }
+                    let title: String?
+                    let thumbnails: [String: Image]?
+                }
+                let id: String
+                let snippet: Snippet?
+            }
+            let items: [Channel]?
+        }
+        let page = try JSONDecoder().decode(Page.self, from: data)
+        guard let channel = page.items?.first(where: { $0.id == credit.channelID }),
+              let name = channel.snippet?.title, credit.matches(name),
+              let images = channel.snippet?.thumbnails else { return nil }
+        return ["default", "medium"].lazy.compactMap { images[$0]?.url.flatMap(portraitURL) }.first
+    }
 
     static func thumbnails(for videoID: String) -> [URL] {
         guard YouTubeVideo.validID(videoID) else { return [] }

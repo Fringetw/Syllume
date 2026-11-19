@@ -429,6 +429,49 @@ final class SyllumeUITests: XCTestCase {
         }
     }
 
+    func testYouTubeShowsVerifiedArtistPortraitAlongsideCover() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        let fixture = ["--youtube-sync-fixture", "--youtube-artist-portrait-fixture",
+                       "--subtitle-fixture", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
+        app.launchArguments = fixture + ["--youtube-sync-reset", "--youtube-artwork-reset"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        let song = app.buttons["youtubeSong-fixture-portrait"]
+        let wrongOwner = app.buttons["youtubeSong-fixture-portrait-mismatch"]
+        let cover = app.descendants(matching: .any)["playerArtwork"].firstMatch
+        let portrait = app.descendants(matching: .any)["nowPlayingArtistPortrait"].firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
+        XCTAssertTrue(cover.waitForExistence(timeout: 10))
+        XCTAssertTrue(portrait.waitForExistence(timeout: 15), "A successful cover must not suppress the verified artist photo")
+        XCTAssertEqual(portrait.label, "歌手頭像")
+        XCTAssertNotEqual(cover.frame, portrait.frame)
+        capture(app, name: "Syllume-YouTube-cover-and-artist-portrait")
+
+        app.buttons["關閉播放畫面"].tap()
+        XCTAssertTrue(wrongOwner.waitForExistence(timeout: 10)); wrongOwner.tap()
+        let clock = app.staticTexts["localTransportProbe"]
+        let playing = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let position = Double(sample[0]), let rate = Double(sample[1]) else { return false }
+            return position.isFinite && position > 1 && rate > 0
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 15), .completed)
+        XCTAssertTrue(cover.waitForExistence(timeout: 10))
+        XCTAssertFalse(portrait.exists, "A mismatched uploader must not show the previous singer's portrait")
+
+        app.terminate()
+        app.launchArguments = fixture + ["--youtube-artwork-offline"]
+        app.launch()
+        app.segmentedControls.buttons["YouTube"].tap()
+        XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
+        XCTAssertTrue(cover.waitForExistence(timeout: 10))
+        XCTAssertTrue(portrait.waitForExistence(timeout: 15), "The verified artist photo must survive offline relaunch")
+        capture(app, name: "Syllume-YouTube-cached-artist-portrait")
+    }
+
     func testYouTubeSyncedAudioPausesWithoutVideo() {
         continueAfterFailure = false
         let app = XCUIApplication()

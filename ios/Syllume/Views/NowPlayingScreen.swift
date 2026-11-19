@@ -227,7 +227,16 @@ struct NowPlayingScreen: View {
                     Text(track.title).font(.system(.title2, design: .rounded, weight: .bold)).lineLimit(wrapsText ? nil : 2)
                         .accessibilityAddTraits(.isHeader)
                     if !track.subtitle.isEmpty {
-                        Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(wrapsText ? nil : 1)
+                        HStack(spacing: 7) {
+                            if let portrait = player.artistPortrait {
+                                Image(uiImage: portrait).resizable().scaledToFill()
+                                    .frame(width: 22, height: 22)
+                                    .clipShape(Circle())
+                                    .accessibilityLabel("歌手頭像")
+                                    .accessibilityIdentifier("nowPlayingArtistPortrait")
+                            }
+                            Text(track.subtitle).foregroundStyle(.secondary).font(.subheadline).lineLimit(wrapsText ? nil : 1)
+                        }
                     }
                 }
             }
@@ -359,9 +368,16 @@ struct NowPlayingScreen: View {
                 } else {
                     ZStack {
                         SyllumeAtmosphere()
-                        Image(systemName: "waveform")
-                            .font(.system(size: 54, weight: .ultraLight))
-                            .foregroundStyle(SyllumePalette.accent)
+                        if let portrait = player.artistPortrait {
+                            let portraitSize = min(88, size / 3)
+                            Image(uiImage: portrait).resizable().scaledToFill()
+                                .frame(width: portraitSize, height: portraitSize)
+                                .clipShape(Circle())
+                        } else {
+                            Image(systemName: "waveform")
+                                .font(.system(size: 54, weight: .ultraLight))
+                                .foregroundStyle(SyllumePalette.accent)
+                        }
                     }
                     .accessibilityHidden(true)
                 }

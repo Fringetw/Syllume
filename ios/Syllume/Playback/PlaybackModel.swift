@@ -17,6 +17,11 @@ final class PlaybackModel {
     private(set) var timelineRevision = UUID()
     private(set) var externalPlayback = false
     private(set) var artwork: UIImage?
+    var artistPortrait: UIImage? {
+        artistPortraitRevision == youtubeConnection?.sessionID ? artistPortraitImage : nil
+    }
+    private var artistPortraitImage: UIImage?
+    private var artistPortraitRevision: UUID?
     private(set) var lyricsLoading = false
     private(set) var error: String?
     private(set) var repeatQueue = false
@@ -181,6 +186,7 @@ final class PlaybackModel {
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var system: PlaybackSystem?
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    @ObservationIgnored private var artistPortraitTask: Task<Void, Never>?
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var nativeSeek = NativeSeekState()
@@ -652,6 +658,7 @@ final class PlaybackModel {
             let resolved = details?.enrich(song) ?? song
             guard let self, generation == revision, !Task.isCancelled else { return song }
             catalogueTarget = resolved
+            loadArtistPortraitIfNeeded()
             catalogueVideoStatus = details?.status
             catalogueVideoProblem = problem
             if !nativeReady, embeddedVideo == nil, let length = resolved.duration { duration = length }
@@ -683,6 +690,7 @@ final class PlaybackModel {
                         diagnosticPlaybackProblem = nil
                         diagnosticPlaybackDetails = nil
                         DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
+                        loadArtistPortraitIfNeeded()
                         refreshTransport()
                     }
                 }
@@ -764,7 +772,7 @@ final class PlaybackModel {
             videoRequested = requestingVideo ?? videoSurfaceVisible
             system?.updateCommands(model: self)
             if let song = track.playlistSong {
-                loadArtwork(artworkSource(for: track), song: song)
+                loadArtwork(artworkSource(for: track))
                 prepareCatalogue(track, song: song)
             }
             resolveCatalogue(track)
@@ -1034,6 +1042,7 @@ final class PlaybackModel {
 
     func setVideoSurfaceVisible(_ visible: Bool) {
         videoSurfaceVisible = visible
+        if visible { loadArtistPortraitIfNeeded() }
         if !visible { videoRequested = false }
         if embeddedVideo != nil { setEmbeddedVideoVisible(visible) }
         else { startRequestedVideoIfVisible() }
@@ -1130,6 +1139,7 @@ final class PlaybackModel {
                 diagnosticPlaybackProblem = nil
                 diagnosticPlaybackDetails = nil
                 DiagnosticsEvents.shared.record(.playbackStarted, source: .youtube)
+                loadArtistPortraitIfNeeded()
             }
         }
         isPlaying = reportsPlaying && videoHasAdvanced
@@ -1194,28 +1204,16 @@ final class PlaybackModel {
     func refreshArtworkIfNeeded() {
         guard artwork == nil, artworkTask == nil, let track = current,
               track.source == .catalogue || track.source == .local else { return }
-        loadArtwork(artworkSource(for: track), song: track.playlistSong)
+        loadArtwork(artworkSource(for: track))
     }
 
-    private func loadArtwork(_ source: SongArtworkSource, song: SyncedYouTubeSong?) {
+    private func loadArtwork(_ source: SongArtworkSource) {
         guard source.file != nil || source.videoID.map(YouTubeVideo.validID) == true else { return }
         let revision = generation
-        let connection = youtubeConnection
         artworkTask = Task(priority: .utility) { [weak self] in
             let started = Date()
-            let store = YouTubeArtworkStore.shared
-            let bytes = await store.image(for: source)
-            var image = bytes.flatMap(UIImage.init(data:))
-            if image == nil, !Task.isCancelled, let song, let connection, connection.connected, let channel = song.channelID,
-               !YouTubeCaptionDecoders.isTranslatedUpload(song.title), DownloadSongMatch.versions(song.title).isEmpty,
-               let portrait = try? await connection.channelPortraits([channel])[channel], !source.candidates.contains(portrait.url) {
-                let performer = YouTubeCaptionDecoders.metadata(id: song.videoID, title: song.title,
-                    artist: song.artist, duration: song.duration ?? 0).artist
-                if !DownloadSongMatch.artistKeys(performer).isDisjoint(with: DownloadSongMatch.artistKeys(portrait.name)),
-                   let bytes = await store.portrait(at: portrait.url) {
-                    image = UIImage(data: bytes)
-                }
-            }
+            let bytes = await YouTubeArtworkStore.shared.image(for: source)
+            let image = bytes.flatMap(UIImage.init(data:))
             guard let self, generation == revision, !Task.isCancelled else { return }
             artworkTask = nil
             DiagnosticsEvents.shared.record(image == nil ? .artworkUnavailable : .artworkLoaded,
@@ -1224,6 +1222,38 @@ final class PlaybackModel {
             guard let image else { return }
             artwork = image
             publishNowPlaying()
+        }
+    }
+
+    private func loadArtistPortraitIfNeeded() {
+        guard didAdvancePlayback, videoSurfaceVisible, artistPortraitTask == nil,
+              let credit = catalogueTarget?.artistPortraitCredit, let connection = youtubeConnection,
+              let accountID = connection.libraryID, connection.connected else { return }
+        let revision = generation
+        let accountRevision = connection.sessionID
+        artistPortraitTask = Task(priority: .utility) { [weak self] in
+            let started = Date()
+            let store = YouTubeArtworkStore.shared
+            var data = await store.artistPortrait(for: credit, accountID: accountID)
+            var problem: DiagnosticProblem?
+            if data == nil, !Task.isCancelled, connection.sessionID == accountRevision {
+                do {
+                    let url = try await PlaybackLookup.within(.seconds(5)) {
+                        try await connection.artistPortraitURL(for: credit)
+                    }
+                    if let url, !Task.isCancelled, connection.sessionID == accountRevision {
+                        data = await store.artistPortrait(for: credit, accountID: accountID, url: url)
+                    }
+                } catch { problem = DiagnosticProblem.classify(error) }
+            }
+            guard let self, generation == revision, connection.sessionID == accountRevision,
+                  !Task.isCancelled else { return }
+            artistPortraitImage = data.flatMap(UIImage.init(data:))
+            artistPortraitRevision = accountRevision
+            DiagnosticsEvents.shared.record(artistPortraitImage == nil ? .artistPortraitUnavailable : .artistPortraitLoaded,
+                source: .youtube,
+                problem: artistPortraitImage == nil ? problem ?? DiagnosticProblem(code: .unavailable) : nil, since: started)
+            if artistPortraitImage != nil, artwork == nil { publishNowPlaying() }
         }
     }
 
@@ -1282,10 +1312,14 @@ final class PlaybackModel {
         lyricsTask?.cancel()
         artworkTask?.cancel()
         artworkTask = nil
+        artistPortraitTask?.cancel()
+        artistPortraitTask = nil
         lyricsLoading = false
         position = 0
         duration = 0
         artwork = nil
+        artistPortraitImage = nil
+        artistPortraitRevision = nil
         timeline = LyricTimeline(lines: [])
         wantsPlayback = false
         isPlaying = false
@@ -1391,8 +1425,8 @@ final class PlaybackModel {
         info[MPMediaItemPropertyArtist] = track.artist
         info[MPMediaItemPropertyAlbumTitle] = track.album
         if duration > 0 { info[MPMediaItemPropertyPlaybackDuration] = duration }
-        if let artwork {
-            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: artwork.size) { _ in artwork }
+        if let image = artwork ?? artistPortrait {
+            info[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
         }
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
     }

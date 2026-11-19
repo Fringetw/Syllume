@@ -223,6 +223,7 @@ enum DiagnosticEventKind: String, Codable, Sendable {
     case lookupStarted, durationRead, durationUnavailable, providerMatched, providerUnavailable
     case assetRejected, playbackStarted, playbackPaused, playbackStalled, playbackFailed, videoFallbackRequested, seek, audioInterruption
     case artworkLoaded, artworkUnavailable, lyricsLoaded, lyricsUnavailable
+    case artistPortraitLoaded, artistPortraitUnavailable
     case foreground, background, playerOpened, playerClosed, immersiveOn, immersiveOff, stageReady, stageError
 }
 

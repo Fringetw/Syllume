@@ -153,6 +153,16 @@ final class PlatformConnection {
             if collection == .playlists {
                 return LibraryPage(entries: [LibraryEntry(id: "fixture-list", title: "測試歌單", subtitle: "", url: URL(string: "https://music.youtube.com/playlist?list=fixture-list")!)], next: nil)
             }
+            if ProcessInfo.processInfo.arguments.contains("--youtube-artist-portrait-fixture") {
+                return LibraryPage(entries: [
+                    LibraryEntry(id: "fixture-portrait", title: "Syllume 示範音軌 - 潮汐之間", subtitle: "Syllume 示範音軌",
+                        url: URL(string: "https://music.youtube.com/watch?v=M7lc1UVf-VE")!, duration: 30,
+                        channelID: "UCaaaaaaaaaaaaaaaaaaaaaa"),
+                    LibraryEntry(id: "fixture-portrait-mismatch", title: "錯誤歌手 - 測試歌曲", subtitle: "錯誤歌手",
+                        url: URL(string: "https://music.youtube.com/watch?v=123456789ab")!, duration: 30,
+                        channelID: "UCbbbbbbbbbbbbbbbbbbbbbb")
+                ], next: nil)
+            }
             if ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression") {
                 return LibraryPage(entries: [LibraryEntry(id: "recording-help", title: "HELP!!", subtitle: "Kobo Kanaeru - Topic",
                     url: URL(string: "https://music.youtube.com/watch?v=z2tDtdHHAHg")!, duration: 188)], next: nil)
@@ -248,7 +258,7 @@ final class PlatformConnection {
         guard platform == .youtube, !ids.isEmpty, ids.count <= 50, ids.allSatisfy(YouTubeVideo.validID) else { return [] }
         let revision = sessionID
         var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/videos")!
-        let detail = includeMetadata ? ",snippet(title,channelTitle,description),status(embeddable,madeForKids)" : ""
+        let detail = includeMetadata ? ",snippet(title,channelTitle,description,channelId),status(embeddable,madeForKids)" : ""
         parts.queryItems = [.init(name: "part", value: includeMetadata ? "contentDetails,snippet,status" : "contentDetails"),
             .init(name: "id", value: ids.joined(separator: ",")),
             .init(name: "fields", value: "items(id,contentDetails(duration)\(detail))")]
@@ -272,34 +282,35 @@ final class PlatformConnection {
         return page.items.filter { ids.contains($0.id) }
     }
 
-    func channelPortraits(_ ids: [String]) async throws -> [String: (name: String, url: URL)] {
-        guard platform == .youtube, !ids.isEmpty, ids.count <= 50,
-              ids.allSatisfy({ $0.range(of: #"^UC[A-Za-z0-9_-]{22}$"#, options: .regularExpression) != nil }) else { return [:] }
+    func artistPortraitURL(for credit: YouTubeArtistPortraitCredit) async throws -> URL? {
+        guard platform == .youtube, YouTubeArtwork.validChannelID(credit.channelID) else { return nil }
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--youtube-sync-fixture") {
+            guard arguments.contains("--youtube-artist-portrait-fixture"),
+                  !arguments.contains("--youtube-artwork-offline") else { return nil }
+            let fixtureName = credit.channelID == "UCaaaaaaaaaaaaaaaaaaaaaa" ? "Syllume 示範音軌" : "翻譯上傳頻道"
+            let data = Data("""
+                {"items":[{"id":"\(credit.channelID)","snippet":{"title":"\(fixtureName)",
+                "thumbnails":{"default":{"url":"https://yt3.ggpht.com/syllume-artist-fixture"}}}}]}
+                """.utf8)
+            return try YouTubeArtwork.matchedPortrait(in: data, credit: credit)
+        }
+        #endif
         let revision = sessionID
         var parts = URLComponents(string: "https://www.googleapis.com/youtube/v3/channels")!
-        parts.queryItems = [.init(name: "part", value: "snippet"), .init(name: "id", value: ids.joined(separator: ",")),
+        parts.queryItems = [.init(name: "part", value: "snippet"), .init(name: "id", value: credit.channelID),
             .init(name: "fields", value: "items(id,snippet(title,thumbnails(default,medium)))")]
-        let (data, response) = try await request(url: parts.url!, token: try await accessToken())
-        guard sessionID == revision, !Task.isCancelled else { throw CancellationError() }
-        guard (200..<300).contains(response.statusCode) else { return [:] }
-        struct Page: Decodable {
-            struct Channel: Decodable {
-                struct Snippet: Decodable {
-                    struct Image: Decodable { let url: String }
-                    let title: String; let thumbnails: [String: Image]
-                }
-                let id: String; let snippet: Snippet
-            }
-            let items: [Channel]?
+        let token = try await accessToken()
+        try Task.checkCancellation()
+        guard sessionID == revision else { throw CancellationError() }
+        let (data, response) = try await request(url: parts.url!, token: token)
+        try Task.checkCancellation()
+        guard sessionID == revision else { throw CancellationError() }
+        guard (200..<300).contains(response.statusCode) else {
+            throw DiagnosticProblem.googleHTTP(response.statusCode, body: data)
         }
-        var result: [String: (name: String, url: URL)] = [:]
-        for channel in try JSONDecoder().decode(Page.self, from: data).items ?? [] where ids.contains(channel.id) {
-            let pictures = channel.snippet.thumbnails
-            if let url = ["medium", "default"].lazy.compactMap({ pictures[$0]?.url }).compactMap(YouTubeArtwork.portraitURL).first {
-                result[channel.id] = (channel.snippet.title, url)
-            }
-        }
-        return result
+        return try YouTubeArtwork.matchedPortrait(in: data, credit: credit)
     }
 
     func verifyGoogleRefresh() async throws {

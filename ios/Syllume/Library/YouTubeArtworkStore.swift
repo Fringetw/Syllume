@@ -65,17 +65,18 @@ actor YouTubeArtworkStore {
         let fallbacks = YouTubeArtwork.thumbnails(for: videoID)
         guard let key = fallbacks.first else { return nil }
         var seen = Set<URL>()
-        return await load((candidates + fallbacks).filter { seen.insert($0).inserted }, cacheKey: key)
+        return await load((candidates + fallbacks).filter { seen.insert($0).inserted }, cacheKey: key.absoluteString)
     }
 
-    func portrait(at url: URL) async -> Data? {
-        guard YouTubeArtwork.portraitURL(url.absoluteString) != nil else { return nil }
-        return await load([url], cacheKey: url)
+    func artistPortrait(for credit: YouTubeArtistPortraitCredit, accountID: String, url: URL? = nil) async -> Data? {
+        let key = "portrait|\(accountID)|\(credit.channelID)|\(DownloadSongMatch.normalized(credit.performer))"
+        let candidates = url.flatMap { YouTubeArtwork.portraitURL($0.absoluteString) }.map { [$0] } ?? []
+        return await load(candidates, cacheKey: key)
     }
 
-    private func load(_ urls: [URL], cacheKey: URL) async -> Data? {
+    private func load(_ urls: [URL], cacheKey: String) async -> Data? {
         guard !Task.isCancelled else { return nil }
-        let digest = SHA256.hash(data: Data(cacheKey.absoluteString.utf8))
+        let digest = SHA256.hash(data: Data(cacheKey.utf8))
         let name = digest.map { String(format: "%02x", $0) }.joined() + ".cover"
         let file = directory.appending(path: name)
         if let cached = cachedImage(at: file) { return cached }
@@ -162,7 +163,14 @@ actor YouTubeArtworkStore {
             // The first two renditions are unavailable. Tests can relaunch with
             // every rendition offline to exercise the disk cache independently.
             let ids = arguments.contains("--syllume-recording-regression") ? ["6AR6Oc0-4NQ", "3NNhrqHZqlI"] : ["M7lc1UVf-VE"]
-            guard !arguments.contains("--youtube-artwork-offline"), ids.contains(where: { url.path == "/vi/\($0)/default.jpg" }),
+            guard !arguments.contains("--youtube-artwork-offline") else { return nil }
+            if arguments.contains("--youtube-artist-portrait-fixture"), url.host == "yt3.ggpht.com",
+               url.path == "/syllume-artist-fixture",
+               let fixture = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAANElEQVR4nGNQM4gmCTFQQcP/K11wRFgDsmqseoaABpI9TXKwkuYkTNWYehgIqkbTMxw0AABkblGQYf8KsQAAAABJRU5ErkJggg==") {
+                return ImageResponse(data: fixture, canCache: true)
+            }
+            let coverIDs = arguments.contains("--youtube-artist-portrait-fixture") ? ids + ["123456789ab"] : ids
+            guard coverIDs.contains(where: { url.path == "/vi/\($0)/default.jpg" }),
                   let fixture = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAgAAAAICAIAAABLbSncAAAAFElEQVR4nGNM37OWARtgwio6aCUAbbEB4B0QKzMAAAAASUVORK5CYII=") else { return nil }
             return ImageResponse(data: fixture, canCache: true)
         }
@@ -174,6 +182,7 @@ actor YouTubeArtworkStore {
             defer { bytes.task.cancel() }
             guard let http = response as? HTTPURLResponse, http.statusCode == 200,
                   let finalURL = http.url, YouTubeArtwork.allows(finalURL),
+                  YouTubeArtwork.portraitURL(url.absoluteString) == nil || YouTubeArtwork.portraitURL(finalURL.absoluteString) != nil,
                   let mime = http.mimeType, mime.hasPrefix("image/"),
                   http.expectedContentLength <= Int64(Self.maximumBytes) else { return nil }
 

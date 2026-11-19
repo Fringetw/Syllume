@@ -28,6 +28,19 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
             originVideoID: YouTubeVideo.validID(videoID) ? videoID : nil)
     }
 
+    var artistPortraitCredit: YouTubeArtistPortraitCredit? {
+        guard YouTubeVideo.validID(videoID), let channelID, YouTubeArtwork.validChannelID(channelID),
+              !YouTubeCaptionDecoders.isTranslatedUpload(title), DownloadSongMatch.versions(title).isEmpty else { return nil }
+        // A playlist's uploader alone is not evidence that they performed the song.
+        let titleParts = title.components(separatedBy: " - ")
+        let explicitCredit = titleParts.count == 2 && !titleParts[1].trimmingCharacters(in: .whitespaces).isEmpty
+            ? titleParts[0] : nil
+        guard let performer = creditedArtist ?? explicitCredit,
+              DownloadSongMatch.artistNames(performer).count == 1,
+              DownloadSongMatch.samePerformers(performer, artist) else { return nil }
+        return YouTubeArtistPortraitCredit(channelID: channelID, performer: performer)
+    }
+
     var artworkURLs: [URL] {
         let preferred = thumbnailURL.flatMap { YouTubeArtwork.thumbnailURL($0.absoluteString) }
         let portrait = avatarURL.flatMap { YouTubeArtwork.portraitURL($0.absoluteString) }
@@ -44,6 +57,15 @@ struct SyncedYouTubeSong: Codable, Equatable, Identifiable, Sendable {
         guard let videoID = YouTubeVideo.identifier(from: entry.url.absoluteString) else { return nil }
         id = entry.id; self.videoID = videoID; title = entry.title; artist = entry.subtitle; duration = entry.duration; channelID = entry.channelID
         thumbnailURL = entry.thumbnailURL
+    }
+}
+
+struct YouTubeArtistPortraitCredit: Sendable {
+    let channelID: String
+    let performer: String
+
+    func matches(_ channelTitle: String) -> Bool {
+        DownloadSongMatch.samePerformers(performer, channelTitle)
     }
 }
 
