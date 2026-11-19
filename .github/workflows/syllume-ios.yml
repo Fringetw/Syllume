@@ -39,6 +39,9 @@ jobs:
           else
             python3 ios/Tools/configure_google_oauth.py
           fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
       - name: Check the lyric timeline and Xcode project references
         env:
           FOLIA_PROBE_SUBTITLE_SOURCES: "1"

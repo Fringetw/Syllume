@@ -89,7 +89,12 @@ export const buildLineGraphemeTimeline = (line: Line): GraphemeTiming[] => {
     }
 
     if (line.words.length === 0) {
-        return buildEvenGraphemeTimings(line.fullText, line.startTime, line.endTime);
+        // Keep glyph layout without inventing a sung order for line-only lyrics.
+        return lineGraphemes.map(char => ({
+            char,
+            startTime: line.startTime,
+            endTime: line.endTime,
+        }));
     }
 
     const timeline: GraphemeTiming[] = [];

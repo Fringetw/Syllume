@@ -281,7 +281,7 @@ struct MistLyricStage: View {
         }
         .multilineTextAlignment(.center)
         .fixedSize(horizontal: false, vertical: true)
-        .opacity(effects ? 0.62 + 0.38 * presence : 1)
+        .opacity(effects ? presence : 1)
         .offset(y: effects ? 5 * (1 - presence) : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(line.fullText))

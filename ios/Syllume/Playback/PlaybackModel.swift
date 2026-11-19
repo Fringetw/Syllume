@@ -805,6 +805,15 @@ final class PlaybackModel {
             if let lyricURL = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
                let text = try? String(contentsOf: lyricURL, encoding: .utf8) {
                 timeline = LyricTimeline(lrc: text)
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--line-only-lyrics-fixture") {
+                    timeline = LyricTimeline(lines: timeline.lines.map { line in
+                        var line = line
+                        line.words = []
+                        return line
+                    })
+                }
+                #endif
             }
         case .navidrome:
             url = try? client?.stream(for: track)

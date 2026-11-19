@@ -160,6 +160,50 @@ final class SyllumeUITests: XCTestCase {
         app.buttons["關閉播放畫面"].tap()
     }
 
+    func testLineOnlyLyricsRemainVisibleInBothAnimatedStylesAfterSeek() {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchArguments = ["--presentation-reset", "--playback-probe", "--line-only-lyrics-fixture",
+                               "-Folia.EnergySavingAnimation", "YES"]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
+        app.launch()
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15))
+        demo.tap()
+        let toggle = app.buttons["playerToggle"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
+        app.buttons["循環佇列"].tap()
+        let clock = app.staticTexts["localTransportProbe"]
+        let started = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
+            return time > 0.2 && time.isFinite && rate > 0
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 20), .completed)
+        if toggle.label != "播放" { toggle.tap() }
+        waitForPausedNativeClock(clock)
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        progress.coordinate(withNormalizedOffset: CGVector(dx: 0.46, dy: 0.5)).tap()
+        let sought = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
+            return (13...15).contains(time) && rate == 0
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 15), .completed)
+        let pausedTime = probeTime(clock)
+
+        for (name, id) in [("商籟", "syllumeSonnetStage"), ("繪光", "syllumeLumiereStage")] {
+            app.segmentedControls.buttons[name].tap()
+            let stage = app.descendants(matching: .any)[id].firstMatch
+            let ready = expectation(for: NSPredicate(format: "value BEGINSWITH %@ AND label CONTAINS %@",
+                "已就緒", "Let the current carry us"), evaluatedWith: stage)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 90), .completed, "\(name) did not render the sought line")
+            XCTAssertTrue(app.staticTexts["讓潮水帶我們向前"].waitForExistence(timeout: 10))
+            XCTAssertEqual(probeTime(clock), pausedTime, accuracy: 0.15)
+            capture(app, name: "Syllume-line-only-\(id)")
+        }
+    }
+
     func testMistStylePersistsAndProgressControlsSeekPausedAudio() {
         continueAfterFailure = false
         let app = XCUIApplication()

@@ -160,6 +160,10 @@
     "src/components/visualizer/lumiere/createLumierePixiRuntime.ts": {
       "reason": "iOS frame-rate cap; Sonnet song handover must settle while paused",
       "patched_sha256": "7207015386dd29d0bfcfdccda0073473ec990ff76fbce29df741fb877310d999"
+    },
+    "src/utils/lyrics/graphemeTiming.ts": {
+      "reason": "Line-only lyrics retain every glyph with the shared line window instead of inventing word timing; real word and syllable timing is unchanged",
+      "patched_sha256": "1a5efe7a2619f02e3430d4a18b6f68417493af79bf6f4d738c8347245f67bfa3"
     }
   }
 }
