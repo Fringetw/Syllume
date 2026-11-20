@@ -187,6 +187,7 @@ struct LibraryScreen: View {
         }
         if dynamicTypeSize.isAccessibilitySize {
             picker.pickerStyle(.menu)
+                .accessibilityIdentifier("librarySourceMenu")
                 .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
         } else {
             picker.pickerStyle(.segmented)

@@ -62,3 +62,9 @@ IPA 需由使用者在 Sideloadly 重簽。沿用先前安裝的 Apple ID 與最
 原本取得歌曲封面後不再查詢頭像，兩張圖也共用同一個顯示狀態。現在在媒體時間開始前進後，對目前歌曲核對頻道與演出者，獨立顯示及快取符合條件的頭像。保留每首歌有權存取的官方媒體路徑，舊歌單若缺少可核對的演出者資訊，可能需先連線補資料。
 
 新增受控測試，涵蓋封面與頭像同時顯示、錯誤頻道不套用上一首頭像、離線重開後沿用已存頭像。真實頻道照片、私人歌單和 iPhone 仍待驗證。
+
+`00fa881` 在 iPhone 16 Pro 模擬器通過 21/21，包含商籟、繪光逐行、頭像和封面同時顯示及離線快取。iPhone SE 的大字級測試在曲庫首頁找不到分段控制，當時尚未進入播放頁。iOS 26 8/8、Swift、33 項 JavaScript、14 項 Python 與 iPhone Release 編譯通過。[iOS 18 證據](https://github.com/Fringetw/Syllume/actions/runs/44553844534/artifacts/14550048247) · [iOS 26 證據](https://github.com/Fringetw/Syllume/actions/runs/44553844534/artifacts/14548860037) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44553844534/artifacts/14545920254)
+
+## build 38 歌曲選項
+
+`1833d25` 的下載測試錄影顯示長按歌曲後直接進入播放，而下載確認未出現。新增可點選的「歌曲選項」，讓操作不必依賴長按。測試會確認選項不會觸發播放、下載前仍須確認，並驗證取消及最後的儲存。歌單與 iPhone SE 大字級回歸待本輪 CI。

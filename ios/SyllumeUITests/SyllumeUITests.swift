@@ -705,16 +705,19 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["syncYouTubePlaylist"].waitForExistence(timeout: 15))
         XCTAssertEqual(audio.value as? String, "點歌時搜尋音源")
+        let options = app.buttons["youtubeSongMenu-fixture-row"]
         let confirm = app.buttons["confirmPlaylistDownload"]
         let download = app.buttons["下載音樂"].firstMatch
         func openConfirmation() {
-            let ready = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: audio)
+            let ready = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: options)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
-            // Hold over the leading artwork where the visible row content begins.
-            audio.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.5)).press(forDuration: 1.5)
-            let menuShown = download.waitForExistence(timeout: 15)
-            if !menuShown { capture(app, name: "Download-context-menu-missing") }
-            XCTAssertTrue(menuShown, "Long press must open the song's context menu.")
+            XCTAssertGreaterThanOrEqual(options.frame.height, 44)
+            XCTAssertFalse(options.frame.intersects(audio.frame))
+            options.tap()
+            XCTAssertTrue(download.waitForExistence(timeout: 15))
+            XCTAssertFalse(app.buttons["playerToggle"].exists, "Opening song options must not start playback")
+            XCTAssertFalse(confirm.exists, "The confirmation sheet needs an explicit download selection")
+            capture(app, name: "Syllume-YouTube-song-options")
             download.tap()
             XCTAssertTrue(confirm.waitForExistence(timeout: 20))
         }
@@ -802,7 +805,9 @@ final class SyllumeUITests: XCTestCase {
                 }
                 defer { previousPlayingTime = time }
                 guard let previous = previousPlayingTime else { return false }
-                return time > 0.2 && time > previous + 0.01
+                // The 30-second demo repeats. On a busy runner both queries can straddle its end.
+                let wrapped = previous > 20 && (0.2..<10).contains(time)
+                return time > 0.2 && (time > previous + 0.01 || wrapped)
             }, evaluatedWith: probe)
             XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 15), .completed,
                            "Expected an advancing AVPlayer clock after returning from the external handoff. Samples: \(samples)")
@@ -895,11 +900,16 @@ final class SyllumeUITests: XCTestCase {
         app.launch()
         XCTAssertLessThanOrEqual(app.frame.width, 375)
         XCTAssertLessThanOrEqual(app.frame.height, 667, "Run this case on the iPhone SE simulator.")
-        app.segmentedControls.buttons["YouTube"].tap()
+        let sources = app.buttons["librarySourceMenu"]
+        XCTAssertTrue(sources.waitForExistence(timeout: 10)); sources.tap()
+        let youtube = app.buttons["YouTube"]
+        XCTAssertTrue(youtube.waitForExistence(timeout: 10)); youtube.tap()
         let liked = app.buttons["youtubePlaylist-liked"]
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
         let jane = app.buttons["youtubeSong-recording-jane"]
-        XCTAssertTrue(jane.waitForExistence(timeout: 15)); jane.tap()
+        XCTAssertTrue(app.staticTexts["selectedYouTubePlaylist"].waitForExistence(timeout: 15))
+        for _ in 0..<5 where !jane.isHittable { app.swipeUp() }
+        XCTAssertTrue(jane.isHittable); jane.tap()
 
         let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
         let transport = app.staticTexts["youtubeTransportProbe"]
@@ -908,7 +918,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertGreaterThanOrEqual(originalVideoFrame.width, 200)
         XCTAssertGreaterThanOrEqual(originalVideoFrame.height, 200)
         XCTAssertTrue(app.frame.contains(originalVideoFrame))
-        waitForYouTubePlayback(transport, above: 0.5, timeout: 45, "The visible fixture must start playing.")
+        waitForYouTubePlayback(transport, above: 10, timeout: 45, "The visible fixture must play beyond the seek target.")
 
         let toggle = app.buttons["playerToggle"]
         let rail = app.descendants(matching: .any)["playbackProgress"].firstMatch

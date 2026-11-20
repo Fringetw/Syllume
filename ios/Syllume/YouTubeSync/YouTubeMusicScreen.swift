@@ -219,7 +219,7 @@ struct YouTubeMusicScreen: View {
                 if !sync.busy && filtered.isEmpty { Text(songs.isEmpty ? "這份歌單尚無歌曲。" : "沒有符合的歌曲。").foregroundStyle(.secondary) }
             }
             Section {
-                Text("長按歌曲可下載或附加音檔。下載位置：「檔案 → 我的 iPhone → Syllume → YouTube Music」。")
+                Text("在歌曲右側的選單下載或附加音檔。下載位置：「檔案 → 我的 iPhone → Syllume → YouTube Music」。")
                 Text("編輯只影響 Syllume。開啟此頁、回到 App 或下拉時會同步 YouTube 的變更。")
                 if sync.snapshot.choice?.id == "liked" { Text("YouTube 官方 API 最多提供最近 1,000 部喜歡的影片。") }
             }.font(.footnote).foregroundStyle(.secondary)
@@ -262,40 +262,57 @@ struct YouTubeMusicScreen: View {
 
     private func songRow(_ song: SyncedYouTubeSong) -> some View {
         let file = sync.localTrack(for: song, library: library).flatMap(library.artworkURL)
-        return Button { if !editing.isEditing { play(song, songs) } } label: {
-            HStack(spacing: 12) {
-                SongArtworkView(source: SongArtworkSource(file: file, song: song),
-                                tint: SyllumePalette.accent, size: 38, cornerRadius: 11)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(song.title).foregroundStyle(.primary).lineLimit(2)
-                    Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                    Text(status(song)).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 5)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("youtubeSong-" + song.id)
-        .accessibilityValue(status(song))
-        .contextMenu {
-            Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
-                player.playNext(song, bindings: sync.snapshot.bindings, account: account, connection: connection)
-            }
-            if let url = YouTubeVideo.musicURL(for: song.videoID) {
-                Link(destination: url) { Label("在 YouTube Music 開啟", systemImage: "arrow.up.right.square") }
-                Button("下載音樂", systemImage: "arrow.down.circle") {
-                    Task { @MainActor in
-                        await Task.yield()
-                        downloadTarget = song
+        return HStack(spacing: 8) {
+            Button { if !editing.isEditing { play(song, songs) } } label: {
+                HStack(spacing: 12) {
+                    SongArtworkView(source: SongArtworkSource(file: file, song: song),
+                                    tint: SyllumePalette.accent, size: 38, cornerRadius: 11)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(song.title).foregroundStyle(.primary).lineLimit(2)
+                        Text(song.artist).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        Text(status(song)).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
-                .disabled(sync.downloading != nil)
-                Button("附加音檔", systemImage: "folder.badge.plus") { attachment = song; importing = true }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .padding(.vertical, 5)
+                .contentShape(Rectangle())
             }
-            Button("從清單移除", systemImage: "minus.circle", role: .destructive) { sync.remove(song) }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("youtubeSong-" + song.id)
+            .accessibilityValue(status(song))
+            .contextMenu { songActions(song) }
+
+            if !editing.isEditing {
+                Menu { songActions(song) } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.body.weight(.semibold))
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("\(song.title)，歌曲選項")
+                .accessibilityIdentifier("youtubeSongMenu-" + song.id)
+            }
         }
+    }
+
+    @ViewBuilder
+    private func songActions(_ song: SyncedYouTubeSong) -> some View {
+        Button("下一首播放", systemImage: "text.line.first.and.arrowtriangle.forward") {
+            player.playNext(song, bindings: sync.snapshot.bindings, account: account, connection: connection)
+        }
+        if let url = YouTubeVideo.musicURL(for: song.videoID) {
+            Link(destination: url) { Label("在 YouTube Music 開啟", systemImage: "arrow.up.right.square") }
+            Button("下載音樂", systemImage: "arrow.down.circle") {
+                Task { @MainActor in
+                    await Task.yield()
+                    downloadTarget = song
+                }
+            }
+            .disabled(sync.downloading != nil)
+            Button("附加音檔", systemImage: "folder.badge.plus") { attachment = song; importing = true }
+        }
+        Button("從清單移除", systemImage: "minus.circle", role: .destructive) { sync.remove(song) }
     }
 
     private func play(_ song: SyncedYouTubeSong, _ queue: [SyncedYouTubeSong]) {
