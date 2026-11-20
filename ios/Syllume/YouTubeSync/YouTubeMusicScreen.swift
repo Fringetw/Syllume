@@ -10,10 +10,12 @@ struct YouTubeMusicScreen: View {
     let openPlayer: () -> Void
     let refresh: (Bool) -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.openURL) private var openURL
     @State private var showingPicker = false
     @State private var showingAccount = false
     @State private var addingLocal = false
     @State private var attachment: SyncedYouTubeSong?
+    @State private var songOptions: SyncedYouTubeSong?
     @State private var downloadTarget: SyncedYouTubeSong?
     @State private var importing = false
     @State private var message: String?
@@ -109,6 +111,13 @@ struct YouTubeMusicScreen: View {
             TextField("播放清單名稱", text: $name)
             Button("儲存") { sync.rename(name) }
             Button("取消", role: .cancel) { }
+        }
+        .confirmationDialog("歌曲選項", isPresented: Binding(
+            get: { songOptions != nil }, set: { if !$0 { songOptions = nil } }
+        ), titleVisibility: .visible, presenting: songOptions) { song in
+            songActions(song)
+        } message: { song in
+            Text(song.title)
         }
         .sheet(item: $downloadTarget) { song in
             ScrollView {
@@ -283,13 +292,13 @@ struct YouTubeMusicScreen: View {
             .contextMenu { songActions(song) }
 
             if !editing.isEditing {
-                Menu { songActions(song) } label: {
+                Button { songOptions = song } label: {
                     Image(systemName: "ellipsis")
                         .font(.body.weight(.semibold))
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.borderless)
+                .buttonStyle(.plain)
                 .accessibilityLabel("\(song.title)，歌曲選項")
                 .accessibilityIdentifier("youtubeSongMenu-" + song.id)
             }
@@ -302,7 +311,7 @@ struct YouTubeMusicScreen: View {
             player.playNext(song, bindings: sync.snapshot.bindings, account: account, connection: connection)
         }
         if let url = YouTubeVideo.musicURL(for: song.videoID) {
-            Link(destination: url) { Label("在 YouTube Music 開啟", systemImage: "arrow.up.right.square") }
+            Button("在 YouTube Music 開啟", systemImage: "arrow.up.right.square") { openURL(url) }
             Button("下載音樂", systemImage: "arrow.down.circle") {
                 Task { @MainActor in
                     await Task.yield()

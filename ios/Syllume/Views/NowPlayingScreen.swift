@@ -60,8 +60,9 @@ struct NowPlayingScreen: View {
                         ScrollView {
                             VStack(spacing: 12) {
                                 if controlsVisible { trackInfo(for: track, wrapsText: true) }
-                                lyricSurface(for: track)
-                                    .frame(height: max(220, min(280, geometry.size.height * 0.42)))
+                                lyricSurface(for: track, inScrollView: true)
+                                    .frame(height: mode == .mist && !subtitles.timeline.lines.isEmpty
+                                           ? nil : max(220, min(280, geometry.size.height * 0.42)))
                             }
                             .frame(maxWidth: .infinity)
                         }
@@ -178,7 +179,7 @@ struct NowPlayingScreen: View {
     }
 
     @ViewBuilder
-    private func lyricSurface(for track: Track) -> some View {
+    private func lyricSurface(for track: Track, inScrollView: Bool = false) -> some View {
         switch mode {
         case .lumiere:
             if subtitles.timeline.lines.isEmpty { LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview) }
@@ -206,7 +207,8 @@ struct NowPlayingScreen: View {
             if subtitles.timeline.lines.isEmpty {
                 LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview)
             } else {
-                MistLyricStage(timeline: subtitles.timeline, position: stageTime, accent: accent).id(track.id)
+                MistLyricStage(timeline: subtitles.timeline, position: stageTime, accent: accent,
+                               inScrollView: inScrollView).id(track.id)
             }
         case .lyrics: LyricStage(player: player, displayTimeline: subtitles.timeline, previewPosition: lyricPreview).id(track.id)
         case .cover: artwork

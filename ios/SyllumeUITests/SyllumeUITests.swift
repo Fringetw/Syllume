@@ -415,7 +415,6 @@ final class SyllumeUITests: XCTestCase {
         let nowPlaying = app.staticTexts["systemNowPlayingProbe"]
         let published = expectation(for: NSPredicate(format: "value == %@", "0.0|0.0|artwork"), evaluatedWith: nowPlaying)
         XCTAssertEqual(XCTWaiter.wait(for: [published], timeout: 10), .completed)
-        capture(app, name: "Syllume-cover-with-unavailable-audio")
         app.terminate()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-artwork-offline", "--youtube-unavailable-audio-fixture",
                                "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
@@ -424,7 +423,6 @@ final class SyllumeUITests: XCTestCase {
             app.segmentedControls.buttons["YouTube"].tap()
             XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
             XCTAssertTrue(artwork.waitForExistence(timeout: 10), "Cached cover after offline launch \(attempt)")
-            capture(app, name: "Syllume-cover-cached-after-relaunch-\(attempt)")
             app.terminate()
         }
     }
@@ -701,6 +699,7 @@ final class SyllumeUITests: XCTestCase {
         app.segmentedControls.buttons["YouTube"].tap()
         let liked = app.buttons["youtubePlaylist-liked"]
         XCTAssertTrue(liked.waitForExistence(timeout: 10)); liked.tap()
+        XCTAssertTrue(liked.waitForNonExistence(timeout: 15))
         let audio = app.buttons["youtubeSong-fixture-row"]
         XCTAssertTrue(audio.waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["syncYouTubePlaylist"].waitForExistence(timeout: 15))
@@ -708,21 +707,28 @@ final class SyllumeUITests: XCTestCase {
         let options = app.buttons["youtubeSongMenu-fixture-row"]
         let confirm = app.buttons["confirmPlaylistDownload"]
         let download = app.buttons["下載音樂"].firstMatch
+        XCTAssertTrue(options.waitForExistence(timeout: 10))
+        func optionsOnScreen() -> Bool {
+            let frame = options.frame
+            return !frame.isNull && !frame.isInfinite && frame.height >= 44 && app.frame.contains(frame)
+        }
+        if !optionsOnScreen() { app.swipeUp() }
         func openConfirmation() {
-            let ready = expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: options)
+            let ready = expectation(for: NSPredicate { _, _ in optionsOnScreen() }, evaluatedWith: options)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 15), .completed)
-            XCTAssertGreaterThanOrEqual(options.frame.height, 44)
+            XCTAssertTrue(options.isHittable)
             XCTAssertFalse(options.frame.intersects(audio.frame))
             options.tap()
             XCTAssertTrue(download.waitForExistence(timeout: 15))
             XCTAssertFalse(app.buttons["playerToggle"].exists, "Opening song options must not start playback")
             XCTAssertFalse(confirm.exists, "The confirmation sheet needs an explicit download selection")
-            capture(app, name: "Syllume-YouTube-song-options")
             download.tap()
             XCTAssertTrue(confirm.waitForExistence(timeout: 20))
         }
         openConfirmation()
-        app.buttons["cancelPlaylistDownload"].tap()
+        let cancel = app.buttons["cancelPlaylistDownload"]
+        cancel.tap()
+        XCTAssertTrue(cancel.waitForNonExistence(timeout: 15))
         let cancelled = expectation(for: NSPredicate(format: "hittable == true AND value == %@", "點歌時搜尋音源"),
                                     evaluatedWith: audio)
         XCTAssertEqual(XCTWaiter.wait(for: [cancelled], timeout: 15), .completed)
@@ -957,7 +963,12 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(!title.isHittable || title.frame.minY < titleY, "Song details should scroll below the fixed player.")
         let line = details.descendants(matching: .any)["mistLyricCurrentLine"].firstMatch
         XCTAssertTrue(line.waitForExistence(timeout: 10))
-        XCTAssertTrue(details.frame.intersects(line.frame), "The synchronized lyrics should be visible after scrolling.")
+        func lyricOnScreen() -> Bool {
+            let frame = line.frame
+            return !frame.isEmpty && details.frame.insetBy(dx: -1, dy: -1).contains(frame)
+        }
+        for _ in 0..<2 where !lyricOnScreen() { details.swipeUp() }
+        XCTAssertTrue(lyricOnScreen(), "The synchronized lyric must fit entirely inside the details viewport.")
         XCTAssertEqual(line.label, "風聲")
         XCTAssertEqual(video.frame, originalVideoFrame)
         XCTAssertEqual(rail.frame, progressFrame)

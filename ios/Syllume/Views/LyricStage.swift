@@ -210,6 +210,7 @@ struct MistLyricStage: View {
     let timeline: LyricTimeline
     let position: Double
     let accent: Color
+    var inScrollView = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -222,23 +223,29 @@ struct MistLyricStage: View {
         let current = index.map { timeline.lines[$0] }
         let effects = !reduceMotion && !energySaving && !lowPower
         let presence = current.map { LyricFocus(line: $0, position: position).presence } ?? 0
-        ViewThatFits(in: .vertical) {
-            if !dynamicTypeSize.isAccessibilitySize, let current {
-                VStack(spacing: 20) {
-                    if let index, index > 0 { neighboringLine(timeline.lines[index - 1], opacity: 0.35) }
-                    focusedLine(current, presence: presence, effects: effects)
-                    if next < timeline.lines.count { neighboringLine(timeline.lines[next], opacity: 0.48) }
+        Group {
+            if inScrollView {
+                primaryLine(current, next: next, presence: presence, effects: effects)
+            } else {
+                ViewThatFits(in: .vertical) {
+                    if !dynamicTypeSize.isAccessibilitySize, let current {
+                        VStack(spacing: 20) {
+                            if let index, index > 0 { neighboringLine(timeline.lines[index - 1], opacity: 0.35) }
+                            focusedLine(current, presence: presence, effects: effects)
+                            if next < timeline.lines.count { neighboringLine(timeline.lines[next], opacity: 0.48) }
+                        }
+                    }
+                    primaryLine(current, next: next, presence: presence, effects: effects)
+                    ScrollView {
+                        primaryLine(current, next: next, presence: presence, effects: effects)
+                    }
+                    .scrollIndicators(.hidden)
                 }
             }
-            primaryLine(current, next: next, presence: presence, effects: effects)
-            ScrollView {
-                primaryLine(current, next: next, presence: presence, effects: effects)
-            }
-            .scrollIndicators(.hidden)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .frame(maxWidth: .infinity, maxHeight: inScrollView ? nil : .infinity)
         .background {
             if !reduceTransparency {
                 RadialGradient(colors: [accent.opacity(effects ? 0.08 + 0.12 * presence : 0.10), .clear],
