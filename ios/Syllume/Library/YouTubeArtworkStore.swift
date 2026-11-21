@@ -123,7 +123,7 @@ actor YouTubeArtworkStore {
                 let task = Task(priority: .utility) { [weak self] in
                     guard let self else { return }
                     let response = await fetch(url)
-                    finish(url, request: request, response: response)
+                    await finish(url, request: request, response: response)
                 }
                 inFlight[url] = Pending(id: request, task: task, waiters: [waiter: registration])
             }
