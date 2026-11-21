@@ -11,6 +11,7 @@ struct Checks {
         try YouTubeChecks.run()
         try await YouTubeSyncChecks.run()
         try await StreamingSourceChecks.run()
+        try await ArtworkStoreChecks.run()
         NativePlaybackClockChecks.run()
         try await OnlineLyricsChecks.run()
         try SubtitleSourceChecks.run()

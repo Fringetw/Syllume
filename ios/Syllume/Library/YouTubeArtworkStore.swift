@@ -23,15 +23,32 @@ struct SongArtworkSource: Hashable, Sendable {
 actor YouTubeArtworkStore {
     static let shared = YouTubeArtworkStore()
 
+    struct ImageResponse: Sendable {
+        let data: Data
+        let canCache: Bool
+    }
+
+    private struct Waiter {
+        let cacheFile: URL
+        let continuation: CheckedContinuation<Data?, Never>
+    }
+
+    private struct Pending {
+        let id: UUID
+        let task: Task<Void, Never>
+        var waiters: [UUID: Waiter]
+    }
+
     private let session: URLSession
     private let directory: URL
-    private var inFlight: [URL: Task<ImageResponse?, Never>] = [:]
+    private let fetchOverride: (@Sendable (URL) async -> ImageResponse?)?
+    private var inFlight: [URL: Pending] = [:]
     private static let maximumBytes = 600_000
     private static let maximumAge: TimeInterval = 7 * 24 * 3600
     private static let maximumDiskBytes = 32_000_000
     private static let maximumFiles = 160
 
-    init() {
+    init(directory: URL? = nil, fetch: (@Sendable (URL) async -> ImageResponse?)? = nil) {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpShouldSetCookies = false
         configuration.httpCookieStorage = nil
@@ -40,16 +57,17 @@ actor YouTubeArtworkStore {
         configuration.timeoutIntervalForRequest = 5
         configuration.timeoutIntervalForResource = 7
         session = URLSession(configuration: configuration, delegate: ArtworkRedirectGuard(), delegateQueue: nil)
+        fetchOverride = fetch
 
         var folder = "SyllumeCoverImages"
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--youtube-sync-fixture") { folder += "-Fixture" }
         #endif
-        directory = URL.cachesDirectory.appending(path: folder, directoryHint: .isDirectory)
+        self.directory = directory ?? URL.cachesDirectory.appending(path: folder, directoryHint: .isDirectory)
         #if DEBUG
-        if arguments.contains("--youtube-sync-fixture"), arguments.contains("--youtube-artwork-reset") {
-            try? FileManager.default.removeItem(at: directory)
+        if directory == nil, arguments.contains("--youtube-sync-fixture"), arguments.contains("--youtube-artwork-reset") {
+            try? FileManager.default.removeItem(at: self.directory)
         }
         #endif
     }
@@ -85,20 +103,59 @@ actor YouTubeArtworkStore {
         for url in urls where YouTubeArtwork.allows(url) {
             guard !Task.isCancelled else { return nil }
             if let cached = cachedImage(at: file) { return cached }
-            guard let response = await fetchOnce(url) else { continue }
-            if response.canCache && cachedImage(at: file) == nil { persist(response.data, at: file) }
-            return response.data
+            guard let data = await fetchOnce(url, cacheAt: file) else { continue }
+            return Task.isCancelled ? nil : data
         }
         return nil
     }
 
-    private func fetchOnce(_ url: URL) async -> ImageResponse? {
-        if let pending = inFlight[url] { return await pending.value }
-        let task = Task(priority: .utility) { await fetch(url) }
-        inFlight[url] = task
-        defer { inFlight[url] = nil }
-        return await task.value
+    private func fetchOnce(_ url: URL, cacheAt file: URL) async -> Data? {
+        let waiter = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { (continuation: CheckedContinuation<Data?, Never>) in
+                guard !Task.isCancelled else { continuation.resume(returning: nil); return }
+                let registration = Waiter(cacheFile: file, continuation: continuation)
+                if inFlight[url] != nil {
+                    inFlight[url]?.waiters[waiter] = registration
+                    return
+                }
+                let request = UUID()
+                let task = Task(priority: .utility) { [weak self] in
+                    guard let self else { return }
+                    let response = await fetch(url)
+                    finish(url, request: request, response: response)
+                }
+                inFlight[url] = Pending(id: request, task: task, waiters: [waiter: registration])
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(waiter, for: url) }
+        }
     }
+
+    private func finish(_ url: URL, request: UUID, response: ImageResponse?) {
+        guard let pending = inFlight[url], pending.id == request else { return }
+        inFlight[url] = nil
+        if let response, response.canCache {
+            let destinations = Set(pending.waiters.values.map(\.cacheFile))
+            for file in destinations where cachedImage(at: file) == nil { persist(response.data, at: file) }
+        }
+        for waiter in pending.waiters.values { waiter.continuation.resume(returning: response?.data) }
+    }
+
+    private func cancelWaiter(_ id: UUID, for url: URL) {
+        guard var pending = inFlight[url], let waiter = pending.waiters.removeValue(forKey: id) else { return }
+        if pending.waiters.isEmpty {
+            inFlight[url] = nil
+            pending.task.cancel()
+        } else {
+            inFlight[url] = pending
+        }
+        waiter.continuation.resume(returning: nil)
+    }
+
+    #if SYLLUME_ARTWORK_CHECKS
+    func subscribers(for url: URL) -> Int { inFlight[url]?.waiters.count ?? 0 }
+    #endif
 
     private func cachedImage(at file: URL) -> Data? {
         let keys: Set<URLResourceKey> = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
@@ -142,11 +199,6 @@ actor YouTubeArtworkStore {
         }
     }
 
-    private struct ImageResponse: Sendable {
-        let data: Data
-        let canCache: Bool
-    }
-
     private static func isImage(_ data: Data) -> Bool {
         guard let image = CGImageSourceCreateWithData(data as CFData, nil),
               CGImageSourceGetStatusAtIndex(image, 0) == .statusComplete,
@@ -157,6 +209,7 @@ actor YouTubeArtworkStore {
     }
 
     private func fetch(_ url: URL) async -> ImageResponse? {
+        if let fetchOverride { return await fetchOverride(url) }
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
         if arguments.contains("--youtube-sync-fixture") {
