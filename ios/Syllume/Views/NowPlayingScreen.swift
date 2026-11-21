@@ -138,8 +138,9 @@ struct NowPlayingScreen: View {
             Button { dismiss() } label: { Image(systemName: "chevron.down").frame(width: 44, height: 44) }
                 .accessibilityLabel("關閉播放畫面")
             Spacer()
-            Text("現正播放").font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary).lineLimit(1)
+            Text(dynamicTypeSize.isAccessibilitySize ? "播放" : "現正播放")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(.secondary).lineLimit(1)
+                .accessibilityLabel("現正播放")
             Spacer()
             Button { showingSearch = true } label: { Image(systemName: "text.magnifyingglass").frame(width: 44, height: 44) }
                 .accessibilityLabel("尋找歌詞")
@@ -437,6 +438,10 @@ private struct LocalTransportProbe: View {
     var body: some View {
         Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
             .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
+        if ProcessInfo.processInfo.arguments.contains("--spotify-handoff-fixture") {
+            Text("交接後的播放狀態").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("spotifyHandoffProbe").accessibilityValue(player.handoffFixtureProbe)
+        }
         if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
             Text("原生串流取樣").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("nativeTransportDebugProbe")

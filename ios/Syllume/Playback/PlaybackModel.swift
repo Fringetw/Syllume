@@ -104,6 +104,14 @@ final class PlaybackModel {
     }
     #if DEBUG
     private var nativeTransportTrace: [String] = []
+    private var handoffFixtureSequence = 0
+    private var handoffFixtureAdvance = 0.0
+
+    var handoffFixtureProbe: String {
+        let advancing = isPlaying && handoffFixtureAdvance >= 0.2
+        return "\(handoffFixtureSequence)|\(advancing ? "advancing" : "waiting")"
+    }
+
     var nativeTransportDebugProbe: String {
         _ = position; _ = isPlaying; _ = isBuffering
         return (nativeTransportTrace + ["current " + nativeTransportSnapshot(item: player.currentItem)])
@@ -368,6 +376,12 @@ final class PlaybackModel {
         externalPlayback = true
         system?.updateCommands(model: self)
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--spotify-handoff-fixture") {
+            handoffFixtureSequence += 1
+            handoffFixtureAdvance = 0
+        }
+        #endif
     }
 
     func next() {
@@ -683,6 +697,11 @@ final class PlaybackModel {
             if wantsPlayback {
                 let advance = nativeClock.observe(seconds, at: ContinuousClock().now)
                 if nativeTransportRunning, advance > 0 {
+                    #if DEBUG
+                    if handoffFixtureSequence > 0, handoffFixtureAdvance < 0.2 {
+                        handoffFixtureAdvance += advance
+                    }
+                    #endif
                     DiagnosticsEvents.shared.observeAdvance(advance)
                     if !nativeHasAdvanced {
                         nativeHasAdvanced = true

@@ -778,7 +778,7 @@ final class SyllumeUITests: XCTestCase {
         let mini = app.buttons["openMiniPlayer"]
         let miniToggle = app.buttons["miniPlayerToggle"]
         let fullToggle = app.buttons["playerToggle"]
-        for fromMini in [false, true] {
+        for (index, fromMini) in [false, true].enumerated() {
             XCTAssertTrue(external.waitForExistence(timeout: 10)); external.tap()
             XCUIDevice.shared.press(.home)
             app.activate()
@@ -786,38 +786,22 @@ final class SyllumeUITests: XCTestCase {
             XCTAssertEqual(miniToggle.label, "播放")
             if fromMini { miniToggle.tap() }
             mini.tap()
-            // Each presentation creates a new probe. Reusing the previous sheet's element can
-            // retain its paused accessibility snapshot after AVPlayer has already resumed.
-            let probe = app.staticTexts["localTransportProbe"]
-            XCTAssertTrue(probe.waitForExistence(timeout: 10))
+            let handoff = app.staticTexts["spotifyHandoffProbe"]
+            XCTAssertTrue(handoff.waitForExistence(timeout: 10))
             if !fromMini {
+                let probe = app.staticTexts["localTransportProbe"]
                 let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|0.0"), evaluatedWith: probe)
                 XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
                 fullToggle.tap()
             }
-            var samples: [String] = []
-            var previousPlayingTime: Double?
-            let playing = expectation(for: NSPredicate { _, _ in
-                let value = probe.value as? String ?? "missing"
-                if samples.last != value {
-                    samples.append(value)
-                    if samples.count > 12 { samples.removeFirst() }
-                }
-                let fields = value.split(separator: "|")
-                guard fields.count == 2, let time = Double(fields[0]), time.isFinite,
-                      let rate = Double(fields[1]), rate.isFinite, rate > 0 else {
-                    previousPlayingTime = nil
-                    return false
-                }
-                defer { previousPlayingTime = time }
-                guard let previous = previousPlayingTime else { return false }
-                // The 30-second demo repeats. On a busy runner both queries can straddle its end.
-                let wrapped = previous > 20 && (0.2..<10).contains(time)
-                return time > 0.2 && (time > previous + 0.01 || wrapped)
-            }, evaluatedWith: probe)
-            XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 15), .completed,
-                           "Expected an advancing AVPlayer clock after returning from the external handoff. Samples: \(samples)")
+            // The native clock accumulates real advancing samples for this handoff, so an
+            // incomplete accessibility snapshot cannot discard a sample or confuse two handoffs.
+            let advancing = expectation(for: NSPredicate(format: "value == %@", "\(index + 1)|advancing"),
+                                        evaluatedWith: handoff)
+            XCTAssertEqual(XCTWaiter.wait(for: [advancing], timeout: 25), .completed,
+                           "Expected AVPlayer time to advance after resuming from the \(fromMini ? "mini" : "full") player.")
             close.tap()
+            XCTAssertTrue(handoff.waitForNonExistence(timeout: 15))
         }
     }
 

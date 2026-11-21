@@ -72,3 +72,7 @@ IPA 需由使用者在 Sideloadly 重簽。沿用先前安裝的 Apple ID 與最
 `414b751` 的 iPhone 16 Pro 模擬器通過 19/21，iPhone SE（第 3 代）通過 1/1，iOS 26 通過 8/8。下載案例的錄影顯示歌單選擇器已收起，畫面也有獨立的歌曲選項。XCTest 仍回報按鈕沒有有效的點擊位置。封面案例通過無法播放時的封面及系統播放資訊斷言，截圖請求逾時後未執行離線重開。SE 案例的影片尺寸與控制、暫停定位及歌詞時間都通過，但截圖顯示大字歌詞仍被可捲動區裁切。[iOS 18 證據](https://github.com/Fringetw/Syllume/actions/runs/44755571812/artifacts/14644905607) · [iOS 26 證據](https://github.com/Fringetw/Syllume/actions/runs/44755571812/artifacts/14640736237)
 
 build 39 改用標準按鈕開啟歌曲動作對話框。回歸先確認歌單選擇器已收起以及按鈕在畫面內。封面測試直接驗證兩次離線重開。小螢幕的霧盞依內容高度排版，和曲目資訊放在同一個可捲動區。測試要求整個歌詞框在可見區，並確認影片與進度條位置維持固定。
+
+`cc6a35f` 通過 iPhone 16 Pro iOS 18.6 的歌單 5/5、錄影曲目 1/1，以及一般回歸 14/15。iPhone SE 通過 1/1，截圖可讀到暫停定位後的「風聲」。iOS 26 通過 8/8，iPhone Release 編譯通過。唯一失敗的 Spotify 交接案例在小播放器恢復後沒有從無障礙測試讀到第二筆資料。錄影的同一段播放從 0:08 走到 0:23，該次介面沒有卡住。[iOS 18 證據](https://github.com/Fringetw/Syllume/actions/runs/44766901367/artifacts/14650546366) · [iOS 26 證據](https://github.com/Fringetw/Syllume/actions/runs/44766901367/artifacts/14646563413) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44766901367/artifacts/14646493229)
+
+build 40 的交接回歸從播放器取得每次交接後已前進至少 0.2 秒的原生時鐘狀態，分別驗證全螢幕與小播放器恢復播放。最大字級使用較短的播放頁標題，VoiceOver 仍會讀出完整標題。
