@@ -14,6 +14,12 @@ enum DiagnosticsChecks {
         precondition(media.code == .permission && media.httpStatus == 403)
         precondition(DiagnosticProblem.mediaHTTP(416).code == .invalidResponse)
         precondition(DiagnosticProblem.mediaHTTP(503).code == .transport)
+        precondition(DiagnosticProblem.classify(NavidromeError.httpStatus(401)) == .init(code: .reauthorize, httpStatus: 401))
+        precondition(DiagnosticProblem.classify(NavidromeError.httpStatus(403)) == .init(code: .permission, httpStatus: 403))
+        precondition(DiagnosticProblem.classify(NavidromeError.serverError(40)) == .init(code: .reauthorize, nativeCode: 40))
+        precondition(DiagnosticProblem.classify(NavidromeError.serverError(41)) == .init(code: .configuration, nativeCode: 41))
+        precondition(DiagnosticProblem.classify(NavidromeError.serverError(50)) == .init(code: .permission, nativeCode: 50))
+        precondition(DiagnosticProblem.classify(NavidromeError.invalidResponse).code == .invalidResponse)
         let native = NSError(domain: "AVFoundationErrorDomain", code: -11828,
                              userInfo: [NSLocalizedDescriptionKey: "secret-server"])
         precondition(DiagnosticProblem.classify(native, fallback: .invalidMedia).nativeCode == -11828)

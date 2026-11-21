@@ -109,6 +109,7 @@ struct DiagnosticProblem: Error, LocalizedError, Codable, Equatable, Sendable {
     static func classify(_ error: Error, fallback: DiagnosticCode = .transport) -> Self {
         if let problem = error as? Self { return problem }
         if error is CancellationError { return Self(code: .cancelled) }
+        if let navidrome = error as? NavidromeError { return navidrome.diagnosticProblem }
         if let platform = error as? PlatformError, case .timeout = platform { return Self(code: .timeout) }
         if let error = error as? SubtitleReadError {
             let code: DiagnosticCode

@@ -15,6 +15,10 @@ on:
         description: Run AVPlayer against the public HTTPS sample on the iOS 26 simulator
         type: boolean
         default: false
+      navidrome_only:
+        description: Run the production Navidrome client against an isolated HTTPS server
+        type: boolean
+        default: false
   push:
     paths:
       - 'ios/**'
@@ -30,7 +34,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ !inputs.public_youtube_only && !inputs.public_native_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ !inputs.public_youtube_only && !inputs.public_native_only && !inputs.navidrome_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-15-intel
     timeout-minutes: 105
     steps:
@@ -220,8 +224,25 @@ jobs:
           path: ${{ runner.temp }}/SyllumeUIScreenshots
           if-no-files-found: ignore
 
+  navidrome-api:
+    if: inputs.navidrome_only
+    runs-on: macos-26
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify authenticated Navidrome lookup, streaming and download
+        run: |
+          set -o pipefail
+          bash ios/Checks/run_navidrome_live.sh 2>&1 | tee "$RUNNER_TEMP/Syllume-Navidrome-live.txt"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Syllume-Navidrome-live
+          path: ${{ runner.temp }}/Syllume-Navidrome-live.txt
+          if-no-files-found: error
+
   ios-26-player:
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    if: ${{ (!inputs.navidrome_only || inputs.public_youtube_only || inputs.public_native_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:

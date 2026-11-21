@@ -41,15 +41,37 @@ struct NavidromeAccount: Codable, Equatable, Sendable {
 }
 
 enum NavidromeError: LocalizedError {
-    case invalidAccount, requestFailed, serverError(Int?), keychain
+    case invalidAccount, invalidResponse, httpStatus(Int), serverError(Int?), keychain
 
     var errorDescription: String? {
         switch self {
         case .invalidAccount: return "請填寫有效的 HTTPS 伺服器網址、帳號與密碼。"
-        case .requestFailed: return "連不上 Navidrome，請檢查伺服器網址與連線。"
-        case .serverError(40), .serverError(41): return "Navidrome 帳號或密碼不正確。"
+        case .invalidResponse: return "Navidrome 傳回無法辨識的資料。"
+        case .httpStatus(401): return "Navidrome 伺服器要求重新驗證，請確認帳號與密碼。"
+        case .httpStatus(403), .serverError(50): return "Navidrome 伺服器未允許這次操作。"
+        case .httpStatus(let status): return "Navidrome 伺服器回傳 HTTP \(status)。"
+        case .serverError(40): return "Navidrome 帳號或密碼不正確。"
+        case .serverError(41): return "此 Navidrome 伺服器的 LDAP 帳號不支援權杖登入。"
         case .serverError: return "Navidrome 拒絕了這次請求。"
         case .keychain: return "無法讀寫 iPhone 的鑰匙圈。"
+        }
+    }
+
+    var diagnosticProblem: DiagnosticProblem {
+        switch self {
+        case .invalidAccount, .keychain: return .init(code: .configuration)
+        case .invalidResponse: return .init(code: .invalidResponse)
+        case .httpStatus(401): return .init(code: .reauthorize, httpStatus: 401)
+        case .httpStatus(let status): return .mediaHTTP(status)
+        case .serverError(let code):
+            let category: DiagnosticCode = switch code {
+            case 10, 20, 30, 41: .configuration
+            case 40: .reauthorize
+            case 50: .permission
+            case nil: .invalidResponse
+            default: .unavailable
+            }
+            return .init(code: category, nativeCode: code)
         }
     }
 }
@@ -161,7 +183,9 @@ struct NavidromeClient: Sendable {
     private func request(_ name: String, parameters: [URLQueryItem] = []) async throws -> Response {
         let url = try account.endpoint(name, parameters: parameters)
         let data = try await Self.readResponse(from: url)
-        let payload = try JSONDecoder().decode(Envelope.self, from: data).response
+        guard let payload = try? JSONDecoder().decode(Envelope.self, from: data).response else {
+            throw NavidromeError.invalidResponse
+        }
         guard payload.status == "ok" else { throw NavidromeError.serverError(payload.error?.code) }
         return payload
     }
@@ -171,14 +195,15 @@ struct NavidromeClient: Sendable {
         let limit = 8_000_000
         let (bytes, response) = try await session.bytes(from: url)
         defer { bytes.task.cancel() }
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-              response.expectedContentLength <= Int64(limit) else { throw NavidromeError.requestFailed }
+        guard let http = response as? HTTPURLResponse else { throw NavidromeError.invalidResponse }
+        guard (200..<300).contains(http.statusCode) else { throw NavidromeError.httpStatus(http.statusCode) }
+        guard response.expectedContentLength <= Int64(limit) else { throw NavidromeError.invalidResponse }
         var data = Data()
         if response.expectedContentLength > 0 {
             data.reserveCapacity(Int(response.expectedContentLength))
         }
         for try await byte in bytes {
-            guard data.count < limit else { throw NavidromeError.requestFailed }
+            guard data.count < limit else { throw NavidromeError.invalidResponse }
             data.append(byte)
         }
         return data
