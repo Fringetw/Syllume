@@ -287,6 +287,7 @@ actor AudioDownloadService {
             try Task.checkCancellation()
             guard let http = response as? HTTPURLResponse else { throw DiagnosticProblem(code: .invalidResponse) }
             guard http.statusCode == 200 else {
+                if candidate.diagnosticSource == .navidrome { throw NavidromeError.httpStatus(http.statusCode) }
                 throw DiagnosticProblem.mediaHTTP(http.statusCode)
             }
             guard http.value(forHTTPHeaderField: "Content-Range") == nil,
@@ -295,6 +296,11 @@ actor AudioDownloadService {
             }
             let size = try temporary.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
             let mime = response.mimeType?.lowercased() ?? ""
+            // Navidrome can report an expired login as JSON with HTTP 200 at the binary endpoint.
+            if candidate.diagnosticSource == .navidrome, (1...64_000).contains(size), mime.contains("json"),
+               let data = try? Data(contentsOf: temporary), let failure = NavidromeClient.mediaRejection(in: data) {
+                throw failure
+            }
             guard size >= 1024, size <= limit, !mime.hasPrefix("text/"), !mime.contains("json"), !mime.contains("xml"),
                   response.expectedContentLength <= 0 || response.expectedContentLength == Int64(size),
                   candidate.expectedBytes == nil || candidate.expectedBytes == size else {

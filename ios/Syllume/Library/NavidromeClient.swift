@@ -106,6 +106,12 @@ struct NavidromeClient: Sendable {
         let bitRate: Int?
     }
 
+    static func mediaRejection(in data: Data) -> NavidromeError? {
+        guard let payload = try? JSONDecoder().decode(Envelope.self, from: data).response,
+              payload.status == "failed" else { return nil }
+        return .serverError(payload.error?.code)
+    }
+
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15

@@ -65,10 +65,22 @@ struct NavidromeLiveProbe {
 
         let rejected = try NavidromeAccount(server: server, username: username, password: password + "-wrong")
         let rejection = await service.streamingSource(.navidrome, song: song, account: rejected)
-        guard rejection.candidates.isEmpty, rejection.problem == DiagnosticProblem(code: .reauthorize, nativeCode: 40) else {
+        let credentialsFailure = DiagnosticProblem(code: .reauthorize, nativeCode: 40)
+        guard rejection.candidates.isEmpty, rejection.problem == credentialsFailure else {
             let evidence = rejection.problem?.detail ?? "no error"
             throw Failure(message: "Expected Subsonic 40 to remain a credentials error, got \(evidence).")
         }
-        print("PASS: Navidrome rejected incorrect credentials with Subsonic code 40, classified as reauthorize")
+        let rejectedURL = try rejected.endpoint("download", parameters: [.init(name: "id", value: exact.id)])
+        let unauthorized = DownloadAudioCandidate(url: rejectedURL, title: selected.title, artist: selected.artist,
+                                                  duration: selected.duration, format: selected.format,
+                                                  bitrate: selected.bitrate, source: selected.source)
+        do {
+            let rejectedFile = try await service.download(unauthorized)
+            try? FileManager.default.removeItem(at: rejectedFile)
+            throw Failure(message: "The downloader accepted an unauthorized response as audio.")
+        } catch let error as NavidromeError {
+            guard DiagnosticProblem.classify(error) == credentialsFailure else { throw error }
+        }
+        print("PASS: search and download rejected incorrect credentials with Subsonic code 40, classified as reauthorize")
     }
 }
