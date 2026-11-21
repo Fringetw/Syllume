@@ -38,8 +38,12 @@ struct NavidromeLiveProbe {
               tracks.contains(where: { $0.title == title + " (Live)" && $0.artist == artist }) else {
             throw Failure(message: "Navidrome did not return the exact recording and both decoys (\(tracks.count) results).")
         }
-        let song = SyncedYouTubeSong(id: "navidrome-fixture", videoID: "M7lc1UVf-VE", title: title,
-                                     artist: artist, duration: duration)
+        let catalogueEntry = LibraryEntry(id: "navidrome-fixture", title: title, subtitle: artist,
+                                          url: URL(string: "https://www.youtube.com/watch?v=M7lc1UVf-VE")!,
+                                          duration: duration)
+        guard let song = SyncedYouTubeSong(catalogueEntry) else {
+            throw Failure(message: "Could not construct the selected catalogue recording.")
+        }
         let service = AudioDownloadService(authorizedMediaProviders: [])
         let candidates = try await service.candidates(for: song, account: account)
         guard candidates.count == 1, let selected = candidates.first,
