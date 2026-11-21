@@ -7,7 +7,7 @@
 | 範圍 | 結果 | 證據 |
 | --- | --- | --- |
 | macOS 核心 | Swift、33 項 JavaScript、14 項 Python 通過，涵蓋封面共用下載、最後請求取消與重試快取。 | [核心與公開字幕端點](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719442952) |
-| iOS 18.6 | iPhone 16 Pro 21/21、iPhone SE（第 3 代）1/1。涵蓋歌單、封面與頭像、歌詞同步、播放切換及最大字級。 | [iOS 18 原始畫面與測試摘要](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14722017180) |
+| iOS 18.6 | iPhone 16 Pro 21/21、iPhone SE（第 3 代）1/1。SE 首次在 XCTest 無障礙初始化逾時，尚未開始案例，按既有規則重跑一次後通過。涵蓋歌單、封面與頭像、歌詞同步、播放切換及最大字級。 | [iOS 18 原始畫面與測試摘要](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14722017180) |
 | iOS 26 | iPhone 17 Pro 8/8。另有同一提交的公開 HTTPS 獨立測試 1/1。 | [iOS 26 測試與畫面](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14720036557) · [公開 HTTPS 測試](https://github.com/Fringetw/Syllume/actions/runs/44935730804) |
 | 動畫資源 | 霧盞各三次四秒取樣。iOS 18 平均 App CPU 時間 0.968 秒、平均實體記憶體峰值約 53 MB。iOS 26 為 0.337 秒及約 75 MB。 | [iOS 18 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44935718039/job/136941769428) · [iOS 26 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44935718039/job/136941769693) |
 | 公開字幕 API | LRCLIB《JANE DOE》21 行、《Lemon》37 行，NetEase 42 行、QQ 57 行譯文。YouTube 上傳與 YouTube Music 字幕仍要求驗證。 | [端點紀錄](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719442952) |
