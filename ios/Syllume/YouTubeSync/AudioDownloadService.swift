@@ -13,11 +13,7 @@ actor AudioDownloadService {
         config.timeoutIntervalForResource = seconds
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
-        #if SYLLUME_LIVE_NAVIDROME
-        return NavidromeLiveTrust.session(config)
-        #else
         return URLSession(configuration: config)
-        #endif
     }
 
     init(authorizedMediaProviders: Set<DiagnosticSource>? = nil) {
@@ -364,6 +360,15 @@ private final class AudioDownloadGuard: NSObject, URLSessionDownloadDelegate, Se
     let origin: URL
     let limit: Int
     init(origin: URL, limit: Int) { self.origin = origin; self.limit = limit }
+    #if SYLLUME_LIVE_NAVIDROME
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async -> NavidromeLiveTrust.Decision {
+        NavidromeLiveTrust.decide(challenge)
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didReceive challenge: URLAuthenticationChallenge) async -> NavidromeLiveTrust.Decision {
+        NavidromeLiveTrust.decide(challenge)
+    }
+    #endif
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) { }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64,
                     totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {

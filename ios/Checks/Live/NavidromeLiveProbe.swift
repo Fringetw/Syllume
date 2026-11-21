@@ -7,18 +7,24 @@ import Security
 
 // Authenticate the short-lived test CA inside this process. Release builds
 // use the system trust store and never compile this delegate.
-final class NavidromeLiveTrust: NSObject, URLSessionDelegate, Sendable {
-    private let certificate = ProcessInfo.processInfo.environment["SYLLUME_NAVIDROME_CA_FILE"].flatMap {
+final class NavidromeLiveTrust: NSObject, URLSessionTaskDelegate, Sendable {
+    typealias Decision = (URLSession.AuthChallengeDisposition, URLCredential?)
+    private static let certificate = ProcessInfo.processInfo.environment["SYLLUME_NAVIDROME_CA_FILE"].flatMap {
         try? Data(contentsOf: URL(fileURLWithPath: $0))
     }
 
-    static func session(_ configuration: URLSessionConfiguration = .ephemeral) -> URLSession {
-        URLSession(configuration: configuration, delegate: Self(), delegateQueue: nil)
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge) async -> Decision {
+        Self.decide(challenge)
     }
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    didReceive challenge: URLAuthenticationChallenge) async -> Decision {
+        Self.decide(challenge)
+    }
+
+    static func decide(_ challenge: URLAuthenticationChallenge) -> Decision {
         let space = challenge.protectionSpace
+        print("Navidrome HTTPS trust challenge entered.")
         guard space.host == "localhost", space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = space.serverTrust, let certificate,
               let root = SecCertificateCreateWithData(nil, certificate as CFData),
@@ -26,16 +32,15 @@ final class NavidromeLiveTrust: NSObject, URLSessionDelegate, Sendable {
               SecTrustSetAnchorCertificates(trust, [root] as CFArray) == errSecSuccess,
               SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess else {
             print("Cannot prepare the TLS trust challenge for the isolated Navidrome server.")
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
+            return (.cancelAuthenticationChallenge, nil)
         }
         var trustError: CFError?
         guard SecTrustEvaluateWithError(trust, &trustError) else {
             print("Isolated Navidrome certificate verification returned Security code \(trustError.map { CFErrorGetCode($0) } ?? 0).")
-            completionHandler(.cancelAuthenticationChallenge, nil)
-            return
+            return (.cancelAuthenticationChallenge, nil)
         }
-        completionHandler(.useCredential, URLCredential(trust: trust))
+        print("Navidrome HTTPS endpoint passed native certificate validation.")
+        return (.useCredential, URLCredential(trust: trust))
     }
 }
 
@@ -104,9 +109,9 @@ struct NavidromeLiveProbe {
             throw Failure(message: "Streaming selected a different recording or failed to find it.")
         }
         let original = try Data(contentsOf: URL(fileURLWithPath: path))
-        let streamSession = NavidromeLiveTrust.session()
+        let streamSession = URLSession(configuration: .ephemeral)
         defer { streamSession.finishTasksAndInvalidate() }
-        let (streamed, streamResponse) = try await streamSession.data(from: streamURL)
+        let (streamed, streamResponse) = try await streamSession.data(from: streamURL, delegate: NavidromeLiveTrust())
         guard (streamResponse as? HTTPURLResponse)?.statusCode == 200, streamed == original else {
             throw Failure(message: "The HTTPS raw stream differs from the exact indexed file.")
         }

@@ -116,11 +116,7 @@ struct NavidromeClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 25
-        #if SYLLUME_LIVE_NAVIDROME
-        return NavidromeLiveTrust.session(configuration)
-        #else
         return URLSession(configuration: configuration)
-        #endif
     }()
 
     func ping() async throws { _ = try await request("ping") }
@@ -203,7 +199,11 @@ struct NavidromeClient: Sendable {
     // Bound metadata and cover downloads even for servers that omit Content-Length.
     private static func readResponse(from url: URL) async throws -> Data {
         let limit = 8_000_000
+        #if SYLLUME_LIVE_NAVIDROME
+        let (bytes, response) = try await session.bytes(from: url, delegate: NavidromeLiveTrust())
+        #else
         let (bytes, response) = try await session.bytes(from: url)
+        #endif
         defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw NavidromeError.invalidResponse }
         guard (200..<300).contains(http.statusCode) else { throw NavidromeError.httpStatus(http.statusCode) }
