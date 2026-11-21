@@ -1,6 +1,35 @@
 @preconcurrency import AVFoundation
 import CryptoKit
 import Foundation
+import Security
+
+// Authenticate the short-lived test CA inside this process. Release builds
+// use the system trust store and never compile this delegate.
+final class NavidromeLiveTrust: NSObject, URLSessionDelegate, Sendable {
+    private let certificate = ProcessInfo.processInfo.environment["SYLLUME_NAVIDROME_CA_FILE"].flatMap {
+        try? Data(contentsOf: URL(fileURLWithPath: $0))
+    }
+
+    static func session(_ configuration: URLSessionConfiguration = .ephemeral) -> URLSession {
+        URLSession(configuration: configuration, delegate: Self(), delegateQueue: nil)
+    }
+
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        let space = challenge.protectionSpace
+        guard space.host == "127.0.0.1", space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = space.serverTrust, let certificate,
+              let root = SecCertificateCreateWithData(nil, certificate as CFData),
+              SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, space.host as CFString)) == errSecSuccess,
+              SecTrustSetAnchorCertificates(trust, [root] as CFArray) == errSecSuccess,
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
+              SecTrustEvaluateWithError(trust, nil) else {
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
 
 @main
 struct NavidromeLiveProbe {
@@ -55,17 +84,22 @@ struct NavidromeLiveProbe {
         guard stream.problem == nil, stream.candidates.map({ $0.recording?.id }) == [exact.id] else {
             throw Failure(message: "Streaming selected a different recording or failed to find it.")
         }
-        let streamDuration = try await AudioIntegrity.inspect(streamURL, expected: duration, decode: false)
+        let original = try Data(contentsOf: URL(fileURLWithPath: path))
+        let streamSession = NavidromeLiveTrust.session()
+        defer { streamSession.finishTasksAndInvalidate() }
+        let (streamed, streamResponse) = try await streamSession.data(from: streamURL)
+        guard (streamResponse as? HTTPURLResponse)?.statusCode == 200, streamed == original else {
+            throw Failure(message: "The HTTPS raw stream differs from the exact indexed file.")
+        }
         let download = try await service.download(selected)
         defer { try? FileManager.default.removeItem(at: download) }
         let verification = try await AudioIntegrity.verifyDownload(AVURLAsset(url: download),
                                                                   expected: duration, previous: nil)
-        let original = try Data(contentsOf: URL(fileURLWithPath: path))
         guard verification.digest == Data(SHA256.hash(data: original)),
               try Data(contentsOf: download) == original else {
             throw Failure(message: "The Navidrome download differs from the exact indexed file.")
         }
-        print("PASS: HTTPS ping, real search returned \(tracks.count) tracks, one exact Navidrome candidate, raw stream \(streamDuration)s, byte-identical and fully decoded download (\(original.count) bytes)")
+        print("PASS: HTTPS ping, real search returned \(tracks.count) tracks, one exact Navidrome candidate, byte-identical raw stream and fully decoded download (\(original.count) bytes, \(verification.duration)s)")
 
         let rejected = try NavidromeAccount(server: server, username: username, password: password + "-wrong")
         let rejection = await service.streamingSource(.navidrome, song: song, account: rejected)

@@ -13,7 +13,11 @@ actor AudioDownloadService {
         config.timeoutIntervalForResource = seconds
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
+        #if SYLLUME_LIVE_NAVIDROME
+        return NavidromeLiveTrust.session(config)
+        #else
         return URLSession(configuration: config)
+        #endif
     }
 
     init(authorizedMediaProviders: Set<DiagnosticSource>? = nil) {

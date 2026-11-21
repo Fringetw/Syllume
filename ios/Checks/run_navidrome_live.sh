@@ -16,27 +16,20 @@ esac
 
 umask 077
 work_dir="$(mktemp -d "${RUNNER_TEMP:?}/syllume-navidrome.XXXXXX")"
-system_keychain=/Library/Keychains/System.keychain
 server_pid=""
-certificate_hash=""
 cleanup() {
-    local status=$?
     if [[ -n "$server_pid" ]]; then
         kill "$server_pid" 2>/dev/null || true
         wait "$server_pid" 2>/dev/null || true
     fi
-    if [[ -n "$certificate_hash" ]]; then
-        if ! sudo -n security remove-trusted-cert -d "$work_dir/ca.pem"; then status=1; fi
-        if ! sudo -n security delete-certificate -Z "$certificate_hash" "$system_keychain"; then status=1; fi
-    fi
     rm -rf -- "$work_dir"
-    exit "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
 release="navidrome_${version}_darwin_${architecture}.tar.gz"
+echo "Downloading Navidrome v$version for macOS $architecture."
 curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
     --connect-timeout 10 --max-time 120 --output "$work_dir/$release" \
     "https://github.com/navidrome/navidrome/releases/download/v$version/$release"
@@ -47,8 +40,10 @@ curl --fail --silent --show-error --location --proto '=https' --proto-redir '=ht
 )
 
 if ! command -v ffmpeg >/dev/null; then
+    echo "Installing ffmpeg on the runner."
     HOMEBREW_NO_AUTO_UPDATE=1 brew install ffmpeg
 fi
+echo "Preparing the three Navidrome library recordings."
 ffmpeg_path="$(command -v ffmpeg)"
 mkdir "$work_dir/music" "$work_dir/data"
 exact="$work_dir/music/exact.m4a"
@@ -62,12 +57,14 @@ make_recording '潮汐之間' 'Syllume Fixture' 'Syllume Originals' "$exact"
 make_recording '潮汐之間' 'Other Performer' 'Other Recordings' "$work_dir/music/wrong-performer.m4a"
 make_recording '潮汐之間 (Live)' 'Syllume Fixture' 'Syllume Live' "$work_dir/music/live-version.m4a"
 
-xcrun swiftc -swift-version 6 "$ios_dir"/Syllume/Core/*.swift \
+echo "Compiling the Swift Navidrome integration probe."
+xcrun swiftc -swift-version 6 -D SYLLUME_LIVE_NAVIDROME "$ios_dir"/Syllume/Core/*.swift \
     "$ios_dir/Syllume/Library/NavidromeClient.swift" \
     "$ios_dir/Syllume/Library/AudioIntegrity.swift" \
     "$ios_dir/Syllume/YouTubeSync/AudioDownloadService.swift" \
     "$ios_dir/Checks/Live/NavidromeLiveProbe.swift" -o "$work_dir/navidrome-live-probe"
 
+echo "Generating the loopback HTTPS certificate."
 cat > "$work_dir/ca.cnf" <<'EOF'
 [req]
 distinguished_name = subject
@@ -93,9 +90,9 @@ openssl x509 -req -sha256 -days 2 -in "$work_dir/server.csr" -extfile "$work_dir
     -CA "$work_dir/ca.pem" -CAkey "$work_dir/ca.key" -CAcreateserial \
     -out "$work_dir/server.pem" 2>>"$work_dir/tls.log"
 rm -f -- "$work_dir/ca.key"
-certificate_hash="$(openssl x509 -in "$work_dir/ca.pem" -outform der | shasum -a 1 | cut -d ' ' -f 1)"
-sudo -n security add-trusted-cert -d -r trustRoot -p ssl -k "$system_keychain" "$work_dir/ca.pem"
+openssl x509 -in "$work_dir/ca.pem" -outform DER -out "$work_dir/ca.der"
 
+echo "Starting Navidrome and waiting for its HTTPS listener."
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 password="$(openssl rand -hex 24)"
 printf '::add-mask::%s\n' "$password"
@@ -125,4 +122,5 @@ fi
 
 echo "LIVE SERVICE: Navidrome v$version over HTTPS using Syllume's demo media on the macOS runner."
 SYLLUME_NAVIDROME_URL="$server_url" SYLLUME_NAVIDROME_USER=admin SYLLUME_NAVIDROME_PASSWORD="$password" \
-    SYLLUME_NAVIDROME_EXACT_FILE="$exact" "$work_dir/navidrome-live-probe"
+    SYLLUME_NAVIDROME_CA_FILE="$work_dir/ca.der" SYLLUME_NAVIDROME_EXACT_FILE="$exact" \
+    "$work_dir/navidrome-live-probe"

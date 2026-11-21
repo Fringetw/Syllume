@@ -116,7 +116,11 @@ struct NavidromeClient: Sendable {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 25
+        #if SYLLUME_LIVE_NAVIDROME
+        return NavidromeLiveTrust.session(configuration)
+        #else
         return URLSession(configuration: configuration)
+        #endif
     }()
 
     func ping() async throws { _ = try await request("ping") }
