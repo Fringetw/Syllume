@@ -1,6 +1,18 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 42（`adf84e9`）。macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過。IPA 需以 Sideloadly 重簽，iPhone 實機結果尚待驗證。 [build 42 CI](https://github.com/Fringetw/Syllume/actions/runs/44912653550) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14710682446)
+獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 43（`654a939`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過。公開 YouTube 播放在 Runner 遇到站方驗證。IPA 需以 Sideloadly 重簽，iPhone 實機結果尚待驗證。 [build 43 CI](https://github.com/Fringetw/Syllume/actions/runs/44920735689) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14714075284)
+
+## build 43 的交付證據
+
+| 範圍 | 結果 | 證據 |
+| --- | --- | --- |
+| macOS 核心 | Swift、33 項 JavaScript、14 項 Python 通過。含 IFrame 101／150、保留原始錯誤碼、停止緩衝及手動重試。 | [核心檢查與公開端點](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14713339353) |
+| iOS 18.6 | iPhone 16 Pro 21/21、iPhone SE（第 3 代）1/1。含播放、拖曳、兩種歌詞時鐘、切歌、歌單與最大字級。 | [測試摘要、畫面與紀錄](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14714429422) |
+| iOS 26 | iPhone 17 Pro 8/8。含定位、霧盞記憶、HTTP 限速、停傳逾時及恢復。 | [測試摘要與 HTTP 紀錄](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14714102840) |
+| 公開字幕 API | LRCLIB《JANE DOE》21 行、《Lemon》37 行，NetEase 42 行、QQ 57 行譯文。YouTube 上傳與 YouTube Music 字幕回報需驗證。 | [端點紀錄](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14713339353) |
+| 霧盞資源 | 各三次四秒取樣。iOS 18 平均 App CPU 時間 0.810 秒、平均實體記憶體峰值約 54 MB。iOS 26 為 1.395 秒與約 76 MB。 | [iOS 18 日誌](https://github.com/Fringetw/Syllume/actions/runs/44920735689/job/136895986055) · [iOS 26 日誌](https://github.com/Fringetw/Syllume/actions/runs/44920735689/job/136895986306) |
+
+裝置版使用 iPhoneOS 26.2 SDK，最低 iOS 17。IPA 解壓可讀，Release 執行檔未含公開測試的 Debug 啟動參數。解開 Actions 產物後，內部 IPA 的 SHA-256 為 `9B5EC2D59A68D27EAD54D521159813906A85154143CB4F0F2E628B03D4324F0F`。 [build 43 IPA 產物](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14714075284)
 
 ## build 42 的交付證據
 
@@ -20,7 +32,7 @@ Actions 產物解壓後，`Syllume-iOS-0.4.0-unsigned.ipa` 的 SHA-256 為 `6BB8
 
 獨立啟動 `public_youtube_only` 後，iOS 26 模擬器透過官方 IFrame 連線，以 Google 文件的示範影片及錄影中的《HELP!!》測試實際起播。歌單資料由測試提供。兩支影片在 `9fa26a9` 均停在 0:00 並回傳 `permission:150`，官方播放器畫面要求登入以驗證使用者。此次測試為 0/2 通過。 [Actions 日誌](https://github.com/Fringetw/Syllume/actions/runs/44919608518/job/136892563850) · [原始畫面和測試摘要](https://github.com/Fringetw/Syllume/actions/runs/44919608518/artifacts/14713825322)
 
-build 43 對 101／150 顯示 YouTube 目前無法在 App 內播放，並保留原始代碼與 YouTube Music 開啟入口。若 YouTube Data API 明確標記該影片禁止嵌入，播放畫面仍顯示該影片的限制。實機播放需要單獨驗證。 [YouTube IFrame API 錯誤碼](https://developers.google.com/youtube/iframe_api_reference#onError)
+build 43 對 101／150 顯示 YouTube 目前無法在 App 內播放，並保留原始代碼與 YouTube Music 開啟入口。若 YouTube Data API 明確標記該影片禁止嵌入，播放畫面仍顯示該影片的限制。重驗時兩支影片仍回傳 150 並顯示登入驗證，播放測試 0/2 通過。兩個案例均確認新提示、開啟連結及取消緩衝後，才在媒體時間斷言失敗。實機播放需要單獨驗證。 [build 43 日誌](https://github.com/Fringetw/Syllume/actions/runs/44920747445/job/136896025650) · [build 43 畫面與摘要](https://github.com/Fringetw/Syllume/actions/runs/44920747445/artifacts/14713343838) · [YouTube IFrame API 錯誤碼](https://developers.google.com/youtube/iframe_api_reference#onError)
 
 ## build 34 的 macOS 與模擬器
 
