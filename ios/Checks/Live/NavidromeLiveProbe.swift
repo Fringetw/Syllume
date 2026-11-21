@@ -1,5 +1,7 @@
 @preconcurrency import AVFoundation
+import CoreFoundation
 import CryptoKit
+import Darwin
 import Foundation
 import Security
 
@@ -17,13 +19,19 @@ final class NavidromeLiveTrust: NSObject, URLSessionDelegate, Sendable {
     func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         let space = challenge.protectionSpace
-        guard space.host == "127.0.0.1", space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+        guard space.host == "localhost", space.authenticationMethod == NSURLAuthenticationMethodServerTrust,
               let trust = space.serverTrust, let certificate,
               let root = SecCertificateCreateWithData(nil, certificate as CFData),
               SecTrustSetPolicies(trust, SecPolicyCreateSSL(true, space.host as CFString)) == errSecSuccess,
               SecTrustSetAnchorCertificates(trust, [root] as CFArray) == errSecSuccess,
-              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess,
-              SecTrustEvaluateWithError(trust, nil) else {
+              SecTrustSetAnchorCertificatesOnly(trust, true) == errSecSuccess else {
+            print("Cannot prepare the TLS trust challenge for the isolated Navidrome server.")
+            completionHandler(.cancelAuthenticationChallenge, nil)
+            return
+        }
+        var trustError: CFError?
+        guard SecTrustEvaluateWithError(trust, &trustError) else {
+            print("Isolated Navidrome certificate verification returned Security code \(trustError.map { CFErrorGetCode($0) } ?? 0).")
             completionHandler(.cancelAuthenticationChallenge, nil)
             return
         }
@@ -38,10 +46,20 @@ struct NavidromeLiveProbe {
         var errorDescription: String? { message }
     }
 
-    static func main() async throws {
+    static func main() async {
+        do {
+            try await run()
+        } catch {
+            let native = error as NSError
+            print("Navidrome integration failed (\(native.domain) \(native.code)): \(error.localizedDescription)")
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func run() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard let server = environment["SYLLUME_NAVIDROME_URL"],
-              let address = URLComponents(string: server), address.host == "127.0.0.1",
+              let address = URLComponents(string: server), address.host == "localhost",
               let username = environment["SYLLUME_NAVIDROME_USER"],
               let password = environment["SYLLUME_NAVIDROME_PASSWORD"],
               let path = environment["SYLLUME_NAVIDROME_EXACT_FILE"] else {
@@ -52,6 +70,7 @@ struct NavidromeLiveProbe {
         let account = try NavidromeAccount(server: server, username: username, password: password)
         let client = NavidromeClient(account: account)
         try await client.ping()
+        print("PASS: Swift authenticated with Navidrome over HTTPS")
         let clock = ContinuousClock()
         let deadline = clock.now + .seconds(45)
         var tracks: [Track]

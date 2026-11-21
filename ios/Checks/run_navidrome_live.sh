@@ -79,6 +79,8 @@ basicConstraints = critical, CA:FALSE
 keyUsage = critical, digitalSignature, keyEncipherment
 extendedKeyUsage = serverAuth
 subjectAltName = DNS:localhost, IP:127.0.0.1
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid,issuer
 EOF
 openssl req -x509 -newkey rsa:2048 -nodes -sha256 -days 2 \
     -subj "/CN=Syllume Navidrome CI ${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}" \
@@ -91,15 +93,17 @@ openssl x509 -req -sha256 -days 2 -in "$work_dir/server.csr" -extfile "$work_dir
     -out "$work_dir/server.pem" 2>>"$work_dir/tls.log"
 rm -f -- "$work_dir/ca.key"
 openssl x509 -in "$work_dir/ca.pem" -outform DER -out "$work_dir/ca.der"
+security verify-cert -c "$work_dir/server.pem" -r "$work_dir/ca.pem" -p ssl -s localhost
+cat "$work_dir/server.pem" "$work_dir/ca.pem" >"$work_dir/chain.pem"
 
 echo "Starting Navidrome and waiting for its HTTPS listener."
 port="$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
 password="$(openssl rand -hex 24)"
 printf '::add-mask::%s\n' "$password"
-server_url="https://127.0.0.1:$port"
+server_url="https://localhost:$port"
 : > "$work_dir/navidrome.toml"
 ND_ADDRESS=127.0.0.1 ND_PORT="$port" ND_MUSICFOLDER="$work_dir/music" ND_DATAFOLDER="$work_dir/data" \
-    ND_TLSCERT="$work_dir/server.pem" ND_TLSKEY="$work_dir/server.key" ND_FFMPEGPATH="$ffmpeg_path" \
+    ND_TLSCERT="$work_dir/chain.pem" ND_TLSKEY="$work_dir/server.key" ND_FFMPEGPATH="$ffmpeg_path" \
     ND_ENABLEEXTERNALSERVICES=false ND_ENABLEDOWNLOADS=true ND_DEVAUTOCREATEADMINPASSWORD="$password" ND_LOGLEVEL=info \
     "$work_dir/navidrome" --configfile "$work_dir/navidrome.toml" >"$work_dir/server.log" 2>&1 &
 server_pid=$!
