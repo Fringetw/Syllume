@@ -904,6 +904,13 @@ final class PlaybackModel {
             do {
                 try check()
                 #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--youtube-public-smoke") {
+                    // Force the official video path without looking up a separate independent audio source.
+                    _ = await catalogueMetadataTask?.value
+                    try check()
+                    catalogueFailed(problem: DiagnosticProblem(code: .noMatch))
+                    return
+                }
                 if ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
                     _ = await catalogueMetadataTask?.value
                     try check()

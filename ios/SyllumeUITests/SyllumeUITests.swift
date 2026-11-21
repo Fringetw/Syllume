@@ -832,6 +832,57 @@ final class SyllumeUITests: XCTestCase {
                                "Selecting the current queue row must restart playback from \(beforeQueue)s.")
     }
 
+    func testPublicYouTubeIFrameReferenceVideo() {
+        verifyPublicYouTubeIFrame(song: "fixture-row", videoID: "M7lc1UVf-VE")
+    }
+
+    func testPublicYouTubeIFrameRecordedHelp() {
+        verifyPublicYouTubeIFrame(song: "recording-help", videoID: "z2tDtdHHAHg",
+                                 playlistArguments: ["--youtube-device-playback-regression"])
+    }
+
+    private func verifyPublicYouTubeIFrame(song: String, videoID: String, playlistArguments: [String] = []) {
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        // The catalogue row and unavailable independent audio are controlled. The IFrame and media are live.
+        app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-public-smoke",
+                               "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"] + playlistArguments
+        app.launch()
+        let tab = app.segmentedControls.buttons["YouTube"]
+        XCTAssertTrue(tab.waitForExistence(timeout: 15))
+        tab.tap()
+        let liked = app.buttons["youtubePlaylist-liked"]
+        XCTAssertTrue(liked.waitForExistence(timeout: 10))
+        liked.tap()
+        let entry = app.buttons["youtubeSong-\(song)"]
+        XCTAssertTrue(entry.waitForExistence(timeout: 15))
+        entry.tap()
+        let video = app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch
+        XCTAssertTrue(video.waitForExistence(timeout: 20))
+        XCTAssertGreaterThanOrEqual(video.frame.width, 200)
+        XCTAssertGreaterThanOrEqual(video.frame.height, 200)
+        XCTAssertTrue(app.staticTexts["YouTube · 官方播放器"].exists)
+        let transport = app.staticTexts["youtubeTransportProbe"]
+        XCTAssertTrue(transport.waitForExistence(timeout: 10))
+        var firstTime: Double?
+        var lastSample = "unavailable"
+        var advanced = false
+        let resolved = expectation(for: NSPredicate { _, _ in
+            lastSample = transport.value as? String ?? "unavailable"
+            let fields = lastSample.split(separator: "|")
+            guard fields.count == 2 else { return false }
+            if fields[1].contains(":") { return true }
+            guard fields[1] == "playing", let time = Double(fields[0]), time.isFinite else { return false }
+            if firstTime == nil { firstTime = time }
+            advanced = firstTime.map { time - $0 >= 2 } ?? false
+            return advanced
+        }, evaluatedWith: transport)
+        _ = XCTWaiter.wait(for: [resolved], timeout: 50)
+        print("Public YouTube IFrame \(videoID): first=\(String(describing: firstTime)) last=\(lastSample)")
+        capture(app, name: "public-YouTube-\(videoID)")
+        XCTAssertTrue(advanced, "Official IFrame \(videoID) did not advance by two seconds. Last media sample: \(lastSample)")
+    }
+
     func testYouTubeSongAutomaticallyPlaysVisibleOriginal() {
         continueAfterFailure = false
         let app = XCUIApplication()

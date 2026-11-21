@@ -170,11 +170,17 @@ struct NowPlayingScreen: View {
                     if player.embeddedVideo === video { player.setEmbeddedVideoVisible(false) }
                 }
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+            let publicSmoke = ProcessInfo.processInfo.arguments.contains("--youtube-public-smoke")
+            if publicSmoke || ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
+                let state = if publicSmoke, let failure = video.failure {
+                    "\(failure.code.rawValue):\(failure.nativeCode.map { String($0) } ?? "none")"
+                } else {
+                    player.isPlaying ? "playing" : "paused"
+                }
                 Text("YouTube 時間軸檢查").font(.system(size: 1)).frame(height: 1)
                     .accessibilityIdentifier("youtubeTransportProbe")
                     .accessibilityLabel(video.didRetryPlaybackDispatch ? "YouTube 播放指令已重送" : "YouTube 時間軸檢查")
-                    .accessibilityValue(String(format: "%.3f|%@", video.mediaSampleTime, player.isPlaying ? "playing" : "paused"))
+                    .accessibilityValue(String(format: "%.3f|%@", video.mediaSampleTime, state))
             }
             #endif
         }
