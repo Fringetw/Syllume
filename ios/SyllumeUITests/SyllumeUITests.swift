@@ -880,6 +880,14 @@ final class SyllumeUITests: XCTestCase {
         _ = XCTWaiter.wait(for: [resolved], timeout: 50)
         print("Public YouTube IFrame \(videoID): first=\(String(describing: firstTime)) last=\(lastSample)")
         capture(app, name: "public-YouTube-\(videoID)")
+        if lastSample.hasSuffix("|permission:101") || lastSample.hasSuffix("|permission:150") {
+            XCTAssertTrue(app.staticTexts["YouTube 目前無法在 App 內播放這部影片。"].waitForExistence(timeout: 10))
+            XCTAssertTrue(app.descendants(matching: .any)["openYouTubeMusic"].firstMatch.exists)
+            let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+            let displayedTime = progress.value as? String
+            XCTAssertNotNil(displayedTime)
+            XCTAssertFalse(displayedTime?.contains("緩衝中") == true)
+        }
         XCTAssertTrue(advanced, "Official IFrame \(videoID) did not advance by two seconds. Last media sample: \(lastSample)")
     }
 

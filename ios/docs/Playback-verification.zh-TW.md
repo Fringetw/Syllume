@@ -16,6 +16,12 @@
 
 Actions 產物解壓後，`Syllume-iOS-0.4.0-unsigned.ipa` 的 SHA-256 為 `6BB868822B7E612394157FAFE121A545B400A9E6F8B989547F8DFE33B671DFAF`。 [build 42 IPA 產物](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14710682446)
 
+## 公開 YouTube IFrame 媒體
+
+獨立啟動 `public_youtube_only` 後，iOS 26 模擬器透過官方 IFrame 連線，以 Google 文件的示範影片及錄影中的《HELP!!》測試實際起播。歌單資料由測試提供。兩支影片在 `9fa26a9` 均停在 0:00 並回傳 `permission:150`，官方播放器畫面要求登入以驗證使用者。此次測試為 0/2 通過。 [Actions 日誌](https://github.com/Fringetw/Syllume/actions/runs/44919608518/job/136892563850) · [原始畫面和測試摘要](https://github.com/Fringetw/Syllume/actions/runs/44919608518/artifacts/14713825322)
+
+build 43 對 101／150 顯示 YouTube 目前無法在 App 內播放，並保留原始代碼與 YouTube Music 開啟入口。若 YouTube Data API 明確標記該影片禁止嵌入，播放畫面仍顯示該影片的限制。實機播放需要單獨驗證。 [YouTube IFrame API 錯誤碼](https://developers.google.com/youtube/iframe_api_reference#onError)
+
 ## build 34 的 macOS 與模擬器
 
 `ed9940d` 的整體工作流程失敗，紀錄日期為 2026-11-18 UTC。 [Actions 原始紀錄](https://github.com/Fringetw/Syllume/actions/runs/44320598586)

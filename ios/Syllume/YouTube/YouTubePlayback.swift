@@ -234,7 +234,7 @@ final class YouTubePlayback {
         }
         failure = DiagnosticProblem(code: reason, nativeCode: code)
         switch code {
-        case 101, 150: error = "原片限制嵌入播放。可在 YouTube Music 開啟。"
+        case 101, 150: error = "YouTube 目前無法在 App 內播放這部影片。"
         case 100: error = "這支影片已移除、設為私人或無法提供播放。"
         case 153: error = "YouTube 無法辨識此安裝版本的播放來源。"
         case -2: error = "YouTube 尚未開始播放。可重試或在 YouTube Music 開啟。"

@@ -69,6 +69,15 @@ enum YouTubeChecks {
         precondition(model.didBlockAutoplay && !model.wantsPlayback && model.failure?.code == .playbackInteractionRequired)
         model.receive(sample(1, 0.2, model.session, b.id))
         precondition(model.isPlaying && !model.didBlockAutoplay && model.failure == nil)
+        for code in [101, 150] {
+            model.failed(code, session: model.session.uuidString)
+            precondition(model.failure == DiagnosticProblem(code: .permission, nativeCode: code))
+            precondition(model.error == "YouTube 目前無法在 App 內播放這部影片。",
+                         "An IFrame refusal does not identify who blocked playback")
+            precondition(!model.isPlaying && !model.isBuffering && !model.wantsPlayback)
+            model.retry()
+            precondition(model.failure == nil && model.error == nil && model.wantsPlayback)
+        }
         let status = try JSONDecoder().decode(YouTubeVideoDetails.Status.self, from: Data(#"{"embeddable":true,"madeForKids":false}"#.utf8))
         precondition(status.allowsEmbeddedPlayback)
         precondition(!YouTubeVideoDetails.Status(embeddable: false, madeForKids: false).allowsEmbeddedPlayback)
