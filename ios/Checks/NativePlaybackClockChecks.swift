@@ -115,24 +115,28 @@ enum NativePlaybackClockChecks {
 
     private static func checkNativeSeekBufferAvailability() {
         let separated = [(start: 0.0, end: 15.0), (start: 120.0, end: 150.0)]
-        precondition(!NativeSeekBufferAvailability.contains(112.572, in: separated),
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 112.572, in: separated),
                      "A moved playhead cannot confirm a seek when its target bytes are absent")
-        precondition(!NativeSeekBufferAvailability.contains(50, in: separated),
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 50, in: separated),
                      "A later buffered range cannot fill an earlier gap")
-        precondition(NativeSeekBufferAvailability.contains(120, in: separated))
-        precondition(NativeSeekBufferAvailability.contains(149.999, in: separated))
-        precondition(!NativeSeekBufferAvailability.contains(150, in: separated),
+        precondition(NativeSeekBufferAvailability.hasForwardBuffer(at: 120, in: separated))
+        precondition(NativeSeekBufferAvailability.hasForwardBuffer(at: 149.980, in: separated))
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 149.999, in: separated),
+                     "A nearly exhausted range cannot confirm playable media at the target")
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 150, in: separated),
                      "The end of a loaded range is exclusive")
-        precondition(!NativeSeekBufferAvailability.contains(15, in: separated))
-        precondition(!NativeSeekBufferAvailability.contains(7.5, in: []))
-        precondition(NativeSeekBufferAvailability.contains(7.5, in: [(start: 7.5, end: 8.0)]),
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 15, in: separated))
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 7.5, in: []))
+        precondition(NativeSeekBufferAvailability.hasForwardBuffer(at: 7.5, in: [(start: 7.5, end: 8.0)]),
                      "The requested time becomes ready when its own range arrives")
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 112.572, in: [(start: 112.572, end: 112.5722)]),
+                     "A sub-millisecond placeholder must not look like buffered audio after a stalled seek")
         let invalid = [(start: Double.nan, end: 20.0), (start: 0.0, end: Double.infinity),
                        (start: 12.0, end: 8.0), (start: 7.5, end: 7.5)]
-        precondition(!NativeSeekBufferAvailability.contains(7.5, in: invalid))
+        precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: 7.5, in: invalid))
         for time in [Double.nan, .infinity, -.infinity, -1] {
-            precondition(!NativeSeekBufferAvailability.contains(time, in: separated))
+            precondition(!NativeSeekBufferAvailability.hasForwardBuffer(at: time, in: separated))
         }
-        print("PASS: native seek readiness requires a valid loaded range covering its actual target")
+        print("PASS: native seek readiness requires forward media at its actual target")
     }
 }

@@ -72,11 +72,11 @@ struct NativeSeekState: Sendable {
 }
 
 enum NativeSeekBufferAvailability {
-    static func contains(_ time: Double, in ranges: [(start: Double, end: Double)]) -> Bool {
+    static func hasForwardBuffer(at time: Double, in ranges: [(start: Double, end: Double)]) -> Bool {
         guard time.isFinite, time >= 0 else { return false }
+        // AVPlayer can move the playhead and report a tiny placeholder range before media arrives.
         return ranges.contains { range in
-            range.start.isFinite && range.end.isFinite && range.end > range.start &&
-                time >= range.start && time < range.end
+            range.start.isFinite && range.end.isFinite && time >= range.start && range.end - time >= 0.01
         }
     }
 }

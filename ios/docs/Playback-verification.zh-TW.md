@@ -80,3 +80,7 @@ build 40 的交接回歸從播放器取得每次交接後已前進至少 0.2 秒
 `d28b2a1` 的 iOS 26 為 7/8。霧盞定位案例在播放按鈕出現後立即讀取標籤，當時還沒進入可暫停狀態。CI 記錄沒有點按暫停便進入等待，原生時鐘繼續前進。測試改成先驗證播放已開始，再點按暫停並檢查實際 AVPlayer 時鐘。iPhone 裝置程式維持 build 40。[iOS 26 日誌](https://github.com/Fringetw/Syllume/actions/runs/44893690096/job/136814714550)
 
 同一版的 iOS 18 iPhone 16 Pro 通過 21/21，包含兩種播放器的 Spotify 交接。SE 工作包含首次開機、資料移轉及該裝置的資產編譯，準備自動化時到達 12 分鐘上限，尚未執行版面斷言。`df51d74` 的 iOS 26 通過 8/8。CI 保留原有測試，並提高 Intel 歌單與 SE 步驟上限。[iOS 18 日誌](https://github.com/Fringetw/Syllume/actions/runs/44893690096/job/136814714251) · [iOS 26 重驗](https://github.com/Fringetw/Syllume/actions/runs/44895554905/artifacts/14704516679)
+
+## build 41 的 HTTP 定位
+
+`fe0f6cf` 的受控測試在 112.572 秒出現新的假就緒狀態。停傳後，目標 Range 收到 0 bytes，AVPlayer 的 preroll 卻回報就緒。當時的緩衝區起迄都顯示為 112.572 秒，原本的判斷將定位標成成功。build 41 要求實際落點之後至少有 0.01 秒的已載入媒體才確認 HTTP 定位，並將診斷區段精度提高到小數點後六位。單元測試包含次毫秒的暫時區段，整合測試仍要求停傳逾時並能在恢復後重新定位。[失敗工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44899264181/job/136831521290) · [HTTP 原始附件](https://github.com/Fringetw/Syllume/actions/runs/44899264181/artifacts/14705793357)

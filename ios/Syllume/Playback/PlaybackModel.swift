@@ -141,10 +141,11 @@ final class PlaybackModel {
         let ranges = (item?.loadedTimeRanges ?? []).map { $0.timeRangeValue }
         let end = ranges.map { CMTimeRangeGetEnd($0).seconds }.filter { $0.isFinite }.max() ?? -1
         let loadedRanges = ranges.prefix(6).map {
-            String(format: "%.3f..%.3f", $0.start.seconds, CMTimeRangeGetEnd($0).seconds)
+            String(format: "%.6f..%.6f", $0.start.seconds, CMTimeRangeGetEnd($0).seconds)
         }.joined(separator: ",")
         let identity = item.map { String(describing: ObjectIdentifier($0)) } ?? "none"
-        let clock = String(format: "time=%.3f rate=%.1f bufferEnd=%.3f", player.currentTime().seconds, player.rate, end)
+        let clock = String(format: "time=%.6f rate=%.1f bufferEnd=%.6f duration=%.3f",
+                           player.currentTime().seconds, player.rate, end, item?.duration.seconds ?? .nan)
         let fields = ["item=" + identity, clock, "state=" + state,
             "waiting=" + (player.reasonForWaitingToPlay?.rawValue ?? "none"),
             "ranges=[" + loadedRanges + "]", "empty=" + String(item?.isPlaybackBufferEmpty ?? false),
@@ -500,7 +501,7 @@ final class PlaybackModel {
                 let range = value.timeRangeValue
                 return (start: range.start.seconds, end: CMTimeRangeGetEnd(range).seconds)
             }
-            if !NativeSeekBufferAvailability.contains(actual, in: ranges) {
+            if !NativeSeekBufferAvailability.hasForwardBuffer(at: actual, in: ranges) {
                 if nativeSeekBufferObservation == nil {
                     nativeSeekPreroll = requestID
                     #if DEBUG
