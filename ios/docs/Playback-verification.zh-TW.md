@@ -78,3 +78,5 @@ build 39 改用標準按鈕開啟歌曲動作對話框。回歸先確認歌單�
 build 40 的交接回歸從播放器取得每次交接後已前進至少 0.2 秒的原生時鐘狀態，分別驗證全螢幕與小播放器恢復播放。最大字級使用較短的播放頁標題，VoiceOver 仍會讀出完整標題。
 
 `d28b2a1` 的 iOS 26 為 7/8。霧盞定位案例在播放按鈕出現後立即讀取標籤，當時還沒進入可暫停狀態。CI 記錄沒有點按暫停便進入等待，原生時鐘繼續前進。測試改成先驗證播放已開始，再點按暫停並檢查實際 AVPlayer 時鐘。iPhone 裝置程式維持 build 40。[iOS 26 日誌](https://github.com/Fringetw/Syllume/actions/runs/44893690096/job/136814714550)
+
+同一版的 iOS 18 iPhone 16 Pro 通過 21/21，包含兩種播放器的 Spotify 交接。SE 工作包含首次開機、資料移轉及該裝置的資產編譯，準備自動化時到達 12 分鐘上限，尚未執行版面斷言。`df51d74` 的 iOS 26 通過 8/8。CI 保留原有測試，並提高 Intel 歌單與 SE 步驟上限。[iOS 18 日誌](https://github.com/Fringetw/Syllume/actions/runs/44893690096/job/136814714251) · [iOS 26 重驗](https://github.com/Fringetw/Syllume/actions/runs/44895554905/artifacts/14704516679)
