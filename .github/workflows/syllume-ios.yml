@@ -150,7 +150,7 @@ jobs:
       - name: Verify large text on the iPhone SE YouTube player
         if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
         # The first boot and device-specific asset build share this step with XCTest.
-        timeout-minutes: 18
+        timeout-minutes: 22
         run: |
           compact_id=$(xcrun simctl list devices available -j | python3 -c '
           import json, sys
@@ -166,17 +166,30 @@ jobs:
           fi
           xcrun simctl boot "$compact_id" || xcrun simctl list devices booted | grep -F "$compact_id"
           xcrun simctl bootstatus "$compact_id" -b
-          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
-            -destination "platform=iOS Simulator,id=$compact_id" \
-            -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" \
-            -resultBundlePath "$RUNNER_TEMP/SyllumeCompactYouTube.xcresult" \
-            -only-testing:SyllumeUITests/SyllumeUITests/testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText \
-            -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+          run_compact_ui() {
+            xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+              -destination "platform=iOS Simulator,id=$compact_id" \
+              -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" \
+              -resultBundlePath "$RUNNER_TEMP/$1.xcresult" \
+              -only-testing:SyllumeUITests/SyllumeUITests/testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText \
+              -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+          }
+          set -o pipefail
+          compact_log="$RUNNER_TEMP/SyllumeCompactYouTube.log"
+          if ! run_compact_ui SyllumeCompactYouTube 2>&1 | tee "$compact_log"; then
+            if grep -Eq 'Timed out waiting for AX loaded notification|Timed out while loading Accessibility' "$compact_log" && ! grep -q 'Test Case .* started\.' "$compact_log"; then
+              echo "::warning::iPhone SE accessibility initialization failed before the test started. Retrying once."
+              xcrun simctl bootstatus "$compact_id" -b
+              run_compact_ui SyllumeCompactYouTubeRetry
+            else
+              exit 1
+            fi
+          fi
       - name: Export simulator test summaries, screenshots and diagnostic reports
         if: always()
         run: |
           mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
-          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeRecordedSongsUI SyllumeUI SyllumeCompactYouTube; do
+          for result in SyllumePlaylistUI SyllumePlaylistUIRetry SyllumeRecordedSongsUI SyllumeUI SyllumeCompactYouTube SyllumeCompactYouTubeRetry; do
             if [ -d "$RUNNER_TEMP/$result.xcresult" ]; then
               if summary=$(xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/$result.xcresult"); then
                 printf '%s\n' "$summary" > "$RUNNER_TEMP/SyllumeUIScreenshots/$result-summary.json"

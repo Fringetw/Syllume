@@ -90,3 +90,5 @@ build 40 的交接回歸從播放器取得每次交接後已前進至少 0.2 秒
 ## build 42 的 YouTube 續播
 
 若 WebKit 在已可見的文件拒絕後續播放指令，舊版會將版本標記為已送出。JavaScript 保留舊版本，App 忽略舊時間快照，造成等待後逾時。新版會在同一工作階段及指令版本重送一次。受控案例在暫停定位後讓 WebKit 拒絕第一個續播指令，驗證只點一次就能重送並讓媒體時鐘前進。外部 YouTube 播放與實機條件仍待驗證。
+
+`88ef7e8` 的《HELP!!》續播重送、歌單 5/5、一般 iOS 18 回歸 15/15 與 iOS 26 8/8 通過。錄影曲目案例中，《Lemon》的進度停在約 1:46，但 XCTest 在繪光的暫停狀態讀取逾時。新版測試先確認媒體時鐘暫停，再給渲染器觀測充分時間確認停止和同步。SE 環境在 XCTest 初始化即出現 AX 通知逾時，未執行版面斷言。CI 僅在案例尚未開始且遇到該初始化錯誤時重試一次。[iOS 18 日誌](https://github.com/Fringetw/Syllume/actions/runs/44906288873/job/136852462364) · [iOS 18 原始證據](https://github.com/Fringetw/Syllume/actions/runs/44906288873/artifacts/14710471529)

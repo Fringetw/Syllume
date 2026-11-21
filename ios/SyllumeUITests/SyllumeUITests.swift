@@ -1018,8 +1018,12 @@ final class SyllumeUITests: XCTestCase {
             let screen = app.frame
             app.coordinate(withNormalizedOffset: .zero).withOffset(
                 CGVector(dx: button.midX - screen.minX, dy: button.midY - screen.minY)).tap()
+            let transportPaused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|paused"), evaluatedWith: transport)
+            XCTAssertEqual(XCTWaiter.wait(for: [transportPaused], timeout: 30), .completed,
+                           "\(song) must pause its media clock before the lyric clock is compared.")
             let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|paused|GenSenRounded2JP-M"), evaluatedWith: stage)
-            XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
+            XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 35), .completed,
+                           "\(song) \(mode) should freeze after media pauses: \(String(describing: stage.value))")
             let audio = probeTime(transport), animation = probeTime(stage)
             XCTAssertEqual(animation, audio, accuracy: 0.65, "\(song) \(mode) follows the video clock")
             wait(0.7)
