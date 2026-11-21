@@ -1,6 +1,28 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 43（`654a939`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過。公開 YouTube 播放在 Runner 遇到站方驗證。IPA 需以 Sideloadly 重簽，iPhone 實機結果尚待驗證。 [build 43 CI](https://github.com/Fringetw/Syllume/actions/runs/44920735689) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44920735689/artifacts/14714075284)
+獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 44（`3caaeaa`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過，公開 HTTPS 播放也通過。iPhone 實機尚待驗證，IPA 可用 Sideloadly 重簽。 [build 44 CI](https://github.com/Fringetw/Syllume/actions/runs/44935718039) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
+
+## build 44 的交付證據
+
+| 範圍 | 結果 | 證據 |
+| --- | --- | --- |
+| macOS 核心 | Swift、33 項 JavaScript、14 項 Python 通過，涵蓋封面共用下載、最後請求取消與重試快取。 | [核心與公開字幕端點](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719442952) |
+| iOS 18.6 | iPhone 16 Pro 21/21、iPhone SE（第 3 代）1/1。涵蓋歌單、封面與頭像、歌詞同步、播放切換及最大字級。 | [iOS 18 原始畫面與測試摘要](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14722017180) |
+| iOS 26 | iPhone 17 Pro 8/8。另有同一提交的公開 HTTPS 獨立測試 1/1。 | [iOS 26 測試與畫面](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14720036557) · [公開 HTTPS 測試](https://github.com/Fringetw/Syllume/actions/runs/44935730804) |
+| 動畫資源 | 霧盞各三次四秒取樣。iOS 18 平均 App CPU 時間 0.968 秒、平均實體記憶體峰值約 53 MB。iOS 26 為 0.337 秒及約 75 MB。 | [iOS 18 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44935718039/job/136941769428) · [iOS 26 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44935718039/job/136941769693) |
+| 公開字幕 API | LRCLIB《JANE DOE》21 行、《Lemon》37 行，NetEase 42 行、QQ 57 行譯文。YouTube 上傳與 YouTube Music 字幕仍要求驗證。 | [端點紀錄](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719442952) |
+
+裝置版使用 iPhoneOS 26.2 SDK，最低 iOS 17。已核對 IPA 可解壓，Release 執行檔無公開播放測試的 Debug 啟動參數。解出內部 IPA 的 SHA-256 為 `1BADD746942C0295447310C28FE2B59B7BD77B5813347F612264DCED96B3144D`。 [build 44 IPA 產物](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
+
+build 44 第一輪因封面工作呼叫 actor 缺少 `await` 而無法編譯。`3caaeaa` 修正後通過上列測試。 [第一輪失敗紀錄](https://github.com/Fringetw/Syllume/actions/runs/44935523514)
+
+## build 44 的公開 HTTPS 與封面流量
+
+在 iOS 26 模擬器以 `public_native_only` 讀取固定提交的《潮汐之間》M4A。伺服器回傳 `206 Partial Content`，完整回應的 380,123 bytes 與內建音檔相符。AVPlayer 實際起播，在暫停時定位到 11.983 秒，續播後前進到 13.676 秒，媒體來源維持 HTTPS。公開測試 1/1 通過。歌單及音源選擇由測試提供，音檔經由公開伺服器傳入。 [Actions 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44935730804/job/136941811739) · [定位與續播畫面、Range 與雜湊](https://github.com/Fringetw/Syllume/actions/runs/44935730804/artifacts/14719384292)
+
+封面與歌手頭像共用 URL 傳輸。Swift 回歸驗證兩個請求者共用一次下載，取消其中一個會保留傳輸，取消最後一個會停止傳輸。後續請求可重新下載並經由磁碟快取重開。實測手法使用可控的圖片傳輸，尚未測量 iPhone 行動網路的實際節省量。 [核心測試紀錄](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719442952)
+
+同批 iOS 26 的本機受控 HTTP 用真正的 AVPlayer 搭配 Range 伺服器。正常傳輸為 3 次 GET／629,176 bytes，限速 4 次／406,386 bytes，起播停傳 1 次／0 bytes，停傳定位後恢復 6 次／671,218 bytes。數字為各案例的伺服器回應量。不同案例的試播、定位與停傳位置不同，iPhone 流量仍待實測。 [本機 HTTP 測試與原始傳輸紀錄](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14720036557)
 
 ## build 43 的交付證據
 
