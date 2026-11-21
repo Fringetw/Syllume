@@ -53,6 +53,8 @@ final class YouTubePlayback {
     #if DEBUG
     var mediaSampleTime: Double { sampledTime ?? 0 }
     private(set) var mediaPlaybackState = "unknown"
+    private(set) var didRetryPlaybackDispatch = false
+    func recordPlaybackDispatchRetry() { didRetryPlaybackDispatch = true }
     func recordMediaState(_ state: String, session: UUID, revision: Int) {
         guard session == self.session, revision == playbackRevision else { return }
         mediaPlaybackState = state

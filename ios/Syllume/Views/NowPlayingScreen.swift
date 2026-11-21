@@ -173,6 +173,7 @@ struct NowPlayingScreen: View {
             if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture") {
                 Text("YouTube 時間軸檢查").font(.system(size: 1)).frame(height: 1)
                     .accessibilityIdentifier("youtubeTransportProbe")
+                    .accessibilityLabel(video.didRetryPlaybackDispatch ? "YouTube 播放指令已重送" : "YouTube 時間軸檢查")
                     .accessibilityValue(String(format: "%.3f|%@", video.mediaSampleTime, player.isPlaying ? "playing" : "paused"))
             }
             #endif

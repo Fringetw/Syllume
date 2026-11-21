@@ -74,8 +74,12 @@ struct YouTubePlayerView: UIViewRepresentable {
         var session: UUID?
         var loaded = false
         var sentRevision: Int?
+        private var retriedRevision: Int?
         var sentSeek: UUID?
         var pausedRevision: Int?
+        #if DEBUG
+        private var rejectedResumeFixture = false
+        #endif
         init(input: YouTubePlayerView) { self.input = input }
 
         func update() {
@@ -84,6 +88,7 @@ struct YouTubePlayerView: UIViewRepresentable {
             if session != input.requestSession {
                 guard player.visible, view.hasVisibleViewport else { return }
                 session = input.requestSession; loaded = false; sentRevision = nil; pausedRevision = nil
+                retriedRevision = nil
                 // A new iframe can start from the retained position without seeking a paused, unloaded video.
                 let start = Int(player.position.rounded(.down))
                 sentSeek = input.requestSeek
@@ -108,9 +113,7 @@ struct YouTubePlayerView: UIViewRepresentable {
             guard loaded else { return }
             if input.requestPlayback, !view.hasVisibleViewport || UIApplication.shared.applicationState != .active { return }
             if sentRevision != input.requestRevision {
-                sentRevision = input.requestRevision
-                view.callAsyncJavaScript("window.FoliaYouTube.setPlayback(wants, revision)",
-                    arguments: ["wants": input.requestPlayback, "revision": input.requestRevision], in: nil, in: .page, completionHandler: nil)
+                sendPlayback(in: view)
             }
             if let seek = input.requestSeek, sentSeek != seek, player.visible, view.hasVisibleViewport {
                 sentSeek = seek
@@ -120,6 +123,35 @@ struct YouTubePlayerView: UIViewRepresentable {
                               player.session == session, sentSeek == seek else { return }
                         sentSeek = nil
                     }
+            }
+        }
+
+        private func sendPlayback(in view: PlayerWebView) {
+            let requestedSession = input.requestSession
+            let revision = input.requestRevision
+            let wants = input.requestPlayback
+            sentRevision = revision
+            var script = "window.FoliaYouTube.setPlayback(wants, revision)\nreturn true"
+            #if DEBUG
+            let rejectedForTest = wants && input.requestSeek != nil && !rejectedResumeFixture &&
+                ProcessInfo.processInfo.arguments.contains("--youtube-reject-resume-fixture")
+            if rejectedForTest {
+                rejectedResumeFixture = true
+                script = "throw new Error('Syllume test fixture: playback command was not delivered')"
+            }
+            #endif
+            view.callAsyncJavaScript(script, arguments: ["wants": wants, "revision": revision], in: nil, in: .page) { [weak self, weak view] result in
+                guard case .failure = result, let self, let view, self.view === view,
+                      session == requestedSession, player.session == requestedSession,
+                      player.playbackRevision == revision, sentRevision == revision, retriedRevision != revision else { return }
+                // The document only asks for a fresh command while it is becoming visible.
+                // Recover a failed later dispatch without resending an obsolete intent.
+                retriedRevision = revision
+                sentRevision = nil
+                #if DEBUG
+                if rejectedForTest { player.recordPlaybackDispatchRetry() }
+                #endif
+                update()
             }
         }
 

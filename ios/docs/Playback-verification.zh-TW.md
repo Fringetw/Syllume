@@ -1,10 +1,10 @@
 # 播放驗證紀錄
 
-分支 `codex/syllume-player-experience`，未合併 main。以下結果對應 `ed9940d`，日期為 2026-11-18 UTC。後續測試修改須重新執行，不能沿用這份結果宣稱通過。
+獨立分支 `codex/syllume-player-experience`。build 41（`bf2f21b`）的 iOS 18.6 Pro 21/21、SE 1/1、iOS 26 8/8 與裝置編譯均通過。各階段以對應提交的 Actions 結果為準，iPhone 實機驗證尚待側載。 [build 41 CI](https://github.com/Fringetw/Syllume/actions/runs/44902543774)
 
-## macOS 與模擬器
+## build 34 的 macOS 與模擬器
 
-[Actions 原始紀錄](https://github.com/Fringetw/Syllume/actions/runs/44320598586) 整體失敗。
+`ed9940d` 的整體工作流程失敗，紀錄日期為 2026-11-18 UTC。 [Actions 原始紀錄](https://github.com/Fringetw/Syllume/actions/runs/44320598586)
 
 | 範圍 | 已觀察結果 | 證據及限制 |
 | --- | --- | --- |
@@ -84,3 +84,9 @@ build 40 的交接回歸從播放器取得每次交接後已前進至少 0.2 秒
 ## build 41 的 HTTP 定位
 
 `fe0f6cf` 的受控測試在 112.572 秒出現新的假就緒狀態。停傳後，目標 Range 收到 0 bytes，AVPlayer 的 preroll 卻回報就緒。當時的緩衝區起迄都顯示為 112.572 秒，原本的判斷將定位標成成功。build 41 要求實際落點之後至少有 0.01 秒的已載入媒體才確認 HTTP 定位，並將診斷區段精度提高到小數點後六位。單元測試包含次毫秒的暫時區段，整合測試仍要求停傳逾時並能在恢復後重新定位。[失敗工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44899264181/job/136831521290) · [HTTP 原始附件](https://github.com/Fringetw/Syllume/actions/runs/44899264181/artifacts/14705793357)
+
+`bf2f21b` 的 iPhone Release、Swift 核心、33 項 JavaScript、14 項 Python、iPhone 16 Pro iOS 18.6 21/21、iPhone SE 1/1 及 iOS 26 8/8 全部通過。停傳重驗確實出現 112.571667–112.571687 秒的約 20 微秒區段。App 保持定位等待直到逾時，恢復傳輸後成功在暫停中移至 7.513333 秒。[完整 CI](https://github.com/Fringetw/Syllume/actions/runs/44902543774) · [iOS 18](https://github.com/Fringetw/Syllume/actions/runs/44902543774/artifacts/14707881704) · [iOS 26](https://github.com/Fringetw/Syllume/actions/runs/44902543774/artifacts/14707585559)
+
+## build 42 的 YouTube 續播
+
+若 WebKit 在已可見的文件拒絕後續播放指令，舊版會將版本標記為已送出。JavaScript 保留舊版本，App 忽略舊時間快照，造成等待後逾時。新版會在同一工作階段及指令版本重送一次。受控案例在暫停定位後讓 WebKit 拒絕第一個續播指令，驗證只點一次就能重送並讓媒體時鐘前進。外部 YouTube 播放與實機條件仍待驗證。

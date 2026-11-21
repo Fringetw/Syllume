@@ -836,7 +836,8 @@ final class SyllumeUITests: XCTestCase {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-device-playback-regression",
-                               "--youtube-playback-fixture", "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover",
+                               "--youtube-playback-fixture", "--youtube-reject-resume-fixture", "--subtitle-fixture",
+                               "-Folia.LyricDisplayMode", "cover",
                                "-Folia.EnergySavingAnimation", "YES"]
         app.launch()
         app.segmentedControls.buttons["YouTube"].tap()
@@ -879,6 +880,14 @@ final class SyllumeUITests: XCTestCase {
         }, evaluatedWith: transport)
         XCTAssertEqual(XCTWaiter.wait(for: [sought], timeout: 18), .completed,
                        "Expected the paused iframe fixture to seek near 90s. Got \(String(describing: transport.value)).")
+
+        toggle.tap()
+        let retried = expectation(for: NSPredicate(format: "label == %@", "YouTube 播放指令已重送"), evaluatedWith: transport)
+        XCTAssertEqual(XCTWaiter.wait(for: [retried], timeout: 15), .completed,
+                       "The first resume dispatch must be rejected by WebKit and retried.")
+        waitForYouTubePlayback(transport, above: 93, below: 125, timeout: 30,
+                               "A single resume tap must recover and play past the paused seek target.")
+        capture(app, name: "HELP-YouTube-playback-dispatch-recovered")
     }
 
     func testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText() {
