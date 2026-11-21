@@ -1,6 +1,20 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。build 41（`bf2f21b`）的 iOS 18.6 Pro 21/21、SE 1/1、iOS 26 8/8 與裝置編譯均通過。各階段以對應提交的 Actions 結果為準，iPhone 實機驗證尚待側載。 [build 41 CI](https://github.com/Fringetw/Syllume/actions/runs/44902543774)
+獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 42（`adf84e9`）。macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過。IPA 需以 Sideloadly 重簽，iPhone 實機結果尚待驗證。 [build 42 CI](https://github.com/Fringetw/Syllume/actions/runs/44912653550) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14710682446)
+
+## build 42 的交付證據
+
+| 範圍 | 結果 | 證據 |
+| --- | --- | --- |
+| macOS 核心 | Swift、33 項 JavaScript、14 項 Python 通過 | [核心檢查與公開端點](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14710088023) · [完整工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44912653550/job/136871541684) |
+| iOS 18.6 | iPhone 16 Pro 21/21、iPhone SE（第 3 代）1/1。含《HELP!!》暫停定位後單次操作續播、兩種動畫時鐘暫停、離線封面、下載確認及 SE 最大字級 | [iOS 18 測試摘要、畫面與證據](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14713015595) |
+| iOS 26 | iPhone 17 Pro 8/8。含起播、暫停拖曳、霧盞記憶、HTTP 限速、停傳逾時與恢復 | [iOS 26 測試紀錄及畫面](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14711156717) |
+| 真實公開字幕 API | LRCLIB 回傳《JANE DOE》21 行、《Lemon》37 行，NetEase 42 行及 QQ 57 行譯文。YouTube 上傳與 YouTube Music 字幕需要站方驗證 | [本輪端點紀錄](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14710088023) |
+| 霧盞資源 | 三次四秒取樣的平均 App CPU 時間，iOS 18 為 0.932 秒、iOS 26 為 0.625 秒。平均實體記憶體峰值約 53 MB 與 74 MB | [iOS 18 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44912653550/job/136871541684) · [iOS 26 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44912653550/job/136871541339) |
+
+《HELP!!》回歸使用 WebKit 與受控本機媒體，刻意讓第一次續播指令失敗，並驗證重送後的播放時鐘前進。HTTP 回歸使用 AVPlayer 與受控 Range 伺服器。真實帳號、YouTube 原片、行動網路流量與耗電需用安裝後的 iPhone 驗證。
+
+Actions 產物解壓後，`Syllume-iOS-0.4.0-unsigned.ipa` 的 SHA-256 為 `6BB868822B7E612394157FAFE121A545B400A9E6F8B989547F8DFE33B671DFAF`。 [build 42 IPA 產物](https://github.com/Fringetw/Syllume/actions/runs/44912653550/artifacts/14710682446)
 
 ## build 34 的 macOS 與模擬器
 
