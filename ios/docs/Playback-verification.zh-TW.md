@@ -76,3 +76,5 @@ build 39 改用標準按鈕開啟歌曲動作對話框。回歸先確認歌單�
 `cc6a35f` 通過 iPhone 16 Pro iOS 18.6 的歌單 5/5、錄影曲目 1/1，以及一般回歸 14/15。iPhone SE 通過 1/1，截圖可讀到暫停定位後的「風聲」。iOS 26 通過 8/8，iPhone Release 編譯通過。唯一失敗的 Spotify 交接案例在小播放器恢復後沒有從無障礙測試讀到第二筆資料。錄影的同一段播放從 0:08 走到 0:23，該次介面沒有卡住。[iOS 18 證據](https://github.com/Fringetw/Syllume/actions/runs/44766901367/artifacts/14650546366) · [iOS 26 證據](https://github.com/Fringetw/Syllume/actions/runs/44766901367/artifacts/14646563413) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44766901367/artifacts/14646493229)
 
 build 40 的交接回歸從播放器取得每次交接後已前進至少 0.2 秒的原生時鐘狀態，分別驗證全螢幕與小播放器恢復播放。最大字級使用較短的播放頁標題，VoiceOver 仍會讀出完整標題。
+
+`d28b2a1` 的 iOS 26 為 7/8。霧盞定位案例在播放按鈕出現後立即讀取標籤，當時還沒進入可暫停狀態。CI 記錄沒有點按暫停便進入等待，原生時鐘繼續前進。測試改成先驗證播放已開始，再點按暫停並檢查實際 AVPlayer 時鐘。iPhone 裝置程式維持 build 40。[iOS 26 日誌](https://github.com/Fringetw/Syllume/actions/runs/44893690096/job/136814714550)

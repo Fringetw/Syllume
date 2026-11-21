@@ -213,8 +213,10 @@ final class SyllumeUITests: XCTestCase {
         let demo = app.buttons["demoTrack"]
         XCTAssertTrue(demo.waitForExistence(timeout: 15)); demo.tap()
         let toggle = app.buttons["playerToggle"]
-        XCTAssertTrue(toggle.waitForExistence(timeout: 10))
-        if toggle.label == "暫停" { toggle.tap() }
+        let started = expectation(for: NSPredicate(format: "label == %@", "暫停"), evaluatedWith: toggle)
+        XCTAssertEqual(XCTWaiter.wait(for: [started], timeout: 15), .completed,
+                       "The demo must start playing before the pause and seek actions.")
+        toggle.tap()
         let clock = app.staticTexts["localTransportProbe"]
         waitForPausedNativeClock(clock)
         let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
