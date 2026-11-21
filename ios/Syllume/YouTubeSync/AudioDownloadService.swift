@@ -127,20 +127,26 @@ actor AudioDownloadService {
     private func streamingOptions(_ source: DiagnosticSource, song: SyncedYouTubeSong, duration: Double,
                                   account: NavidromeAccount?) async throws -> [DownloadAudioCandidate] {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") {
             let url: URL
             let label: String
             switch source {
             case .netease:
                 guard let endpoint = ProcessInfo.processInfo.environment["SYLLUME_TEST_RANGE_AUDIO_URL"],
-                      let parts = URLComponents(string: endpoint), parts.scheme == "http",
-                      parts.host == "127.0.0.1", let port = parts.port, (1...65535).contains(port),
-                      parts.path == "/audio", parts.user == nil, parts.password == nil,
-                      parts.query == nil, parts.fragment == nil, let localURL = parts.url else {
+                      let parts = URLComponents(string: endpoint), parts.user == nil, parts.password == nil,
+                      parts.query == nil, parts.fragment == nil, let fixtureURL = parts.url else {
                     throw DiagnosticProblem(code: .configuration)
                 }
-                url = localURL
-                label = "測試 HTTP 音源"
+                let isLoopback = parts.scheme == "http" && parts.host == "127.0.0.1" &&
+                    parts.port.map { (1...65535).contains($0) } == true && parts.path == "/audio"
+                // Allow only the repository's public sample at a pinned commit.
+                let isPublicSample = parts.scheme == "https" && parts.host == "raw.githubusercontent.com" &&
+                    parts.port == nil && parts.path.range(
+                        of: #"^/Fringetw/Syllume/[0-9a-f]{40}/ios/Syllume/Resources/tide\.m4a$"#,
+                        options: .regularExpression) != nil
+                guard isLoopback || isPublicSample else { throw DiagnosticProblem(code: .configuration) }
+                url = fixtureURL
+                label = isPublicSample ? "測試 HTTPS 音源" : "測試 HTTP 音源"
             case .qq:
                 try await Task.sleep(for: .milliseconds(250))
                 guard let bundled = Bundle.main.url(forResource: "tide", withExtension: "m4a") else { return [] }

@@ -282,7 +282,7 @@ struct NowPlayingScreen: View {
         if ProcessInfo.processInfo.arguments.contains("--playback-probe") {
             LocalTransportProbe(player: player)
         }
-        if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") ||
+        if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") ||
             ProcessInfo.processInfo.arguments.contains("--native-end-fixture") {
             Text("定位狀態檢查").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("nativeSeekProbe")
@@ -449,7 +449,7 @@ private struct LocalTransportProbe: View {
             Text("交接後的播放狀態").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("spotifyHandoffProbe").accessibilityValue(player.handoffFixtureProbe)
         }
-        if ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") {
             Text("原生串流取樣").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("nativeTransportDebugProbe")
                 .accessibilityValue(player.nativeTransportDebugProbe)

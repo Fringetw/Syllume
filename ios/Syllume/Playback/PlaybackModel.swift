@@ -159,10 +159,10 @@ final class PlaybackModel {
         // Observe the clock even in cover mode or when a downloaded track has no lyrics.
         _ = position; _ = isPlaying; _ = isBuffering
         let sample = String(format: "%.3f|%.1f", player.currentTime().seconds, player.rate)
-        guard ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture") else { return sample }
+        guard ProcessInfo.processInfo.arguments.contains("--native-network-fixture") else { return sample }
         _ = audioSource
         let url = (player.currentItem?.asset as? AVURLAsset)?.url
-        let media = url.map { $0.isFileURL ? "file" : "http" } ?? "none"
+        let media = url?.scheme ?? "none"
         let problem = sourceFailures.last?.problem.code.rawValue ?? "none"
         return "\(sample)|\(media)|\(problem)"
     }
@@ -921,7 +921,7 @@ final class PlaybackModel {
                    !ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression"),
                    !ProcessInfo.processInfo.arguments.contains("--youtube-slow-source-fixture"),
-                   !ProcessInfo.processInfo.arguments.contains("--loopback-stream-fixture"),
+                   !ProcessInfo.processInfo.arguments.contains("--native-network-fixture"),
                    let url = Bundle.main.url(forResource: "tide", withExtension: "m4a") {
                     if let file = Bundle.main.url(forResource: "tide", withExtension: "lrc"),
                        let text = try? String(contentsOf: file, encoding: .utf8) { timeline = LyricTimeline(lrc: text) }

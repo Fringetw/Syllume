@@ -11,6 +11,10 @@ on:
         description: Run public YouTube IFrame playback on the iOS 26 simulator
         type: boolean
         default: false
+      public_native_only:
+        description: Run AVPlayer against the public HTTPS sample on the iOS 26 simulator
+        type: boolean
+        default: false
   push:
     paths:
       - 'ios/**'
@@ -26,7 +30,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ !inputs.public_youtube_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ !inputs.public_youtube_only && !inputs.public_native_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-15-intel
     timeout-minutes: 105
     steps:
@@ -147,6 +151,7 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testYouTubeSongAutomaticallyPlaysVisibleOriginal \
             -skip-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStreamsAndSeeks \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testNativePublicHTTPSStreamsAndSeeks \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackFallsBackAfterTimeout \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativePausedSeekEndsWhenHTTPStopsResponding \
             -skip-testing:SyllumeUITests/SyllumeUITests/testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText \
@@ -224,6 +229,7 @@ jobs:
       - name: Prepare lyric font
         run: python3 ios/Tools/prepare_lyric_font.py
       - name: Build the iOS 26 simulator tests
+        id: build_ios26
         run: |
           xcodebuild -version
           # The loopback fixture is used only by this Debug simulator build. The device IPA uses the repository plist.
@@ -235,7 +241,7 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/SyllumeIOS26Build" \
             CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Exercise progress, Mist and large text on iOS 26
-        if: ${{ !inputs.public_youtube_only }}
+        if: ${{ !inputs.public_youtube_only && !inputs.public_native_only }}
         run: |
           simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
           derived_data="$RUNNER_TEMP/SyllumeIOS26Build"
@@ -338,10 +344,37 @@ jobs:
             -only-testing:SyllumeUITests/SyllumeUITests/testPublicYouTubeIFrameRecordedHelp \
             -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building \
             2>&1 | tee "$RUNNER_TEMP/SyllumeIOS26Evidence/SyllumePublicYouTube/runner.log"
+      - name: Verify public HTTPS playback with AVPlayer
+        if: ${{ !cancelled() && inputs.public_native_only && steps.build_ios26.conclusion == 'success' }}
+        timeout-minutes: 12
+        run: |
+          set -e -o pipefail
+          endpoint='https://raw.githubusercontent.com/Fringetw/Syllume/654a939ed6f75fc7e87cd035cd8796a2bb786984/ios/Syllume/Resources/tide.m4a'
+          evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/SyllumePublicNativeHTTPS"
+          mkdir -p "$evidence"
+          response=$(curl -fsS --proto '=https' --max-time 20 --range 0-15 \
+            --dump-header "$evidence/range-headers.txt" --output "$RUNNER_TEMP/tide-range" --write-out '%{http_code}' "$endpoint")
+          test "$response" = 206
+          test "$(wc -c < "$RUNNER_TEMP/tide-range" | tr -d '[:space:]')" = 16
+          grep -i '^content-range: bytes 0-15/380123' "$evidence/range-headers.txt"
+          curl -fsS --proto '=https' --max-time 30 --output "$RUNNER_TEMP/tide-public.m4a" "$endpoint"
+          cmp "$RUNNER_TEMP/tide-public.m4a" ios/Syllume/Resources/tide.m4a
+          shasum -a 256 "$RUNNER_TEMP/tide-public.m4a" | tee "$evidence/sample-sha256.txt"
+          simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
+          xcrun simctl boot "$simulator_id" || xcrun simctl list devices booted | grep -F "$simulator_id"
+          xcrun simctl bootstatus "$simulator_id" -b
+          export TEST_RUNNER_SYLLUME_TEST_RANGE_AUDIO_URL="$endpoint"
+          xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
+            -destination "platform=iOS Simulator,id=$simulator_id" \
+            -derivedDataPath "$RUNNER_TEMP/SyllumeIOS26Build" \
+            -resultBundlePath "$RUNNER_TEMP/SyllumePublicNativeHTTPS.xcresult" \
+            -only-testing:SyllumeUITests/SyllumeUITests/testNativePublicHTTPSStreamsAndSeeks \
+            -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building \
+            2>&1 | tee "$evidence/runner.log"
       - name: Export iOS 26 test evidence
         if: always()
         run: |
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube; do
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
