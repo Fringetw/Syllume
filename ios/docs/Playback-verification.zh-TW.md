@@ -2,6 +2,12 @@
 
 獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 44（`3caaeaa`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過，公開 HTTPS 播放也通過。iPhone 實機尚待驗證，IPA 可用 Sideloadly 重簽。 [build 44 CI](https://github.com/Fringetw/Syllume/actions/runs/44935718039) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
 
+## build 48 的動畫交接與 WebKit 追查
+
+新增首幀分段紀錄後，iOS 18 的《JANE DOE》案例在第 13.682 秒完成導航，第 18.105 秒仍未收到 Swift 另行送出的橋接探測回覆。這次尚未進入渲染器。build 47 另有已載入字型後逾時的案例，當時未量到渲染器內部階段。 [iOS 18 原始紀錄](https://github.com/Fringetw/Syllume/actions/runs/45010063984/artifacts/14750166763)
+
+商籟與繪光在暫停時完成尚未結束的換歌交接，並在目前媒體時間畫出新歌詞。以實際渲染程式方法重現三個失敗，修正後五項通過。這組測試以替身取代 GPU 和資產操作。`39002ea` 的 iOS 26 獨立回歸六項通過，含本機起播、冷啟動畫、逾時備援、最大字級，以及錄影曲目的兩種動畫時鐘。 [iOS 26 回歸](https://github.com/Fringetw/Syllume/actions/runs/45010640226/artifacts/14750435197)
+
 ## build 47 的動畫就緒與同步文字
 
 `b556329` 在 WebKit 確認橋接和載入字型後，分階段計算後續等待時間。整次初始化以單調時鐘限制在 36 秒，失敗重試沿用同一期限。初始化及失敗後顯示跟著媒體進度的 SwiftUI 文字；就緒時立即送最新媒體時鐘。開發者診斷沿用同一初始化上限。 [常規回歸](https://github.com/Fringetw/Syllume/actions/runs/44990301596)

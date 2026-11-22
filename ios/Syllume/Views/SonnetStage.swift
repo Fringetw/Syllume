@@ -137,6 +137,7 @@ private struct SonnetWebView: UIViewRepresentable {
         private(set) var lyricFont = ""
         private var state = State.loading
         private var navigation: WKNavigation?
+        private var documentID: UUID?
         private var loaded = false
         private var activeSong = ""
         private var request: UUID?
@@ -232,10 +233,10 @@ private struct SonnetWebView: UIViewRepresentable {
         }
 
         private func initializeSong(in view: WKWebView) {
+            guard let documentID else { return }
             advanceInitialization(to: .bridge)
             let request = UUID()
             self.request = request
-            let document = navigation
             let data = try? JSONEncoder().encode(parent.lines)
             let lines = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
             var song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
@@ -256,8 +257,10 @@ private struct SonnetWebView: UIViewRepresentable {
             #endif
             if let traceID { song["traceID"] = traceID }
             stageCheckpoint("song-dispatch")
-            view.callAsyncJavaScript(script, arguments: ["song": song], in: nil, in: .page) { [weak self, weak view] result in
-                guard let self, let view, view === self.view, self.request == request, navigation === document,
+            let command = "if (window.syllumeStageDocumentID !== documentID) return false; " + script
+            view.callAsyncJavaScript(command, arguments: ["documentID": documentID.uuidString, "song": song],
+                                     in: nil, in: .page) { [weak self, weak view] result in
+                guard let self, let view, view === self.view, self.request == request, self.documentID == documentID,
                       loaded, parent.rendering, activeSong == songKey, case .failure(let error) = result else { return }
                 stageCheckpoint("song-rejected \((error as NSError).code)")
                 // The document already has a verified bridge. Reissue the command without reloading it.
@@ -271,9 +274,11 @@ private struct SonnetWebView: UIViewRepresentable {
         }
 
         private func sendClock(to view: WKWebView, playing: Bool) {
+            guard let documentID else { return }
             lastTime = parent.time; lastPlaying = playing; lastStamp = Date()
-            view.callAsyncJavaScript("window.FoliaStage.setClock(snapshot)", arguments: ["snapshot":
-                ["time": parent.time, "playing": playing, "reduceMotion": parent.reduceMotion]],
+            view.callAsyncJavaScript("if (window.syllumeStageDocumentID === documentID) window.FoliaStage.setClock(snapshot)",
+                arguments: ["documentID": documentID.uuidString, "snapshot":
+                    ["time": parent.time, "playing": playing, "reduceMotion": parent.reduceMotion]],
                 in: nil, in: .page, completionHandler: nil)
         }
 
@@ -330,9 +335,18 @@ private struct SonnetWebView: UIViewRepresentable {
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.webView === view, message.frameInfo.isMainFrame, loaded, request != nil,
+            guard message.webView === view, message.frameInfo.isMainFrame, let documentID,
                   parent.rendering, state == .loading, activeSong == songKey,
-                  let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+                  let body = message.body as? [String: Any], body["documentID"] as? String == documentID.uuidString,
+                  let type = body["type"] as? String else { return }
+            if type == "loaded" {
+                guard !loaded else { return }
+                stageCheckpoint("bridge-ready")
+                loaded = true
+                update()
+                return
+            }
+            guard loaded, request != nil else { return }
             #if DEBUG
             if type == "boot", let request, let detail = body["detail"] as? String {
                 let parts = detail.split(separator: "|")
@@ -366,14 +380,21 @@ private struct SonnetWebView: UIViewRepresentable {
                 markFailure("找不到歌詞動畫資源。", mayReload: false)
                 return
             }
+            let documentID = UUID()
+            self.documentID = documentID
+            let content = view.configuration.userContentController
+            content.removeAllUserScripts()
+            content.addUserScript(WKUserScript(source: "window.syllumeStageDocumentID = '\(documentID.uuidString)';",
+                injectionTime: .atDocumentStart, forMainFrameOnly: true))
             stageCheckpoint("navigation-start")
             navigation = view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
             if navigation == nil { markFailure("無法開啟歌詞動畫。", mayReload: false) }
         }
 
         private func discardPage(in view: WKWebView) {
-            let wasLoaded = loaded
+            let closedDocument = loaded ? documentID : nil
             navigation = nil
+            documentID = nil
             loaded = false
             request = nil
             lastStamp = .distantPast
@@ -382,7 +403,11 @@ private struct SonnetWebView: UIViewRepresentable {
             clockRequest = nil
             lastClockProbe = ""
             #endif
-            if wasLoaded { view.evaluateJavaScript("window.FoliaStage?.stop()", completionHandler: nil) }
+            if let closedDocument {
+                // This command can still be queued when the replacement page starts.
+                view.callAsyncJavaScript("if (window.syllumeStageDocumentID === documentID) window.FoliaStage?.stop()",
+                    arguments: ["documentID": closedDocument.uuidString], in: nil, in: .page, completionHandler: nil)
+            }
             view.stopLoading()
         }
 
@@ -391,6 +416,7 @@ private struct SonnetWebView: UIViewRepresentable {
             cancelInitialization()
             discardPage(in: view)
             view.navigationDelegate = nil
+            view.configuration.userContentController.removeAllUserScripts()
             view.configuration.userContentController.removeScriptMessageHandler(forName: "stage")
         }
 
@@ -433,14 +459,6 @@ private struct SonnetWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
             stageCheckpoint("navigation-finished")
-            webView.evaluateJavaScript("typeof window.FoliaStage?.setSong") { [weak self] result, _ in
-                guard let self, navigation === self.navigation, parent.rendering, state == .loading else { return }
-                if result as? String == "function" {
-                    stageCheckpoint("bridge-ready")
-                    loaded = true
-                    update()
-                } else { markFailure("找不到歌詞動畫橋接。") }
-            }
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             guard webView === view, let navigation, navigation === self.navigation,

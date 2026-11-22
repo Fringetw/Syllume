@@ -7,7 +7,8 @@ import { createStageController, loadLyricFont } from './stageController.mjs';
 
 // Offline desktop directors share one native clock; no audio is copied into the renderer.
 const host = document.getElementById('stage')! as HTMLDivElement;
-const notify = (type: string, detail = '') => (window as any).webkit?.messageHandlers?.stage?.postMessage({ type, detail });
+const documentID = (window as any).syllumeStageDocumentID;
+const notify = (type: string, detail = '') => (window as any).webkit?.messageHandlers?.stage?.postMessage({ documentID, type, detail });
 const baseTheme = { name: 'Folia', backgroundColor: '#100e16', primaryColor: '#fff0df',
     accentColor: '#a1dbd1', secondaryColor: '#9b869f', fontStyle: 'sans' as const,
     animationIntensity: 'normal' as const, fontWeight: 500 };

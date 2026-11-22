@@ -163,6 +163,12 @@ jobs:
             --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
             > "$RUNNER_TEMP/SyllumeUIScreenshots/Sonnet-recorded.log" ||
             echo "::warning::Could not export the iOS 18 stage checkpoints."
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
+        with:
+          name: Syllume-iOS18-recorded-stage
+          path: ${{ runner.temp }}/SyllumeUIScreenshots/Sonnet-recorded.log
+          if-no-files-found: ignore
       - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
         if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
         timeout-minutes: 32
@@ -185,6 +191,13 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testPublicYouTubeIFrameReferenceVideo \
             -skip-testing:SyllumeUITests/SyllumeUITests/testPublicYouTubeIFrameRecordedHelp \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
+      - name: Export iOS 18 playback stage checkpoints
+        if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
+        run: |
+          xcrun simctl spawn "$FOLIA_SIMULATOR_ID" log show --last 40m --style compact \
+            --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
+            > "$RUNNER_TEMP/SyllumeUIScreenshots/Sonnet-iOS18.log" ||
+            echo "::warning::Could not export the iOS 18 playback stage checkpoints."
       - name: Verify large text on the iPhone SE YouTube player
         if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
         # The first boot and device-specific asset build share this step with XCTest.
