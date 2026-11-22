@@ -23,6 +23,10 @@ on:
         description: Run local audio and animated lyrics startup recovery on the iOS 26 simulator
         type: boolean
         default: false
+      intel_recorded_only:
+        description: Capture iOS 18 stage initialization while the original player is visible
+        type: boolean
+        default: false
   push:
     paths:
       - 'ios/**'
@@ -38,7 +42,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ !inputs.public_youtube_only && !inputs.public_native_only && !inputs.navidrome_only && !inputs.startup_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.navidrome_only && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-15-intel
     timeout-minutes: 105
     steps:
@@ -82,6 +86,7 @@ jobs:
           -configuration Debug -destination 'generic/platform=iOS Simulator'
           -derivedDataPath "$RUNNER_TEMP/SyllumeSimulator" ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO build
       - name: Compile unsigned iPhone app
+        if: ${{ !inputs.intel_recorded_only }}
         env:
           DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
         run: >-
@@ -90,6 +95,7 @@ jobs:
           -derivedDataPath "$RUNNER_TEMP/SyllumeDevice" CODE_SIGNING_ALLOWED=NO build
       # Make the successfully compiled device build available while simulator checks run.
       - name: Package unsigned IPA
+        if: ${{ !inputs.intel_recorded_only }}
         run: |
           mkdir -p "$RUNNER_TEMP/SyllumePackage/Payload"
           cp -R "$RUNNER_TEMP/SyllumeDevice/Build/Products/Release-iphoneos/Syllume.app" "$RUNNER_TEMP/SyllumePackage/Payload/"
@@ -98,6 +104,7 @@ jobs:
           /usr/bin/zip -qry "Syllume-iOS-${version}-unsigned.ipa" Payload
           python3 -c 'import json,plistlib; i=plistlib.load(open("Payload/Syllume.app/Info.plist","rb")); print(json.dumps({"google_configured":bool(i.get("FoliaGoogleClientID")) and bool(i.get("FoliaGoogleBundleID")),"version":i["CFBundleShortVersionString"],"build_bundle_id":i["CFBundleIdentifier"],"google_registered_bundle_id":i.get("FoliaGoogleBundleID", ""),"unsigned_bundle_matches_google":i["CFBundleIdentifier"]==i.get("FoliaGoogleBundleID")}))' > google-login-build-info.json
       - uses: actions/upload-artifact@v4
+        if: ${{ !inputs.intel_recorded_only }}
         with:
           name: Syllume-iOS-unsigned
           path: |
@@ -144,8 +151,16 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/SyllumeRecordedSongsUI.xcresult" \
             -only-testing:SyllumeUITests/SyllumeUITests/testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
-      - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
+      - name: Export iOS 18 stage initialization checkpoints
         if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
+          xcrun simctl spawn "$FOLIA_SIMULATOR_ID" log show --last 25m --style compact \
+            --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
+            > "$RUNNER_TEMP/SyllumeUIScreenshots/Sonnet-recorded.log" ||
+            echo "::warning::Could not export the iOS 18 stage checkpoints."
+      - name: Exercise playback, diagnostics and platform setup on iPhone Simulator
+        if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
         timeout-minutes: 32
         run: |
           xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume -configuration Debug \
@@ -167,7 +182,7 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testPublicYouTubeIFrameRecordedHelp \
             -parallel-testing-enabled NO ARCHS="$(uname -m)" ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO test
       - name: Verify large text on the iPhone SE YouTube player
-        if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
+        if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
         # The first boot and device-specific asset build share this step with XCTest.
         timeout-minutes: 22
         run: |
@@ -246,7 +261,7 @@ jobs:
           if-no-files-found: error
 
   ios-26-player:
-    if: ${{ (!inputs.navidrome_only || inputs.public_youtube_only || inputs.public_native_only || inputs.startup_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ !inputs.intel_recorded_only && (!inputs.navidrome_only || inputs.public_youtube_only || inputs.public_native_only || inputs.startup_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
