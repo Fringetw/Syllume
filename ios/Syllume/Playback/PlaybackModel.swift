@@ -38,6 +38,21 @@ final class PlaybackModel {
     private var nativeHasAdvanced = false
     @ObservationIgnored private var nativeStartupRetried = false
     @ObservationIgnored private var nativeClock = NativePlaybackClock()
+    private struct NativeRetryPoint {
+        static let timeTolerance = 0.35
+
+        enum Source {
+            case file(URL, DownloadVerification.FileStamp)
+            case navidrome
+        }
+
+        let position: Double
+        let duration: Double
+        let source: Source
+    }
+    @ObservationIgnored private var nativeFileStamp: DownloadVerification.FileStamp?
+    @ObservationIgnored private var nativeRetryPoint: NativeRetryPoint?
+    @ObservationIgnored private var nativeRestoring = false
     private var videoHasAdvanced = false
     @ObservationIgnored private var queuedVideoReplay: UUID?
     @ObservationIgnored private var videoSurfaceVisible = false
@@ -330,6 +345,10 @@ final class PlaybackModel {
             load(index)
             return
         }
+        if let index, let nativeRetryPoint, !wantsPlayback {
+            load(index, recovering: nativeRetryPoint)
+            return
+        }
         if let track = current, track.source == .catalogue, error == nil,
            player.currentItem == nil || player.currentItem?.status == .failed {
             resolveCatalogue(track)
@@ -348,7 +367,7 @@ final class PlaybackModel {
 
     private func startCurrentItem() {
         guard let item = player.currentItem, item.status != .failed else { return }
-        if duration > 0, position >= duration - 0.15 { seek(to: 0) }
+        if !nativeRestoring, duration > 0, position >= duration - 0.15 { seek(to: 0) }
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default)
@@ -356,7 +375,9 @@ final class PlaybackModel {
             resumeAfterInterruption = false
             error = nil
             wantsPlayback = true
-            if nativeSeekPreroll == nil {
+            if nativeRestoring {
+                restoreNativePositionWhenReady(item)
+            } else if nativeSeekPreroll == nil {
                 #if DEBUG
                 if stallFirstLocalStart, (item.asset as? AVURLAsset)?.url.isFileURL == true {
                     stallFirstLocalStart = false
@@ -388,6 +409,11 @@ final class PlaybackModel {
         resumeAfterInterruption = false
         player.pause()
         wantsPlayback = false
+        if nativeRestoring {
+            nativeRestoring = false
+            cancelNativeSeek()
+            if let nativeRetryPoint { position = nativeRetryPoint.position }
+        }
         nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         if resolveTask != nil {
@@ -461,12 +487,15 @@ final class PlaybackModel {
         guard let item = player.currentItem, time.isFinite else { return }
         let target = duration > 0 ? min(duration, max(0, time)) : max(0, time)
         DiagnosticsEvents.shared.record(.seek)
-        seekNativeItem(item, to: target)
+        let replacingRecovery = nativeRestoring
+        nativeRestoring = false
+        nativeRetryPoint = nil
+        seekNativeItem(item, to: target, restarting: replacingRecovery)
     }
 
     private func seekNativeItem(_ item: AVPlayerItem, to target: Double, restarting: Bool = false) {
         let clock = ContinuousClock()
-        let request = nativeSeek.begin(from: player.currentTime().seconds, at: clock.now)
+        let request = nativeSeek.begin(from: nativeRestoring ? position : player.currentTime().seconds, at: clock.now)
         let itemID = ObjectIdentifier(item)
         nativeSeekBufferObservation?.invalidate(); nativeSeekBufferObservation = nil
         nativeSeekPreroll = nil
@@ -495,7 +524,8 @@ final class PlaybackModel {
             Task { @MainActor [weak self] in
                 guard let self, let current = player.currentItem, ObjectIdentifier(current) == itemID,
                       nativeSeek.request?.id == request.id else { return }
-                let pausedRemote = !wantsPlayback && (current.asset as? AVURLAsset)?.url.isFileURL == false
+                let pausedRemote = (!wantsPlayback || nativeRestoring || (restarting && player.rate == 0))
+                    && (current.asset as? AVURLAsset)?.url.isFileURL == false
                 if finished, pausedRemote, target < duration - 0.05 {
                     guard player.status == .readyToPlay, player.rate == 0 else {
                         completeNativeSeek(current, requestID: request.id, finished: false, restarting: false)
@@ -530,7 +560,12 @@ final class PlaybackModel {
         let actual = player.currentTime().seconds
         let itemDuration = item.duration.seconds
         let end = itemDuration.isFinite && itemDuration > 0 ? itemDuration : duration
-        if finished, (item.asset as? AVURLAsset)?.url.isFileURL == false,
+        let restored = nativeRestoring && nativeRetryPoint.map {
+            actual.isFinite && abs(actual - $0.position) <= NativeRetryPoint.timeTolerance &&
+                !NativePlaybackEndPolicy.isAtEnd(time: actual, duration: end)
+        } == true
+        let landed = finished && (!nativeRestoring || restored)
+        if landed, (item.asset as? AVURLAsset)?.url.isFileURL == false,
            !NativePlaybackEndPolicy.isAtEnd(time: actual, duration: end) {
             let ranges = item.loadedTimeRanges.map { value in
                 let range = value.timeRangeValue
@@ -562,7 +597,7 @@ final class PlaybackModel {
         nativeSeekPreroll = nil
         seekTimeout?.cancel(); seekTimeout = nil
         seeking = false
-        guard finished else { nativeSeekFailed(item, request: completed, timedOut: false); return }
+        guard landed else { nativeSeekFailed(item, request: completed, timedOut: false); return }
         if actual.isFinite {
             position = max(0, actual)
             nativeClock.rebase(to: position)
@@ -573,7 +608,15 @@ final class PlaybackModel {
             didEnd(item: item)
             return
         }
-        if shouldRestart, wantsPlayback, !externalPlayback { player.play() }
+        if shouldRestart, wantsPlayback, !externalPlayback {
+            if restored {
+                nativeRestoring = false
+                #if DEBUG
+                recordNativeTransportTrace("recovery-positioned", item: item)
+                #endif
+            }
+            player.play()
+        }
         refreshTransport()
     }
 
@@ -588,7 +631,8 @@ final class PlaybackModel {
         item.cancelPendingSeeks()
         player.pause()
         let actual = player.currentTime().seconds
-        position = actual.isFinite && actual >= 0 ? actual : request.previousPosition
+        position = nativeRestoring ? request.previousPosition :
+            (actual.isFinite && actual >= 0 ? actual : request.previousPosition)
         nativeClock.rebase(to: position)
         let problem = DiagnosticProblem(code: timedOut ? .timeout : .timeline, nativeCode: -5)
         fail(timedOut ? "音訊定位逾時。可重新選擇進度或重試播放。" : "音訊定位未完成。可重新選擇進度或重試播放。",
@@ -728,7 +772,7 @@ final class PlaybackModel {
             nativeClock.observeBuffer(through: end, at: ContinuousClock().now)
         }
         let seconds = player.currentTime().seconds
-        if !seeking, seconds.isFinite {
+        if !seeking, !nativeRestoring, (nativeRetryPoint == nil || wantsPlayback), seconds.isFinite {
             if abs(position - seconds) > 0.01 { position = max(0, seconds) }
             if wantsPlayback {
                 let advance = nativeClock.observe(seconds, at: ContinuousClock().now)
@@ -742,6 +786,7 @@ final class PlaybackModel {
                     if !nativeHasAdvanced {
                         nativeHasAdvanced = true
                         didAdvancePlayback = true
+                        nativeRetryPoint = nil
                         diagnosticPlaybackProblem = nil
                         diagnosticPlaybackDetails = nil
                         DiagnosticsEvents.shared.record(.playbackStarted, source: activeCatalogueSource)
@@ -776,6 +821,7 @@ final class PlaybackModel {
 
     func playbackFailed(item: AVPlayerItem, failure: DiagnosticProblem? = nil) {
         guard player.currentItem === item else { return }
+        let lastPosition = nativeSeek.request?.previousPosition ?? position
         stopNativeMotionWatchdog()
         cancelNativeSeek()
         let status = item.errorLog()?.events.last?.errorStatusCode
@@ -805,7 +851,34 @@ final class PlaybackModel {
         else if problem.code == .timeout { message = "等待音訊逾時。請點播放重試。" }
         else if current?.source == .navidrome { message = "無法串流這首歌。請檢查連線、音訊格式或伺服器轉碼設定。" }
         else { message = "無法播放這個音訊檔。" }
+        if problem.code == .timeout {
+            if let point = retryPoint(for: item, at: lastPosition) { nativeRetryPoint = point }
+            if let nativeRetryPoint { position = nativeRetryPoint.position }
+        } else {
+            nativeRetryPoint = nil
+        }
         fail(message, problem: problem)
+    }
+
+    private func retryPoint(for item: AVPlayerItem, at position: Double) -> NativeRetryPoint? {
+        let length = item.duration.seconds
+        let tolerance = NativeRetryPoint.timeTolerance
+        guard didAdvancePlayback, position.isFinite, position > tolerance,
+              length.isFinite, position < length - tolerance,
+              let url = (item.asset as? AVURLAsset)?.url else { return nil }
+        let source: NativeRetryPoint.Source
+        switch current?.source {
+        case .local, .demo:
+            guard url.isFileURL, let nativeFileStamp else { return nil }
+            source = .file(url, nativeFileStamp)
+        case .navidrome:
+            // The queue and its client are retained for this retry. A new selection clears the point.
+            guard !url.isFileURL, client != nil else { return nil }
+            source = .navidrome
+        default:
+            return nil
+        }
+        return NativeRetryPoint(position: position, duration: length, source: source)
     }
 
     func interrupt(began: Bool, shouldResume: Bool) {
@@ -821,7 +894,7 @@ final class PlaybackModel {
         }
     }
 
-    private func load(_ index: Int, requestingVideo: Bool? = nil) {
+    private func load(_ index: Int, requestingVideo: Bool? = nil, recovering point: NativeRetryPoint? = nil) {
         resetItem()
         externalPlayback = false
         self.index = index
@@ -849,6 +922,8 @@ final class PlaybackModel {
             refreshArtworkIfNeeded()
             if track.isDownloaded, let url {
                 let revision = generation
+                nativeRetryPoint = point
+                if let point { position = point.position }
                 wantsPlayback = true; isBuffering = true
                 resolveTask = Task { [weak self] in
                     guard let self else { return }
@@ -858,10 +933,12 @@ final class PlaybackModel {
                         guard generation == revision, !Task.isCancelled else { return }
                         resolveTask = nil
                         duration = verification.duration
-                        reloadLocalLyrics(track); install(asset)
+                        reloadLocalLyrics(track); install(asset, recovering: point)
                     } catch {
                         guard generation == revision, !Task.isCancelled else { return }
                         resolveTask = nil
+                        nativeRetryPoint = nil
+                        position = 0
                         let problem = DiagnosticProblem.classify(error, fallback: .invalidMedia)
                         let message = problem.mediaIssue == .changedDownload
                             ? "這份下載的音檔已變更。請從播放清單重新下載。"
@@ -896,14 +973,14 @@ final class PlaybackModel {
             fail("找不到這首歌的音訊來源。")
             return
         }
-        install(url)
+        install(AVURLAsset(url: url), recovering: point)
     }
 
     private func install(_ url: URL) {
         install(AVURLAsset(url: url))
     }
 
-    private func install(_ asset: AVURLAsset) {
+    private func install(_ asset: AVURLAsset, recovering point: NativeRetryPoint? = nil) {
         stopNativeMotionWatchdog()
         #if DEBUG
         holdsNativeClockForFixture = false
@@ -913,23 +990,53 @@ final class PlaybackModel {
         nativeHasAdvanced = false
         nativeClock = NativePlaybackClock()
         nativeClock.rebase(to: 0)
+        nativeFileStamp = asset.url.isFileURL ? (try? AudioIntegrity.fileStamp(asset.url)) : nil
+        nativeRetryPoint = nil
+        if let point {
+            switch point.source {
+            case let .file(url, stamp) where url == asset.url && stamp == nativeFileStamp:
+                nativeRetryPoint = point
+            case .navidrome where current?.source == .navidrome && !asset.url.isFileURL:
+                nativeRetryPoint = point
+            default:
+                break
+            }
+        }
+        nativeRestoring = nativeRetryPoint != nil
+        position = nativeRetryPoint?.position ?? 0
         statusObservation?.invalidate()
         let item = AVPlayerItem(asset: asset)
         if !asset.url.isFileURL { item.preferredForwardBufferDuration = 4 }
-        player.replaceCurrentItem(with: item)
         statusObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] observed, _ in
             Task { @MainActor [weak self] in
                 guard let self, player.currentItem === observed else { return }
                 if observed.status == .failed { playbackFailed(item: observed) }
                 else {
                     nativeReady = observed.status == .readyToPlay
+                    restoreNativePositionWhenReady(observed)
                     system?.updateCommands(model: self)
                     tick()
                 }
             }
         }
+        player.replaceCurrentItem(with: item)
         startCurrentItem()
         system?.updateCommands(model: self)
+    }
+
+    private func restoreNativePositionWhenReady(_ item: AVPlayerItem) {
+        guard nativeRestoring, nativeReady, wantsPlayback, !seeking, let point = nativeRetryPoint else { return }
+        let length = item.duration.seconds
+        let tolerance = NativeRetryPoint.timeTolerance
+        guard length.isFinite, abs(length - point.duration) <= tolerance,
+              point.position < length - tolerance else {
+            nativeRestoring = false
+            nativeRetryPoint = nil
+            position = 0
+            player.play()
+            return
+        }
+        seekNativeItem(item, to: point.position, restarting: true)
     }
 
     private func resolveCatalogue(_ track: Track) {
@@ -1360,6 +1467,9 @@ final class PlaybackModel {
         nativeHasAdvanced = false
         nativeStartupRetried = false
         nativeClock = NativePlaybackClock()
+        nativeFileStamp = nil
+        nativeRetryPoint = nil
+        nativeRestoring = false
         stopNativeMotionWatchdog()
         #if DEBUG
         holdsNativeClockForFixture = false
@@ -1471,7 +1581,7 @@ final class PlaybackModel {
                         recordNativeTransportTrace("buffer-timeout", item: item, deadline: deadline)
                         #endif
                         if let asset = item.asset as? AVURLAsset, asset.url.isFileURL,
-                           !didAdvancePlayback, !nativeStartupRetried {
+                           !didAdvancePlayback, !nativeStartupRetried, nativeRetryPoint == nil {
                             guard hasUnmodifiedDownload(at: asset.url) else {
                                 playbackFailed(item: item, failure: DiagnosticProblem(code: .invalidMedia, mediaIssue: .changedDownload))
                                 return

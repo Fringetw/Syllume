@@ -61,7 +61,7 @@ enum AudioIntegrity {
         (try? fileStamp(url)) == verification.file
     }
 
-    private static func fileStamp(_ url: URL) throws -> DownloadVerification.FileStamp {
+    static func fileStamp(_ url: URL) throws -> DownloadVerification.FileStamp {
         var attributes = stat()
         let result = url.withUnsafeFileSystemRepresentation { path -> Int32 in
             guard let path else { return -1 }
