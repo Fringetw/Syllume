@@ -298,6 +298,8 @@ jobs:
           run_player_check SyllumeIOS26SonnetRetry testSonnetRetriesRejectedInitialization || failed=1
           run_player_check SyllumeIOS26SonnetTimeout testSonnetTimeoutEndsWithoutStoppingAudio || failed=1
           if [ "$STARTUP_ONLY" = "true" ]; then
+            run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
+            run_player_check SyllumeIOS26RecordedSonnet testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics || failed=1
             exit "$failed"
           fi
           run_http_check() (
@@ -418,7 +420,7 @@ jobs:
               > "$RUNNER_TEMP/SyllumeIOS26Evidence/Sonnet-stage.log" ||
               echo "::warning::Could not export the simulator stage checkpoints."
           fi
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube SyllumePublicNativeHTTPS; do
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26RecordedSonnet SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
