@@ -310,13 +310,9 @@ final class PlaybackModel {
             return
         }
         guard resolveTask == nil else { return }
-        if let index, let activeLocalTrackID, activeLocalTrackID.hasPrefix("download-"),
-           let url = (player.currentItem?.asset as? AVURLAsset)?.url {
-            let verification = library.availableTrack(activeLocalTrackID)?.downloadVerification
-            if verification.map({ AudioIntegrity.hasDownloadStamp(url, $0) }) != true {
-                load(index)
-                return
-            }
+        if let index, let url = (player.currentItem?.asset as? AVURLAsset)?.url, !hasUnmodifiedDownload(at: url) {
+            load(index)
+            return
         }
         if let track = current, track.source == .catalogue, error == nil,
            player.currentItem == nil || player.currentItem?.status == .failed {
@@ -326,6 +322,12 @@ final class PlaybackModel {
         } else {
             startCurrentItem()
         }
+    }
+
+    private func hasUnmodifiedDownload(at url: URL) -> Bool {
+        guard let activeLocalTrackID, activeLocalTrackID.hasPrefix("download-") else { return true }
+        guard let verification = library.availableTrack(activeLocalTrackID)?.downloadVerification else { return false }
+        return AudioIntegrity.hasDownloadStamp(url, verification)
     }
 
     private func startCurrentItem() {
@@ -752,17 +754,19 @@ final class PlaybackModel {
         else { pause(); if duration > 0 { position = duration; publishNowPlaying() } }
     }
 
-    func playbackFailed(item: AVPlayerItem, timedOut: Bool = false) {
+    func playbackFailed(item: AVPlayerItem, failure: DiagnosticProblem? = nil) {
         guard player.currentItem === item else { return }
         cancelNativeSeek()
         let status = item.errorLog()?.events.last?.errorStatusCode
         let problem: DiagnosticProblem
-        if let status, (400...599).contains(status) {
+        if let failure, failure.code != .timeout {
+            problem = failure
+        } else if let status, (400...599).contains(status) {
             problem = current?.source == .navidrome ? NavidromeError.httpStatus(status).diagnosticProblem : .mediaHTTP(status)
         } else if let error = item.error {
             problem = DiagnosticProblem.classify(error, fallback: .invalidMedia)
         } else {
-            problem = DiagnosticProblem(code: timedOut || current?.source == .catalogue ? .timeout : .invalidMedia)
+            problem = failure ?? DiagnosticProblem(code: current?.source == .catalogue ? .timeout : .invalidMedia)
         }
         if let track = current, track.source == .catalogue {
             diagnosticPlaybackProblem = problem
@@ -775,9 +779,11 @@ final class PlaybackModel {
             if wantsPlayback { resolveCatalogue(track) }
             return
         }
-        let message = timedOut && problem.code == .timeout ? "等待音訊逾時。請點播放重試。" : current?.source == .navidrome
-             ? "無法串流這首歌。請檢查連線、音訊格式或伺服器轉碼設定。"
-             : "無法播放這個音訊檔。"
+        let message: String
+        if problem.mediaIssue == .changedDownload { message = "這份下載的音檔已變更。請從播放清單重新下載。" }
+        else if problem.code == .timeout { message = "等待音訊逾時。請點播放重試。" }
+        else if current?.source == .navidrome { message = "無法串流這首歌。請檢查連線、音訊格式或伺服器轉碼設定。" }
+        else { message = "無法播放這個音訊檔。" }
         fail(message, problem: problem)
     }
 
@@ -1436,6 +1442,10 @@ final class PlaybackModel {
                         #endif
                         if let asset = item.asset as? AVURLAsset, asset.url.isFileURL,
                            !didAdvancePlayback, !nativeStartupRetried {
+                            guard hasUnmodifiedDownload(at: asset.url) else {
+                                playbackFailed(item: item, failure: DiagnosticProblem(code: .invalidMedia, mediaIssue: .changedDownload))
+                                return
+                            }
                             nativeStartupRetried = true
                             nativeBufferTimeout = nil
                             #if DEBUG
@@ -1443,7 +1453,7 @@ final class PlaybackModel {
                             #endif
                             install(asset.url)
                         } else {
-                            playbackFailed(item: item, timedOut: true)
+                            playbackFailed(item: item, failure: DiagnosticProblem(code: .timeout))
                         }
                         return
                     }
