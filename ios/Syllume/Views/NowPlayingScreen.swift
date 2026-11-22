@@ -449,7 +449,8 @@ private struct LocalTransportProbe: View {
             Text("交接後的播放狀態").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("spotifyHandoffProbe").accessibilityValue(player.handoffFixtureProbe)
         }
-        if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") ||
+            ProcessInfo.processInfo.arguments.contains("--native-local-start-fixture") {
             Text("原生串流取樣").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("nativeTransportDebugProbe")
                 .accessibilityValue(player.nativeTransportDebugProbe)

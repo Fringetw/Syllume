@@ -160,6 +160,73 @@ final class SyllumeUITests: XCTestCase {
         app.buttons["關閉播放畫面"].tap()
     }
 
+    func testNativeLocalStartupRecoversOnce() {
+        continueAfterFailure = false
+        let app = openDemoWithPlaybackFixture("--native-local-start-fixture")
+        let trace = app.staticTexts["nativeTransportDebugProbe"]
+        let recovery = expectation(for: NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@",
+            "local-start-held", "local-start-retry"), evaluatedWith: trace)
+        XCTAssertEqual(XCTWaiter.wait(for: [recovery], timeout: 40), .completed,
+                       "The stalled file should be reopened once. \(String(describing: trace.value))")
+        waitForDemoAudio(app)
+        XCTAssertEqual((trace.value as? String ?? "").components(separatedBy: "local-start-retry").count - 1, 1)
+        capture(app, name: "Syllume-local-start-recovered")
+    }
+
+    func testSonnetRetriesRejectedInitialization() {
+        continueAfterFailure = false
+        let app = openDemoWithPlaybackFixture("--stage-initialization-fails-once")
+        waitForDemoAudio(app)
+        app.segmentedControls.buttons["商籟"].tap()
+        let stage = app.descendants(matching: .any)["syllumeSonnetStage"].firstMatch
+        XCTAssertTrue(stage.waitForExistence(timeout: 15))
+        let ready = expectation(for: NSPredicate(format: "value BEGINSWITH %@ AND value ENDSWITH %@",
+            "已就緒", " · 已重試"), evaluatedWith: stage)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 65), .completed,
+                       "The stage should load after the first song command is rejected. \(String(describing: stage.value))")
+        capture(app, name: "Syllume-Sonnet-recovered")
+    }
+
+    func testSonnetTimeoutEndsWithoutStoppingAudio() {
+        continueAfterFailure = false
+        let app = openDemoWithPlaybackFixture("--stage-initialization-stall")
+        app.buttons["循環佇列"].tap()
+        waitForDemoAudio(app)
+        app.segmentedControls.buttons["商籟"].tap()
+        let stage = app.descendants(matching: .any)["syllumeSonnetStage"].firstMatch
+        XCTAssertTrue(stage.waitForExistence(timeout: 15))
+        let failed = expectation(for: NSPredicate(format: "value BEGINSWITH %@", "載入失敗："), evaluatedWith: stage)
+        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 35), .completed,
+                       "A renderer that never becomes ready should leave the loading state.")
+        XCTAssertFalse(app.staticTexts["正在準備歌詞動畫"].exists)
+        waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
+        capture(app, name: "Syllume-Sonnet-timeout")
+    }
+
+    private func openDemoWithPlaybackFixture(_ fixture: String) -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["--presentation-reset", "--playback-probe", fixture]
+        app.launchEnvironment["SYLLUME_TEST_INITIAL_DISPLAY_MODE"] = "cover"
+        app.launch()
+        let demo = app.buttons["demoTrack"]
+        XCTAssertTrue(demo.waitForExistence(timeout: 15))
+        demo.tap()
+        XCTAssertTrue(app.buttons["playerToggle"].waitForExistence(timeout: 15))
+        return app
+    }
+
+    private func waitForDemoAudio(_ app: XCUIApplication, from previousTime: Double = 0,
+                                  file: StaticString = #filePath, line: UInt = #line) {
+        let clock = app.staticTexts["localTransportProbe"]
+        let playing = expectation(for: NSPredicate { _, _ in
+            let sample = (clock.value as? String ?? "").split(separator: "|")
+            guard sample.count == 2, let time = Double(sample[0]), let rate = Double(sample[1]) else { return false }
+            return time.isFinite && time > 0.2 && rate > 0 && abs(time - previousTime) > 0.2
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 30), .completed,
+                       "The bundled audio clock should advance. \(String(describing: clock.value))", file: file, line: line)
+    }
+
     func testLineOnlyLyricsRemainVisibleInBothAnimatedStylesAfterSeek() {
         continueAfterFailure = false
         let app = XCUIApplication()

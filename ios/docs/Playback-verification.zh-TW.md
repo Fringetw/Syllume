@@ -2,6 +2,14 @@
 
 獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 44（`3caaeaa`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過，公開 HTTPS 播放也通過。iPhone 實機尚待驗證，IPA 可用 Sideloadly 重簽。 [build 44 CI](https://github.com/Fringetw/Syllume/actions/runs/44935718039) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
 
+## build 45 的正式 Navidrome 與冷啟動
+
+隔離的 Navidrome v0.64.2 以 HTTPS 提供專案示範音軌。正式 Swift 客戶端從三筆結果選中正確錄音，排除不同演出者和現場版。串流及完整下載均與正確檔案逐位元相同，下載總計 380,160 bytes，完整解碼為 29.975 秒。搜尋及下載拒絕錯誤憑證，保留 Subsonic 40 與重新驗證分類。公開示範站另獨立確認 `ping`、`search3` 回傳 HTTP 200。實際 iPhone 和個人伺服器仍待驗證。 [隔離伺服器測試](https://github.com/Fringetw/Syllume/actions/runs/44945525721) · [原始整合紀錄](https://github.com/Fringetw/Syllume/actions/runs/44945525721/artifacts/14723526708)
+
+build 45 的 iPhone Release、核心檢查與 iOS 26 常規 8/8 通過。iOS 18.6 為 21/22；商籟冷啟動案例的錄影中，本機《潮汐之間》停在 0:00 等待緩衝，商籟持續顯示準備中。同期的錄影曲目、逐行動畫和 iPhone SE 大字級通過。 [常規 CI](https://github.com/Fringetw/Syllume/actions/runs/44943106824) · [iOS 18 原始畫面與錄影](https://github.com/Fringetw/Syllume/actions/runs/44943106824/artifacts/14723599390)
+
+iOS 26 Runner 的霧盞四秒取樣中，平均記憶體峰值從 build 44 的約 75 MB 增至 build 45 的約 172 MB；兩輪工作位於不同 Runner。iOS 18 的 build 45 取樣約 53 MB。尚未確認此次差異是否可重現，實機資源仍待量測。 [build 45 iOS 26 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44943106824/job/136964420824) · [build 45 iOS 18 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44943106824/job/136964421196)
+
 ## build 44 的交付證據
 
 | 範圍 | 結果 | 證據 |

@@ -36,6 +36,7 @@ final class PlaybackModel {
     private(set) var diagnosticPlaybackDetails: String?
     private var nativeReady = false
     private var nativeHasAdvanced = false
+    @ObservationIgnored private var nativeStartupRetried = false
     @ObservationIgnored private var nativeClock = NativePlaybackClock()
     private var videoHasAdvanced = false
     @ObservationIgnored private var queuedVideoReplay: UUID?
@@ -106,6 +107,7 @@ final class PlaybackModel {
     private var nativeTransportTrace: [String] = []
     private var handoffFixtureSequence = 0
     private var handoffFixtureAdvance = 0.0
+    private var stallFirstLocalStart = ProcessInfo.processInfo.arguments.contains("--native-local-start-fixture")
 
     var handoffFixtureProbe: String {
         let advancing = isPlaying && handoffFixtureAdvance >= 0.2
@@ -204,7 +206,7 @@ final class PlaybackModel {
     @ObservationIgnored private var nativeSeekBufferObservation: NSKeyValueObservation?
     private var seeking = false
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
-    @ObservationIgnored private var streamTimeout: Task<Void, Never>?
+    @ObservationIgnored private var nativeBufferTimeout: Task<Void, Never>?
     @ObservationIgnored private var startupTimeout: Task<Void, Never>?
     @ObservationIgnored private var youtubeConnection: PlatformConnection?
     private var catalogueTarget: SyncedYouTubeSong?
@@ -336,7 +338,18 @@ final class PlaybackModel {
             resumeAfterInterruption = false
             error = nil
             wantsPlayback = true
-            if nativeSeekPreroll == nil { player.play() }
+            if nativeSeekPreroll == nil {
+                #if DEBUG
+                if stallFirstLocalStart, (item.asset as? AVURLAsset)?.url.isFileURL == true {
+                    stallFirstLocalStart = false
+                    recordNativeTransportTrace("local-start-held", item: item)
+                } else {
+                    player.play()
+                }
+                #else
+                player.play()
+                #endif
+            }
             refreshTransport()
         } catch {
             fail("無法啟用音訊。請檢查目前的音訊輸出。")
@@ -354,7 +367,7 @@ final class PlaybackModel {
         resumeAfterInterruption = false
         player.pause()
         wantsPlayback = false
-        streamTimeout?.cancel(); streamTimeout = nil
+        nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         if resolveTask != nil {
             resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
@@ -438,7 +451,7 @@ final class PlaybackModel {
         nativeSeekPreroll = nil
         player.cancelPendingPrerolls()
         seekTimeout?.cancel()
-        streamTimeout?.cancel(); streamTimeout = nil
+        nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
         if diagnosticPlaybackProblem?.nativeCode == -5 {
             diagnosticPlaybackProblem = nil
             diagnosticPlaybackDetails = nil
@@ -739,29 +752,33 @@ final class PlaybackModel {
         else { pause(); if duration > 0 { position = duration; publishNowPlaying() } }
     }
 
-    func playbackFailed(item: AVPlayerItem) {
+    func playbackFailed(item: AVPlayerItem, timedOut: Bool = false) {
         guard player.currentItem === item else { return }
         cancelNativeSeek()
+        let status = item.errorLog()?.events.last?.errorStatusCode
+        let problem: DiagnosticProblem
+        if let status, (400...599).contains(status) {
+            problem = current?.source == .navidrome ? NavidromeError.httpStatus(status).diagnosticProblem : .mediaHTTP(status)
+        } else if let error = item.error {
+            problem = DiagnosticProblem.classify(error, fallback: .invalidMedia)
+        } else {
+            problem = DiagnosticProblem(code: timedOut || current?.source == .catalogue ? .timeout : .invalidMedia)
+        }
         if let track = current, track.source == .catalogue {
-            let status = item.errorLog()?.events.last?.errorStatusCode
-            let problem: DiagnosticProblem
-            if let status, (400...599).contains(status) { problem = DiagnosticProblem.mediaHTTP(status) }
-            else if let error = item.error { problem = DiagnosticProblem.classify(error, fallback: .invalidMedia) }
-            else { problem = DiagnosticProblem(code: .timeout) }
             diagnosticPlaybackProblem = problem
             sourceFailures.append((audioSource ?? "音源", problem, nil))
             DiagnosticsEvents.shared.record(.playbackStalled, source: activeCatalogueSource, problem: problem)
-            streamTimeout?.cancel(); streamTimeout = nil
+            nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
             player.replaceCurrentItem(with: nil)
             nativeReady = false
             catalogueHasStarted = false; lyricClockRunning = false
             if wantsPlayback { resolveCatalogue(track) }
             return
         }
-        fail(current?.source == .navidrome
+        let message = timedOut && problem.code == .timeout ? "等待音訊逾時。請點播放重試。" : current?.source == .navidrome
              ? "無法串流這首歌。請檢查連線、音訊格式或伺服器轉碼設定。"
-             : "無法播放這個音訊檔。",
-             problem: item.error.map { DiagnosticProblem.classify($0, fallback: .invalidMedia) } ?? DiagnosticProblem(code: .invalidMedia))
+             : "無法播放這個音訊檔。"
+        fail(message, problem: problem)
     }
 
     func interrupt(began: Bool, shouldResume: Bool) {
@@ -1310,6 +1327,7 @@ final class PlaybackModel {
         offersVideoFallback = false
         nativeReady = false
         nativeHasAdvanced = false
+        nativeStartupRetried = false
         nativeClock = NativePlaybackClock()
         videoHasAdvanced = false
         didAdvancePlayback = false
@@ -1318,7 +1336,7 @@ final class PlaybackModel {
         generation = UUID()
         cancelNativeSeek()
         resolveTicket = UUID(); resolveTask?.cancel(); resolveTask = nil
-        streamTimeout?.cancel(); streamTimeout = nil
+        nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
         startupTimeout?.cancel(); startupTimeout = nil
         catalogueTarget = nil; catalogueHasStarted = false
         catalogueVideoStatus = nil; catalogueVideoProblem = nil
@@ -1389,20 +1407,19 @@ final class PlaybackModel {
                 if let recording = activeRecording { loadCatalogueDetails(track, recording: recording) }
             }
         }
-        let remote = (player.currentItem?.asset as? AVURLAsset)?.url.isFileURL == false
-        if !isBuffering || !remote || seeking {
+        if !isBuffering || seeking || player.currentItem == nil {
             #if DEBUG
-            if streamTimeout != nil { recordNativeTransportTrace("buffer-ended", item: player.currentItem) }
+            if nativeBufferTimeout != nil { recordNativeTransportTrace("buffer-ended", item: player.currentItem) }
             #endif
-            streamTimeout?.cancel(); streamTimeout = nil
-        } else if streamTimeout == nil, let item = player.currentItem {
+            nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
+        } else if nativeBufferTimeout == nil, let item = player.currentItem {
             let clock = ContinuousClock()
             let waitingSince = clock.now
             var deadline = nativeBufferDeadline(item: item, since: waitingSince)
             #if DEBUG
             recordNativeTransportTrace("buffer-armed", item: item, deadline: deadline)
             #endif
-            streamTimeout = Task { [weak self, weak item] in
+            nativeBufferTimeout = Task { [weak self, weak item] in
                 while !Task.isCancelled {
                     do { try await clock.sleep(until: deadline) } catch { return }
                     guard let self, let item, !Task.isCancelled, isBuffering, player.currentItem === item else { return }
@@ -1417,7 +1434,17 @@ final class PlaybackModel {
                         #if DEBUG
                         recordNativeTransportTrace("buffer-timeout", item: item, deadline: deadline)
                         #endif
-                        playbackFailed(item: item)
+                        if let asset = item.asset as? AVURLAsset, asset.url.isFileURL,
+                           !didAdvancePlayback, !nativeStartupRetried {
+                            nativeStartupRetried = true
+                            nativeBufferTimeout = nil
+                            #if DEBUG
+                            recordNativeTransportTrace("local-start-retry", item: item)
+                            #endif
+                            install(asset.url)
+                        } else {
+                            playbackFailed(item: item, timedOut: true)
+                        }
                         return
                     }
                     #if DEBUG
@@ -1430,6 +1457,7 @@ final class PlaybackModel {
     }
 
     private func nativeBufferDeadline(item: AVPlayerItem, since start: ContinuousClock.Instant) -> ContinuousClock.Instant {
+        if (item.asset as? AVURLAsset)?.url.isFileURL == true { return start + .seconds(15) }
         let reason = player.reasonForWaitingToPlay
         let waitingForBuffer = item.status == .readyToPlay && !item.isPlaybackBufferEmpty &&
             player.timeControlStatus == .waitingToPlayAtSpecifiedRate &&
