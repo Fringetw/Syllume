@@ -151,6 +151,13 @@ private struct SonnetWebView: UIViewRepresentable {
         private var lastPlaying = false
         private var lastRendering = false
         #if DEBUG
+        private static let bootCheckpoints: Set<String> = [
+            "runtime-create", "runtime-returned", "runtime-reuse", "runtime-reused",
+            "program-start", "program-compiled", "pixi-import", "pixi-imported",
+            "webgl-request", "webgl-created", "webgl-unavailable", "webgl-extensions-ready",
+            "renderer-init", "renderer-initialized", "assets-start", "assets-ready", "scene-start",
+            "shader-link", "shader-linked", "first-frame"
+        ]
         private var lastClockProbe = ""
         private var clockRequest: UUID?
         private var injectedInitializationFailure = false
@@ -231,10 +238,12 @@ private struct SonnetWebView: UIViewRepresentable {
             let document = navigation
             let data = try? JSONEncoder().encode(parent.lines)
             let lines = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
-            let song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
+            var song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
                 "reduceMotion": parent.reduceMotion, "style": parent.style, "energySaving": parent.energySaving, "lines": lines]
+            let traceID: String?
             var script = "await window.FoliaStage.setSong(song); return true;"
             #if DEBUG
+            traceID = request.uuidString
             let arguments = ProcessInfo.processInfo.arguments
             if arguments.contains("--stage-initialization-stall") {
                 script = "window.syllumeInitializationFixture = new Promise(() => {}); return await window.syllumeInitializationFixture;"
@@ -242,7 +251,10 @@ private struct SonnetWebView: UIViewRepresentable {
                 injectedInitializationFailure = true
                 script = "throw new Error('Injected stage initialization failure')"
             }
+            #else
+            traceID = nil
             #endif
+            if let traceID { song["traceID"] = traceID }
             stageCheckpoint("song-dispatch")
             view.callAsyncJavaScript(script, arguments: ["song": song], in: nil, in: .page) { [weak self, weak view] result in
                 guard let self, let view, view === self.view, self.request == request, navigation === document,
@@ -321,6 +333,16 @@ private struct SonnetWebView: UIViewRepresentable {
             guard message.webView === view, message.frameInfo.isMainFrame, loaded, request != nil,
                   parent.rendering, state == .loading, activeSong == songKey,
                   let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
+            #if DEBUG
+            if type == "boot", let request, let detail = body["detail"] as? String {
+                let parts = detail.split(separator: "|")
+                guard parts.count == 3, UUID(uuidString: String(parts[0])) == request,
+                      Self.bootCheckpoints.contains(String(parts[1])), let milliseconds = Int(parts[2]),
+                      (0...60_000).contains(milliseconds) else { return }
+                stageCheckpoint("boot-\(parts[1]) js=\(milliseconds)ms")
+                return
+            }
+            #endif
             if type == "font" {
                 lyricFont = body["detail"] as? String ?? ""
                 stageCheckpoint(lyricFont == "GenSenRounded2JP-M" ? "font-bundled" : "font-fallback")

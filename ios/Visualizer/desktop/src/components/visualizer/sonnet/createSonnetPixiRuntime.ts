@@ -71,6 +71,7 @@ export interface SonnetRuntimeOptions {
     host: HTMLDivElement;
     /** iOS host cap: smooth 60 Hz, 30 Hz in energy-saving mode. */
     maxFPS?: number;
+    startupCheckpoint?: (phase: string) => void;
     /** Track identity of `program`; see SonnetSongContext.seed. */
     songSeed?: string | number;
     program: SonnetProgram;
@@ -166,7 +167,10 @@ export class SonnetPixiRuntime {
     ) { }
 
     static async create(options: SonnetRuntimeOptions) {
+        const checkpoint = options.startupCheckpoint;
+        checkpoint?.('pixi-import');
         const pixi = await loadPixi();
+        checkpoint?.('pixi-imported');
         // The options the WebGL context is made with, ahead of Pixi (makePixiContext).
         const contextOptions = {
             backgroundAlpha: 0,
@@ -178,10 +182,11 @@ export class SonnetPixiRuntime {
             antialias: options.antialias,
             powerPreference: 'high-performance',
         } as const;
-        const context = await makePixiContext(pixi, contextOptions, options.signal);
+        const context = await makePixiContext(pixi, contextOptions, options.signal, checkpoint);
         const app = new pixi.Application();
         const width = Math.max(options.host.clientWidth, 320);
         const height = Math.max(options.host.clientHeight, 240);
+        checkpoint?.('renderer-init');
         await app.init({
             width,
             height,
@@ -200,12 +205,15 @@ export class SonnetPixiRuntime {
         runtime.overlayContainer = new pixi.Container();
         runtime.outroBlur = new SonnetOutroBlur(pixi);
         app.stage.addChild(runtime.sceneContainer, runtime.creditsContainer, runtime.overlayContainer);
+        checkpoint?.('renderer-initialized');
 
         if (options.signal?.aborted) {
             runtime.destroy();
             throw new DOMException('Sonnet runtime creation was cancelled', 'AbortError');
         }
+        checkpoint?.('assets-start');
         await runtime.preloadIcons();
+        checkpoint?.('assets-ready');
         if (options.signal?.aborted) {
             runtime.destroy();
             throw new DOMException('Sonnet runtime creation was cancelled', 'AbortError');
@@ -226,10 +234,14 @@ export class SonnetPixiRuntime {
     private async install() {
         await new Promise((resolve) => { window.setTimeout(resolve); });
         if (this.options.signal?.aborted) return;
+        const checkpoint = this.options.startupCheckpoint;
+        checkpoint?.('scene-start');
         this.resizeToHost();
         this.renderFrame();
+        checkpoint?.('shader-link');
         await linkPixiPrograms(this.pixi, this.app.renderer, this.app.stage, 'Sonnet', this.options.signal);
         if (this.options.signal?.aborted) return;
+        checkpoint?.('shader-linked');
         this.options.host.appendChild(this.app.canvas);
         this.app.canvas.style.cssText = 'width:100%;height:100%;display:block';
         this.app.ticker.add(this.renderFrame);
@@ -239,6 +251,7 @@ export class SonnetPixiRuntime {
         });
         this.resizeObserver.observe(this.options.host);
         this.app.renderer.render(this.app.stage);
+        checkpoint?.('first-frame');
         if (!this.options.paused) this.app.start();
     }
 

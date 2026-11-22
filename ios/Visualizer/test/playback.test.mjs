@@ -51,6 +51,66 @@ test('lyric updates and track changes reuse a renderer instead of recreating Web
     assert.equal(h.calls.some(c => c[0] === 'destroy'), false);
 });
 
+test('renderer boot tracing is opt-in and measures milestones relative to dispatch', async () => {
+    const h = stageHarness(async (_song, _clock, _signal, _paused, trace) => {
+        if (trace) {
+            h.advance(2.6);
+            trace('webgl-ready');
+            h.advance(4.8);
+        }
+        return h.runtime;
+    });
+    await h.stage.setSong(song);
+    await h.stage.setSong({ ...song, energySaving: true, traceID: '' });
+    assert.deepEqual(h.messages, [['ready'], ['ready']]);
+
+    h.messages.length = 0;
+    h.advance(400);
+    await h.stage.setSong({ ...song, traceID: 'creation' });
+    assert.deepEqual(h.messages, [
+        ['boot', 'creation|runtime-create|0'],
+        ['boot', 'creation|webgl-ready|3'],
+        ['boot', 'creation|runtime-returned|7'],
+        ['ready'],
+    ]);
+});
+
+test('renderer boot tracing records a completed song swap without a new renderer', async () => {
+    const h = stageHarness();
+    await h.stage.setSong(song);
+    h.messages.length = 0;
+    h.runtime.updateSong = async next => {
+        assert.equal(next.id, 'b');
+        h.advance(12.8);
+    };
+    await h.stage.setSong({ ...song, id: 'b', traceID: 'swap' });
+    assert.deepEqual(h.messages, [
+        ['boot', 'swap|runtime-reuse|0'],
+        ['boot', 'swap|runtime-reused|13'],
+        ['ready'],
+    ]);
+});
+
+test('renderer boot tracing discards callbacks after replacement or stop', async () => {
+    const pending = [];
+    const h = stageHarness((_song, _clock, signal, _paused, trace) => new Promise(resolve => {
+        pending.push({ resolve, signal, trace });
+    }));
+    const first = h.stage.setSong({ ...song, traceID: 'previous' });
+    const second = h.stage.setSong({ ...song, id: 'b', traceID: 'current' });
+    assert.equal(pending[0].signal.aborted, true);
+    pending[0].trace('late-previous');
+    h.stage.stop();
+    assert.equal(pending[1].signal.aborted, true);
+    pending[1].trace('late-current');
+    pending.forEach(attempt => attempt.resolve(h.runtime));
+    await Promise.all([first, second]);
+    assert.deepEqual(h.messages, [
+        ['boot', 'previous|runtime-create|0'],
+        ['boot', 'current|runtime-create|0'],
+    ]);
+});
+
 test('pause during runtime creation is applied before the stage becomes ready', async () => {
     let resolve; const h = stageHarness(() => new Promise(r => { resolve = r; }));
     h.stage.setClock({ time: 2, playing: true }); const pending = h.stage.setSong(song);

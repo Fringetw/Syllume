@@ -30,16 +30,28 @@ export function createStageController({ createRuntime, host, notify, now = () =>
             const request = ++generation;
             controller?.abort(); controller = new AbortController();
             const signal = controller.signal;
+            const commandStarted = now();
+            const trace = typeof song.traceID === 'string' && song.traceID
+                ? phase => {
+                    if (request === generation && !signal.aborted) {
+                        notify('boot', `${song.traceID}|${phase}|${Math.round(now() - commandStarted)}`);
+                    }
+                }
+                : undefined;
             reduced = !!song.reduceMotion;
             const key = [song.style === 'lumiere' ? 'lumiere' : 'sonnet', song.energySaving ? 'low' : 'balanced'].join('|');
             try {
                 if (runtime && key === runtimeKey) {
                     applyPause();
+                    trace?.('runtime-reuse');
                     await runtime.updateSong(song, signal);
+                    trace?.('runtime-reused');
                 } else {
                     runtime?.destroy(); runtime = null; host.replaceChildren();
-                    const created = await createRuntime(song, clock, signal, !playing || reduced);
+                    trace?.('runtime-create');
+                    const created = await createRuntime(song, clock, signal, !playing || reduced, trace);
                     if (request !== generation || signal.aborted) { created.destroy(); return; }
+                    trace?.('runtime-returned');
                     runtime = created; runtimeKey = key; applyPause(true);
                 }
                 if (request === generation && !signal.aborted) notify('ready');

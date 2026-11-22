@@ -48,11 +48,13 @@ export const makePixiContext = async (
     pixi: PixiModule,
     options: ContextOptions,
     signal?: AbortSignal,
+    startupCheckpoint?: (phase: string) => void,
 ): Promise<{ canvas?: HTMLCanvasElement; context?: WebGL2RenderingContext }> => {
     if ((pixi.VERSION as string) !== '8.21.0') return {};
     await nextTask();
     if (signal?.aborted) throw cancelled();
     const canvas = document.createElement('canvas');
+    startupCheckpoint?.('webgl-request');
     // What GlContextSystem.init passes to getContext, with its defaults: premultiplied alpha, no
     // preserved drawing buffer; a back buffer takes the antialiasing over.
     const context = canvas.getContext('webgl2', {
@@ -63,6 +65,7 @@ export const makePixiContext = async (
         preserveDrawingBuffer: false,
         powerPreference: options.powerPreference ?? 'default',
     });
+    startupCheckpoint?.(context ? 'webgl-created' : 'webgl-unavailable');
     if (!context) return {};
     let started = performance.now();
     for (const name of PIXI_EXTENSIONS) {
@@ -76,5 +79,6 @@ export const makePixiContext = async (
         }
         context.getExtension(name);
     }
+    startupCheckpoint?.('webgl-extensions-ready');
     return { canvas, context };
 };

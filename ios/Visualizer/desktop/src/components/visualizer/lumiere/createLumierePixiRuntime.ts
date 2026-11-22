@@ -58,6 +58,7 @@ export interface LumiereRuntimeOptions {
     host: HTMLDivElement;
     /** iOS host cap: smooth 60 Hz, 30 Hz in energy-saving mode. */
     maxFPS?: number;
+    startupCheckpoint?: (phase: string) => void;
     song: LumiereSongContext;
     tuning: LumiereTuning;
     currentTime: MotionValue<number>;
@@ -130,7 +131,10 @@ export class LumierePixiRuntime {
     }
 
     static async create(options: LumiereRuntimeOptions) {
+        const checkpoint = options.startupCheckpoint;
+        checkpoint?.('pixi-import');
         const pixi = await loadPixi();
+        checkpoint?.('pixi-imported');
         // WebGL 上下文按这几项先建好，再交给 Pixi（makePixiContext）。
         const contextOptions = {
             // 画布透明：folia 的共享背景层要透出来，由运行时的暗场层按暗场强度压暗。
@@ -140,11 +144,12 @@ export class LumierePixiRuntime {
             antialias: options.antialias,
             powerPreference: 'high-performance',
         } as const;
-        const context = await makePixiContext(pixi, contextOptions, options.signal);
+        const context = await makePixiContext(pixi, contextOptions, options.signal, checkpoint);
         const app = new pixi.Application();
         const width = Math.max(options.host.clientWidth, MIN_WIDTH);
         const height = Math.max(options.host.clientHeight, MIN_HEIGHT);
         const resolution = resolveLumiereScaledRenderResolution(window.devicePixelRatio, options.renderScale);
+        checkpoint?.('renderer-init');
         await app.init({
             width,
             height,
@@ -160,10 +165,13 @@ export class LumierePixiRuntime {
             app.destroy({ removeView: true });
             throw new Error('Lumiere requires WebGL');
         }
+        checkpoint?.('renderer-initialized');
         app.ticker.maxFPS = options.maxFPS ?? 60;
         const runtime = new LumierePixiRuntime(pixi, options, app);
         runtime.renderResolution = resolution;
+        checkpoint?.('assets-start');
         runtime.sprites = createLightSprites(pixi);
+        checkpoint?.('assets-ready');
         runtime.passthrough = new pixi.AlphaFilter({ alpha: 1 });
         runtime.quality.passthrough = runtime.passthrough;
         runtime.darkField = new LumiereDarkFieldLayer(pixi);
@@ -193,10 +201,14 @@ export class LumierePixiRuntime {
     private async install() {
         await new Promise((resolve) => { window.setTimeout(resolve); });
         if (this.options.signal?.aborted) return;
+        const checkpoint = this.options.startupCheckpoint;
+        checkpoint?.('scene-start');
         this.resizeToHost(true);
         this.renderFrame();
+        checkpoint?.('shader-link');
         await linkPixiPrograms(this.pixi, this.app.renderer, this.app.stage, 'Lumiere', this.options.signal);
         if (this.options.signal?.aborted) return;
+        checkpoint?.('shader-linked');
         this.options.host.appendChild(this.app.canvas);
         this.app.canvas.style.cssText = 'width:100%;height:100%;display:block';
         this.app.ticker.add(this.renderFrame);
@@ -206,6 +218,7 @@ export class LumierePixiRuntime {
         });
         this.resizeObserver.observe(this.options.host);
         this.app.renderer.render(this.app.stage);
+        checkpoint?.('first-frame');
         if (!this.options.paused) this.app.start();
     }
 

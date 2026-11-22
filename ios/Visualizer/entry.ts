@@ -14,16 +14,21 @@ const baseTheme = { name: 'Folia', backgroundColor: '#100e16', primaryColor: '#f
 let lyricFont: Promise<string | undefined> | undefined;
 const zero = { get: () => 0 };
 const linesFor = (song: any) => song.lines.map((line: any, index: number) => ({ ...line, id: String(index), isChorus: false }));
-const stage = createStageController({ host, notify, async createRuntime(song: any, clock: any, signal: AbortSignal, paused: boolean) {
+const stage = createStageController({ host, notify, async createRuntime(song: any, clock: any,
+    signal: AbortSignal, paused: boolean, startupCheckpoint?: (phase: string) => void) {
     const fontFamily = await (lyricFont ??= loadLyricFont(document.fonts));
     if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
     const theme = { ...baseTheme, fontFamily };
     notify('font', fontFamily ?? 'system');
     const renderScale = song.energySaving ? 0.75 : 1;
     const maxFPS = song.energySaving ? 30 : 60;
+    const lines = linesFor(song);
+    startupCheckpoint?.('program-start');
     if (song.style === 'lumiere') {
-        const runtime = await LumierePixiRuntime.create({ host, signal, maxFPS,
-            song: { seed: song.id, program: compileLumiereProgram(linesFor(song), song.id), theme },
+        const program = compileLumiereProgram(lines, song.id);
+        startupCheckpoint?.('program-compiled');
+        const runtime = await LumierePixiRuntime.create({ host, signal, maxFPS, startupCheckpoint,
+            song: { seed: song.id, program, theme },
             tuning: { ...DEFAULT_LUMIERE_TUNING, renderQuality: song.energySaving ? 'low' : 'balanced' },
             currentTime: clock, audioPower: zero as any, audioBands: { bass: zero, mid: zero, treble: zero } as any,
             staticMode: song.reduceMotion, showText: true, paused,
@@ -35,8 +40,10 @@ const stage = createStageController({ host, notify, async createRuntime(song: an
                 await runtime.swapSong({ seed: next.id, program: compileLumiereProgram(linesFor(next), next.id), theme }, abort);
             } };
     }
-    const runtime = await SonnetPixiRuntime.create({ host, signal, maxFPS,
-        program: compileSonnetProgram(linesFor(song), song.id), songSeed: song.id, theme,
+    const program = compileSonnetProgram(lines, song.id);
+    startupCheckpoint?.('program-compiled');
+    const runtime = await SonnetPixiRuntime.create({ host, signal, maxFPS, startupCheckpoint,
+        program, songSeed: song.id, theme,
         tuning: { ...DEFAULT_SONNET_TUNING, textureResolution: 1, cameraIntensity: 0.7, typographyMotion: 1, postProcessEnabled: false },
         renderScale, antialias: false, smartBeatEnabled: false, currentTime: clock,
         lyricsFontScale: 1, staticMode: song.reduceMotion, transparentBackground: true, paused,

@@ -2,6 +2,30 @@
 
 獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 44（`3caaeaa`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過，公開 HTTPS 播放也通過。iPhone 實機尚待驗證，IPA 可用 Sideloadly 重簽。 [build 44 CI](https://github.com/Fringetw/Syllume/actions/runs/44935718039) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
 
+## build 47 的動畫就緒與同步文字
+
+`b556329` 在 WebKit 確認橋接和載入字型後，分階段計算後續等待時間。整次初始化以單調時鐘限制在 36 秒，失敗重試沿用同一期限。初始化及失敗後顯示跟著媒體進度的 SwiftUI 文字；就緒時立即送最新媒體時鐘。開發者診斷沿用同一初始化上限。 [常規回歸](https://github.com/Fringetw/Syllume/actions/runs/44990301596)
+
+同提交在 macOS 的真實 Navidrome v0.64.2 通過 HTTPS、演出者及錄音版本配對、串流與完整下載。串流和下載同為 380,160 bytes，與正確來源相符。音檔完整解碼為 29.975 秒，錯誤憑證回傳 Subsonic 40。 [API 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44990337355/job/137109790035) · [原始測試結果](https://github.com/Fringetw/Syllume/actions/runs/44990337355/artifacts/14741760872)
+
+在 iOS 26 模擬器使用公開 HTTPS 音源以 AVPlayer 起播、暫停定位至 11.983 秒，續播至 14.121 秒，通過 1/1。官方 YouTube IFrame 的真實播放為 0/2。《HELP!!》與官方示範影片均回傳 150，媒體時鐘維持 0:00，播放器顯示登入驗證。私人帳號及 iPhone 待驗。 [公開媒體日誌](https://github.com/Fringetw/Syllume/actions/runs/44990337355/job/137109790253) · [原始測試與畫面](https://github.com/Fringetw/Syllume/actions/runs/44990337355/artifacts/14741263388)
+
+iOS 26 的 11 項常規回歸全數通過，含暫停拖曳、霧盞記憶、片尾切歌、防停頓、限速與停傳、本機起播重開、商籟同頁重試及動畫無回應時的同步文字。無回應夾具於 24.277 秒結束等待，實際音訊持續前進。霧盞三次四秒取樣的平均 App CPU 時間為 0.548 秒，平均實體記憶體峰值 74,805.589 kB。iPhone 的 FPS、GPU、耗電與流量待驗。 [iOS 26 測試與截圖](https://github.com/Fringetw/Syllume/actions/runs/44990301596/artifacts/14742182268) · [iOS 26 資源日誌](https://github.com/Fringetw/Syllume/actions/runs/44990301596/job/137109673524)
+
+iOS 18.6 的歌單 5/5、主套件 17/18、iPhone SE 大字級 1/1，錄影曲目 0/1。錄影曲目的商籟在 15.449 秒載入字型，31.476 秒逾時，仍未收到首幀就緒；主套件的商籟冷啟也回報逾時。霧盞三次四秒平均 App CPU 時間為 0.795 秒，平均實體記憶體峰值 53,764.096 kB。 [iOS 18 測試、錄影與初始化日誌](https://github.com/Fringetw/Syllume/actions/runs/44990301596/artifacts/14743547050) · [iOS 18 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/44990301596/job/137109673362)
+
+iPhone Release 使用 iPhoneOS 26.2 SDK，最低 iOS 17。已核對 IPA 解壓及 Release 無 Debug 測試參數。這份 IPA 尚未簽署。SHA-256 為 `24F3C491709277721369021A5BABC5513E02E29AA0DE145BA132553F4EAA8796`。 [build 47 IPA](https://github.com/Fringetw/Syllume/actions/runs/44990301596/artifacts/14741971459)
+
+## build 46 的本機起播與動畫逾時
+
+本機檔案未回報播放進度時，現在有起播期限，僅自動重開一次。下載檔重開前再次核對先前驗證過的檔案狀態。動畫載入失敗時，維持媒體原本的播放狀態。同一個 WebKit 頁面若拒絕第一次歌曲命令，會重送一次給已確認的橋接程式。
+
+iOS 26 獨立回歸 6/6 通過，涵蓋本機冷啟、檔案自動重開、歌曲命令重送、動畫永久無回應時音訊繼續、最大字級及錄影曲目搭配商籟與繪光。常規 iOS 26 回歸為 10/11；最大字級案例的第一次啟動曾回報 Runner 找不到 LLDB，獨立回歸有執行到操作並通過。 [獨立回歸與畫面](https://github.com/Fringetw/Syllume/actions/runs/44986744181/artifacts/14740706618) · [常規 CI](https://github.com/Fringetw/Syllume/actions/runs/44984607738)
+
+iOS 18 的《JANE DOE》商籟重現失敗。影片的受控媒體時鐘仍前進，動畫頁面在 5.188 秒完成導航、11.144 秒確認橋接、13.414 秒載入內建字型，約 16 秒逾時。字型載入後只剩約 2.6 秒完成渲染器與首幀。獨立回歸的歌單套件為 5/5，錄影曲目 0/1。 [iOS 18 原始測試、錄影及 Sonnet-recorded.log](https://github.com/Fringetw/Syllume/actions/runs/44987982245/artifacts/14741650691)
+
+`aead1f6` 已產出未簽署的 0.4.0 build 46。該版 iOS 18 回歸仍有失敗。解出的 IPA SHA-256 為 `7411DF758BAC13DFFB49A3A69413EC5F323FBD908D392A9188AF59620CF927B8`。 [build 46 IPA](https://github.com/Fringetw/Syllume/actions/runs/44984607738/artifacts/14738903245)
+
 ## build 45 的正式 Navidrome 與冷啟動
 
 隔離的 Navidrome v0.64.2 以 HTTPS 提供專案示範音軌。正式 Swift 客戶端從三筆結果選中正確錄音，排除不同演出者和現場版。串流及完整下載均與正確檔案逐位元相同，下載總計 380,160 bytes，完整解碼為 29.975 秒。搜尋及下載拒絕錯誤憑證，保留 Subsonic 40 與重新驗證分類。公開示範站另獨立確認 `ping`、`search3` 回傳 HTTP 200。實際 iPhone 和個人伺服器仍待驗證。 [隔離伺服器測試](https://github.com/Fringetw/Syllume/actions/runs/44945525721) · [原始整合紀錄](https://github.com/Fringetw/Syllume/actions/runs/44945525721/artifacts/14723526708)

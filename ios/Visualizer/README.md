@@ -4,6 +4,8 @@ This directory contains the desktop Sonnet (商籟) and Lumiere (繪光) program
 
 The runtime patches allow the iOS host to cap the ticker at 60 or 30 fps; Sonnet also commits a song handover immediately while paused, so it cannot await a stopped ticker. A timing patch preserves every grapheme of line-only lyrics with the same line start and end, giving both styles a shared line animation instead of invented word timing. Real word and syllable timestamps retain the original mapping. All other source snapshot files are unchanged.
 
+Debug iOS builds pass a request token to trace lyric program compilation, WebGL and Pixi setup, asset preparation, shader warmup, and the first frame. The bridge logs elapsed times for the current request without track metadata or lyric text. Release supplies no request token and emits no startup trace.
+
 `entry.ts` replaces the React host with an offline WKWebView bridge. `stageController.mjs` reuses same-style runtimes for song and lyric changes, rejects late async creations, and renders no repeated paused frames. It consumes native absolute time and interpolates up to one second between corrections. Pausing, visibility changes, style replacement and teardown stop the ticker. Reduce Motion uses static frames. Lumiere currently receives zero audio-band values: its lighting and typography work, but this port does not claim live audio analysis or beat-synchronous light.
 
 Balanced mode uses a 60 fps cap and bounded resolution; energy-saving or system Low Power Mode uses 30 fps, reduced render scale and Lumiere's lower graphics quality. The native atmosphere uses a separate 15 Hz canvas without an extra full-screen blur pass. These are cost limits, not measured device frame-rate guarantees.
