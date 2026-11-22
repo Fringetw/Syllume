@@ -51,10 +51,37 @@ enum NativePlaybackClockChecks {
         precondition(loading.observe(2, at: start + .seconds(14)) == 2)
         precondition(loading.bufferDeadline(since: start) == start + .seconds(26))
         print("PASS: native playback clock accepts coarse samples and buffer delivery while bounding unchanged media")
+        checkNativeBufferHardLimit()
         checkNativeMotionWatchdog()
         checkNativeSeekState()
         checkNativeSeekBufferAvailability()
         checkNativeEndOrdering()
+    }
+
+    private static func checkNativeBufferHardLimit() {
+        let start = ContinuousClock().now
+        var starting = NativePlaybackClock()
+        starting.rebase(to: 0)
+        for elapsed in stride(from: 6, through: 42, by: 6) {
+            let sample = start + .seconds(elapsed)
+            starting.observeBuffer(through: Double(elapsed), at: sample)
+            precondition(starting.observe(0, at: sample) == 0)
+            precondition(starting.bufferDeadline(since: start) == start + .seconds(min(34, elapsed + 7)),
+                         "Even continuous buffer delivery must stop extending startup at 34 seconds")
+        }
+
+        var started = NativePlaybackClock()
+        started.rebase(to: 0)
+        let stall = start + .seconds(2)
+        precondition(started.observe(2, at: stall) == 2)
+        for elapsed in stride(from: 10, through: 40, by: 10) {
+            let sample = stall + .seconds(elapsed)
+            started.observeBuffer(through: Double(elapsed), at: sample)
+            precondition(started.observe(2, at: sample) == 0)
+            precondition(started.bufferDeadline(since: stall) == stall + .seconds(min(34, elapsed + 12)),
+                         "New remote bytes must not mask an indefinite stall after playback has advanced")
+        }
+        print("PASS: native buffer deadline caps both initial and post-start stalls despite continuing delivery")
     }
 
     private static func checkNativeMotionWatchdog() {

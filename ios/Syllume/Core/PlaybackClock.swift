@@ -30,12 +30,13 @@ struct NativePlaybackClock {
     }
 
     func bufferDeadline(since start: ContinuousClock.Instant, waitingForBufferedPlayback: Bool = false) -> ContinuousClock.Instant {
+        let maximumWait = start + .seconds(34)
         let bufferActivity = lastBufferAdvance ?? start
         guard let lastAdvance else {
-            if waitingForBufferedPlayback { return start + .seconds(34) }
-            return max(start, bufferActivity) + .seconds(7)
+            if waitingForBufferedPlayback { return maximumWait }
+            return min(maximumWait, max(start, bufferActivity) + .seconds(7))
         }
-        return max(start, lastAdvance, bufferActivity) + .seconds(12)
+        return min(maximumWait, max(start, lastAdvance, bufferActivity) + .seconds(12))
     }
 
     mutating func observeBuffer(through end: Double, at now: ContinuousClock.Instant) {
