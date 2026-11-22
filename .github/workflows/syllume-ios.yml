@@ -467,7 +467,11 @@ jobs:
               > "$RUNNER_TEMP/SyllumeIOS26Evidence/Sonnet-stage.log" ||
               echo "::warning::Could not export the simulator stage checkpoints."
           fi
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26RecordedSonnet SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube SyllumePublicNativeHTTPS; do
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub \
+            SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26NativeClockStall \
+            SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26RecordedSonnet \
+            SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek \
+            SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
