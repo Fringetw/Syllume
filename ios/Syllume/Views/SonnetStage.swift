@@ -86,7 +86,7 @@ private struct SonnetWebView: UIViewRepresentable {
         if ready, ProcessInfo.processInfo.arguments.contains("--playback-probe") {
             state += " · " + context.coordinator.lyricFont
         }
-        if ready, context.coordinator.attemptedRecovery,
+        if ready, context.coordinator.didRetrySongCommand,
            ProcessInfo.processInfo.arguments.contains("--stage-initialization-fails-once") {
             state += " · 已重試"
         }
@@ -113,7 +113,8 @@ private struct SonnetWebView: UIViewRepresentable {
         private var loaded = false
         private var activeSong = ""
         private var request: UUID?
-        private(set) var attemptedRecovery = false
+        private(set) var didRetrySongCommand = false
+        private var attemptedReload = false
         private var initializationTimeout: Task<Void, Never>?
         private var loadStarted = Date()
         private var lastTime = 0.0
@@ -166,7 +167,8 @@ private struct SonnetWebView: UIViewRepresentable {
                 if request != nil { discardPage(in: view) }
                 cancelInitialization()
                 activeSong = songKey
-                attemptedRecovery = false
+                didRetrySongCommand = false
+                attemptedReload = false
                 failureDetail = ""
                 currentProbe?.fault = nil
                 transition(to: .loading)
@@ -196,6 +198,7 @@ private struct SonnetWebView: UIViewRepresentable {
         private func initializeSong(in view: WKWebView) {
             let request = UUID()
             self.request = request
+            let document = navigation
             let data = try? JSONEncoder().encode(parent.lines)
             let lines = data.flatMap { try? JSONSerialization.jsonObject(with: $0) } ?? []
             let song: [String: Any] = ["id": parent.songID, "title": parent.title, "artist": parent.artist,
@@ -210,9 +213,18 @@ private struct SonnetWebView: UIViewRepresentable {
                 script = "throw new Error('Injected stage initialization failure')"
             }
             #endif
-            view.callAsyncJavaScript(script, arguments: ["song": song], in: nil, in: .page) { [weak self] result in
-                guard let self, self.request == request, parent.rendering, activeSong == songKey else { return }
-                if case .failure = result { markFailure("無法啟動歌詞動畫。") }
+            stageCheckpoint("song-dispatch")
+            view.callAsyncJavaScript(script, arguments: ["song": song], in: nil, in: .page) { [weak self, weak view] result in
+                guard let self, let view, view === self.view, self.request == request, navigation === document,
+                      loaded, parent.rendering, activeSong == songKey, case .failure(let error) = result else { return }
+                stageCheckpoint("song-rejected \((error as NSError).code)")
+                // The document already has a verified bridge. Reissue the command without reloading it.
+                if !didRetrySongCommand {
+                    didRetrySongCommand = true
+                    currentProbe?.recoveries += 1
+                    stageCheckpoint("song-retry")
+                    initializeSong(in: view)
+                } else { markFailure("無法啟動歌詞動畫。", mayReload: false) }
             }
         }
 
@@ -226,7 +238,7 @@ private struct SonnetWebView: UIViewRepresentable {
         private func startInitialization() {
             guard initializationTimeout == nil else { return }
             loadStarted = Date()
-            // A reload shares the same visible deadline as the original attempt.
+            // Retries and reloads share the original visible deadline.
             initializationTimeout = Task { [weak self] in
                 do { try await Task.sleep(for: .seconds(15)) }
                 catch { return }
@@ -237,6 +249,13 @@ private struct SonnetWebView: UIViewRepresentable {
         private func cancelInitialization() {
             initializationTimeout?.cancel()
             initializationTimeout = nil
+        }
+
+        private func stageCheckpoint(_ event: String) {
+            #if DEBUG
+            let elapsed = Date().timeIntervalSince(loadStarted)
+            NSLog("[SyllumeStage] %@ %@ %.3fs", stageSource.rawValue, event, elapsed)
+            #endif
         }
 
         private func transition(to state: State) {
@@ -257,8 +276,10 @@ private struct SonnetWebView: UIViewRepresentable {
                   let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
             if type == "font" {
                 lyricFont = body["detail"] as? String ?? ""
+                stageCheckpoint(lyricFont == "GenSenRounded2JP-M" ? "font-bundled" : "font-fallback")
                 if let probe = currentProbe { probe.font = lyricFont }
             } else if type == "ready" {
+                stageCheckpoint("ready")
                 request = nil
                 cancelInitialization()
                 transition(to: .ready)
@@ -274,6 +295,7 @@ private struct SonnetWebView: UIViewRepresentable {
                 markFailure("找不到歌詞動畫資源。", mayReload: false)
                 return
             }
+            stageCheckpoint("navigation-start")
             navigation = view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
             if navigation == nil { markFailure("無法開啟歌詞動畫。", mayReload: false) }
         }
@@ -309,12 +331,14 @@ private struct SonnetWebView: UIViewRepresentable {
 
         private func markFailure(_ detail: String, code: DiagnosticCode = .engine, mayReload: Bool = true) {
             guard let view, parent.rendering, state != .failed, activeSong == songKey else { return }
+            stageCheckpoint(code == .timeout ? "timeout" : "failure")
             let problem = DiagnosticProblem(code: code)
             if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageError, source: stageSource, problem: problem) }
             discardPage(in: view)
-            if mayReload, !attemptedRecovery {
-                attemptedRecovery = true
+            if mayReload, !attemptedReload {
+                attemptedReload = true
                 currentProbe?.recoveries += 1
+                stageCheckpoint("navigation-reload")
                 transition(to: .loading)
                 startInitialization()
                 loadStage(in: view)
@@ -337,9 +361,11 @@ private struct SonnetWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
+            stageCheckpoint("navigation-finished")
             webView.evaluateJavaScript("typeof window.FoliaStage?.setSong") { [weak self] result, _ in
                 guard let self, navigation === self.navigation, parent.rendering, state == .loading else { return }
                 if result as? String == "function" {
+                    stageCheckpoint("bridge-ready")
                     loaded = true
                     update()
                 } else { markFailure("找不到歌詞動畫橋接。") }

@@ -19,6 +19,10 @@ on:
         description: Run the production Navidrome client against an isolated HTTPS server
         type: boolean
         default: false
+      startup_only:
+        description: Run local audio and animated lyrics startup recovery on the iOS 26 simulator
+        type: boolean
+        default: false
   push:
     paths:
       - 'ios/**'
@@ -34,7 +38,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ !inputs.public_youtube_only && !inputs.public_native_only && !inputs.navidrome_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ !inputs.public_youtube_only && !inputs.public_native_only && !inputs.navidrome_only && !inputs.startup_only && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-15-intel
     timeout-minutes: 105
     steps:
@@ -242,7 +246,7 @@ jobs:
           if-no-files-found: error
 
   ios-26-player:
-    if: ${{ (!inputs.navidrome_only || inputs.public_youtube_only || inputs.public_native_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ (!inputs.navidrome_only || inputs.public_youtube_only || inputs.public_native_only || inputs.startup_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-26
     timeout-minutes: 40
     steps:
@@ -262,7 +266,9 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/SyllumeIOS26Build" \
             CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Exercise progress, Mist and large text on iOS 26
-        if: ${{ !inputs.public_youtube_only && !inputs.public_native_only }}
+        if: ${{ inputs.startup_only || (!inputs.public_youtube_only && !inputs.public_native_only) }}
+        env:
+          STARTUP_ONLY: ${{ inputs.startup_only || false }}
         run: |
           simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
           derived_data="$RUNNER_TEMP/SyllumeIOS26Build"
@@ -280,13 +286,20 @@ jobs:
               -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building
           }
           failed=0
-          run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
-          run_player_check SyllumeIOS26Resources testMistRenderingResourceSample || failed=1
-          run_player_check SyllumeIOS26Scrub testMistStylePersistsAndProgressControlsSeekPausedAudio || failed=1
-          run_player_check SyllumeIOS26NativeEnd testNativeDelayedEndDoesNotReplaceSeekAndSeekingToEndRepeats || failed=1
+          if [ "$STARTUP_ONLY" = "true" ]; then
+            run_player_check SyllumeIOS26ColdSonnet testAnimatedPlayback || failed=1
+          else
+            run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
+            run_player_check SyllumeIOS26Resources testMistRenderingResourceSample || failed=1
+            run_player_check SyllumeIOS26Scrub testMistStylePersistsAndProgressControlsSeekPausedAudio || failed=1
+            run_player_check SyllumeIOS26NativeEnd testNativeDelayedEndDoesNotReplaceSeekAndSeekingToEndRepeats || failed=1
+          fi
           run_player_check SyllumeIOS26LocalStartup testNativeLocalStartupRecoversOnce || failed=1
           run_player_check SyllumeIOS26SonnetRetry testSonnetRetriesRejectedInitialization || failed=1
           run_player_check SyllumeIOS26SonnetTimeout testSonnetTimeoutEndsWithoutStoppingAudio || failed=1
+          if [ "$STARTUP_ONLY" = "true" ]; then
+            exit "$failed"
+          fi
           run_http_check() (
             name="$1"; test_name="$2"; mode="$3"
             fixture="$RUNNER_TEMP/$name"
@@ -398,7 +411,14 @@ jobs:
       - name: Export iOS 26 test evidence
         if: always()
         run: |
-          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube SyllumePublicNativeHTTPS; do
+          if [ -n "$FOLIA_IOS26_SIMULATOR_ID" ]; then
+            mkdir -p "$RUNNER_TEMP/SyllumeIOS26Evidence"
+            xcrun simctl spawn "$FOLIA_IOS26_SIMULATOR_ID" log show --last 35m --style compact \
+              --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
+              > "$RUNNER_TEMP/SyllumeIOS26Evidence/Sonnet-stage.log" ||
+              echo "::warning::Could not export the simulator stage checkpoints."
+          fi
+          for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -d "$result" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
