@@ -304,6 +304,96 @@ final class SyllumeUITests: XCTestCase {
         capture(app, name: "Syllume-native-retry-manual-seek")
     }
 
+    func testLiveNavidromeResumesAtConfirmedTimeAfterTimeout() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard let server = environment["SYLLUME_NAVIDROME_URL"],
+              let url = URLComponents(string: server), url.scheme == "https", url.host == "localhost",
+              url.port != nil, url.user == nil, url.password == nil,
+              let user = environment["SYLLUME_NAVIDROME_USER"], !user.isEmpty,
+              let password = environment["SYLLUME_NAVIDROME_PASSWORD"], !password.isEmpty else {
+            throw XCTSkip("Requires the isolated Navidrome HTTPS workflow and its simulator certificate.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--native-frozen-clock-fixture", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
+        app.launch()
+        app.segmentedControls.buttons["Navidrome"].tap()
+        app.buttons["設定伺服器"].tap()
+
+        let address = app.textFields["https://music.example.com"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15))
+        address.tap()
+        address.typeText(server)
+        let username = app.textFields["帳號"]
+        username.tap()
+        username.typeText(user)
+        let secret = app.secureTextFields["密碼"]
+        secret.tap()
+        secret.typeText(password)
+        app.buttons["測試並儲存"].tap()
+
+        let query = app.textFields["搜尋歌曲、歌手或專輯"]
+        XCTAssertTrue(query.waitForExistence(timeout: 25), "The app must connect through its normal HTTPS client.")
+        query.tap()
+        query.typeText("Syllume")
+        app.buttons["搜尋"].tap()
+        let song = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+            "潮汐之間", "Syllume Fixture")).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 25), "Navidrome must return the test recording.")
+        song.tap()
+
+        let clock = app.staticTexts["localTransportProbe"]
+        let trace = app.staticTexts["nativeTransportDebugProbe"]
+        let toggle = app.buttons["playerToggle"]
+        let hold = app.buttons["holdNativeClock"]
+        let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch
+        XCTAssertTrue(hold.waitForExistence(timeout: 20))
+        waitForDemoAudio(app)
+        toggle.tap()
+        _ = waitForPausedNativeClock(clock)
+        progress.coordinate(withNormalizedOffset: CGVector(dx: 0.33, dy: 0.5)).tap()
+        let positioned = expectation(for: NSPredicate { [self] _, _ in
+            (8...12).contains(probeTime(clock)) && (clock.value as? String)?.hasSuffix("|0.0") == true
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 25), .completed)
+        let interiorTime = probeTime(clock)
+        toggle.tap()
+        waitForDemoAudio(app, from: interiorTime)
+        hold.tap()
+
+        let timeout = app.staticTexts["等待音訊逾時。請點播放重試。"]
+        XCTAssertTrue(timeout.waitForExistence(timeout: 48), String(describing: trace.value))
+        let frozenTime = waitForPausedNativeClock(clock)
+        XCTAssertTrue((8...26).contains(frozenTime))
+        XCTAssertEqual(toggle.label, "播放")
+        XCTAssertFalse((trace.value as? String ?? "").contains("recovery-positioned"))
+        capture(app, name: "Syllume-Navidrome-confirmed-timeout")
+
+        toggle.tap()
+        let restored = expectation(for: NSPredicate(format: "value CONTAINS %@", "recovery-positioned"), evaluatedWith: trace)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 48), .completed, String(describing: trace.value))
+        let entries = (trace.value as? String ?? "").split(whereSeparator: \.isNewline)
+        let heldItem = entries.first { $0.contains(" clock-held ") }?.split(separator: " ").first { $0.hasPrefix("item=") }
+        let recovery = entries.first { $0.contains(" recovery-positioned ") }?.split(separator: " ") ?? []
+        let newItem = recovery.first { $0.hasPrefix("item=") }
+        XCTAssertNotNil(heldItem)
+        XCTAssertNotNil(newItem)
+        XCTAssertNotEqual(heldItem, newItem, "The retry must use a new AVPlayerItem.")
+        guard let field = recovery.first(where: { $0.hasPrefix("time=") }),
+              let restoredTime = Double(field.dropFirst("time=".count)) else {
+            XCTFail("AVPlayer did not confirm a retry position.")
+            return
+        }
+        XCTAssertEqual(restoredTime, frozenTime, accuracy: 0.35)
+        let moving = expectation(for: NSPredicate { [self] _, _ in
+            probeTime(clock) > restoredTime + 0.2 && (clock.value as? String)?.hasSuffix("|1.0") == true
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [moving], timeout: 25), .completed)
+        print("Navidrome resume evidence: frozen=\(frozenTime), restored=\(restoredTime), advanced=\(probeTime(clock))")
+        XCTAssertFalse(timeout.exists)
+        capture(app, name: "Syllume-Navidrome-confirmed-retry")
+    }
+
     func testSonnetRetriesRejectedInitialization() {
         continueAfterFailure = false
         let app = openDemoWithPlaybackFixture("--stage-initialization-fails-once")

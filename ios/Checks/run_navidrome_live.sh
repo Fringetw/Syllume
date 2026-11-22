@@ -17,12 +17,83 @@ esac
 umask 077
 work_dir="$(mktemp -d "${RUNNER_TEMP:?}/syllume-navidrome.XXXXXX")"
 server_pid=""
+simulator_id=""
+simulator_evidence=""
+export_simulator_evidence() {
+    [[ -n "$simulator_evidence" ]] || return 0
+    mkdir -p "$simulator_evidence" || return 0
+    local result="${RUNNER_TEMP:?}/SyllumeNavidromePlayback.xcresult"
+    if [[ -d "$result" ]]; then
+        xcrun xcresulttool get test-results summary --path "$result" \
+            >"$work_dir/test-summary.json" || true
+        xcrun xcresulttool export attachments --path "$result" \
+            --output-path "$work_dir/SimulatorAttachments" || true
+    fi
+    if [[ -n "$simulator_id" ]]; then
+        xcrun simctl spawn "$simulator_id" log show --last 20m --style compact \
+            --predicate 'process == "Syllume" AND eventMessage CONTAINS "Syllume native transport:"' \
+            >"$work_dir/native-transport.log" 2>/dev/null || true
+    fi
+    SYLLUME_REDACT_PASSWORD="${password:-}" python3 - "$work_dir" "$simulator_evidence" <<'PY' || true
+import json, os, pathlib, re, shutil, sys
+source, destination = map(pathlib.Path, sys.argv[1:])
+password = os.environ.get("SYLLUME_REDACT_PASSWORD", "")
+
+def sanitized(text):
+    if password:
+        text = text.replace(password, "<redacted>")
+    text = re.sub(r"(?im)^.*(?:TEST_RUNNER_)?SYLLUME_NAVIDROME_(?:URL|USER|PASSWORD).*$",
+                  "<Navidrome test environment redacted>", text)
+    text = re.sub(r"\badmin\b", "<redacted-user>", text)
+    return re.sub(r"(?i)([?&](?:u|t|s|password|token)=)[^&\s\"'<>]+", r"\1<redacted>", text)
+
+def sanitized_json(value):
+    if isinstance(value, str):
+        return sanitized(value)
+    if isinstance(value, list):
+        return [sanitized_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitized_json(item) for key, item in value.items()}
+    return value
+
+for name in ["test-summary.json", "xcodebuild.log", "server.log", "native-transport.log"]:
+    path = source / name
+    if path.is_file():
+        content = path.read_text(errors="replace")
+        if name.endswith(".json") and content:
+            content = json.dumps(sanitized_json(json.loads(content)), indent=2, ensure_ascii=False)
+        else:
+            content = sanitized(content)
+        (destination / name).write_text(content, encoding="utf-8")
+screenshots = {"Syllume-Navidrome-confirmed-timeout", "Syllume-Navidrome-confirmed-retry"}
+private_attachments = source / "SimulatorAttachments"
+for manifest in private_attachments.rglob("manifest.json"):
+    for test in json.loads(manifest.read_text()):
+        if not test.get("testIdentifier", "").endswith("testLiveNavidromeResumesAtConfirmedTimeAfterTimeout()"):
+            continue
+        for attachment in test.get("attachments", []):
+            name = attachment.get("suggestedHumanReadableName", "")
+            expected = next((item for item in screenshots if name.startswith(item + "_")), None)
+            filename = attachment.get("exportedFileName", "")
+            if expected and pathlib.Path(filename).name == filename and filename.lower().endswith(".png"):
+                image = manifest.parent / filename
+                if image.is_file():
+                    shutil.copyfile(image, destination / (expected + ".png"))
+PY
+}
 cleanup() {
+    local status=$?
+    export_simulator_evidence || true
+    if [[ -n "$simulator_id" ]]; then
+        xcrun simctl shutdown "$simulator_id" 2>/dev/null || true
+        xcrun simctl delete "$simulator_id" 2>/dev/null || true
+    fi
     if [[ -n "$server_pid" ]]; then
         kill "$server_pid" 2>/dev/null || true
         wait "$server_pid" 2>/dev/null || true
     fi
     rm -rf -- "$work_dir"
+    return "$status"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -128,3 +199,55 @@ echo "LIVE SERVICE: Navidrome v$version over HTTPS using Syllume's demo media on
 SYLLUME_NAVIDROME_URL="$server_url" SYLLUME_NAVIDROME_USER=admin SYLLUME_NAVIDROME_PASSWORD="$password" \
     SYLLUME_NAVIDROME_CA_FILE="$work_dir/ca.der" SYLLUME_NAVIDROME_EXACT_FILE="$exact" \
     "$work_dir/navidrome-live-probe"
+
+if [[ "${SYLLUME_NAVIDROME_SIMULATOR:-}" == 1 ]]; then
+    simulator_evidence="${RUNNER_TEMP:?}/SyllumeNavidromePlayback"
+    mkdir -p "$simulator_evidence"
+    echo "Preparing the production Navidrome playback path on a disposable iOS 26 simulator."
+    python3 "$ios_dir/Tools/prepare_lyric_font.py"
+    selection="$(xcrun simctl list devices available -j | python3 -c '
+import json, sys
+devices = json.load(sys.stdin)["devices"]
+for runtime, group in devices.items():
+    if "iOS-26" not in runtime:
+        continue
+    for device in group:
+        if device["name"].startswith("iPhone") and device.get("deviceTypeIdentifier"):
+            print(device["deviceTypeIdentifier"], runtime)
+            sys.exit(0)
+sys.exit("No available iOS 26 iPhone runtime and device type")
+')"
+    read -r device_type runtime <<<"$selection"
+    simulator_id="$(xcrun simctl create "Syllume Navidrome ${GITHUB_RUN_ID:?}-${GITHUB_RUN_ATTEMPT:?}" "$device_type" "$runtime")"
+    xcrun simctl boot "$simulator_id"
+    xcrun simctl bootstatus "$simulator_id" -b
+    xcrun simctl keychain "$simulator_id" add-root-cert "$work_dir/ca.pem"
+
+    echo "LIVE PLAYBACK: the app uses the trusted Navidrome HTTPS service and normal AVPlayer."
+    status=0
+    TEST_RUNNER_SYLLUME_NAVIDROME_URL="$server_url" TEST_RUNNER_SYLLUME_NAVIDROME_USER=admin \
+        TEST_RUNNER_SYLLUME_NAVIDROME_PASSWORD="$password" \
+        xcodebuild -project "$ios_dir/Syllume.xcodeproj" -scheme Syllume -configuration Debug \
+        -destination "platform=iOS Simulator,id=$simulator_id" \
+        -derivedDataPath "$work_dir/SimulatorBuild" \
+        -resultBundlePath "${RUNNER_TEMP:?}/SyllumeNavidromePlayback.xcresult" \
+        -only-testing:SyllumeUITests/SyllumeUITests/testLiveNavidromeResumesAtConfirmedTimeAfterTimeout \
+        -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test \
+        >"$work_dir/xcodebuild.log" 2>&1 || status=$?
+    if [[ "$status" == 0 ]]; then
+        xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/SyllumeNavidromePlayback.xcresult" \
+            >"$work_dir/test-summary.json"
+        if ! python3 - "$work_dir/test-summary.json" <<'PY'
+import json, sys
+with open(sys.argv[1]) as report:
+    result = json.load(report)
+sys.exit(0 if result.get("passedTests") == 1 and result.get("failedTests") == 0 and result.get("skippedTests") == 0 else 1)
+PY
+        then
+            echo "The Navidrome simulator test must run and pass without skipping."
+            status=1
+        fi
+    fi
+    echo "Navidrome simulator XCTest finished with status $status; evidence is exported on exit."
+    exit "$status"
+fi
