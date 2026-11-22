@@ -1,6 +1,22 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 44（`3caaeaa`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過，公開 HTTPS 播放也通過。iPhone 實機尚待驗證，IPA 可用 Sideloadly 重簽。 [build 44 CI](https://github.com/Fringetw/Syllume/actions/runs/44935718039) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
+獨立分支 `codex/syllume-player-experience`。側載候選為 0.4.0 build 50（`78010c2`），可在 Windows 用 Sideloadly 重簽。Apple Silicon 的 iOS 18.6 與 iOS 26 模擬器回歸全數通過，Intel iOS 18.6 仍有一項並行播放與動畫未通過。iPhone 實機尚待驗證。 [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14752195515) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45017940297) · [iOS 26 與 Intel iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45015475372)
+
+## build 50 的首幀與跨架構驗證
+
+`78010c2` 將選用的平行著色器預熱限制在 1.5 秒。逾時及取消會回收未完成的圖形資源，已連結的程式保留，剩餘程式交給 Pixi 在首幀連結。四項模擬 WebGL 回歸均通過，含逾時、取消、已完成的快取及未支援延伸的環境。macOS 核心與五項實際渲染程式的暫停交接測試也通過。 [核心檢查](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14750844179) · [常規 CI](https://github.com/Fringetw/Syllume/actions/runs/45015475372)
+
+iOS 26 常規回歸 11/11。WebKit 在預熱用滿 1,500 毫秒後交回 Pixi，第 6.059 秒畫出商籟首幀，第 6.072 秒就緒。霧盞三次四秒取樣的平均 App CPU 時間為 0.293 秒，平均實體記憶體峰值為 75,335.339 kB。iPhone 的 GPU、耗電、FPS 與行動網路流量待實機量測。 [iOS 26 原始測試、日誌與畫面](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14752451742) · [效能工作日誌](https://github.com/Fringetw/Syllume/actions/runs/45015475372/job/137186739997)
+
+Intel iOS 18.6 的錄影曲目在 2.302 秒完成橋接，7.603 秒開始輪詢預熱結果，8.034 秒交回 Pixi。第 22.302 秒仍無首幀回報，該案例未通過。Apple Silicon 的 iOS 18.6 使用同一份 App 原始碼，錄影曲目通過。商籟第一次在 7.472 秒就緒，繪光在 3.863 秒就緒，並驗證播放和暫停時鐘同步。 [Intel 首幀紀錄](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14752383286) · [Apple Silicon 首幀紀錄](https://github.com/Fringetw/Syllume/actions/runs/45017940297/artifacts/14752624622)
+
+Apple Silicon iOS 18.6 完整回歸 25/25，包含歌單 5/5、錄影曲目 1/1、主套件 18/18 和 iPhone SE 1/1。Intel iOS 18.6 為 24/25，只有可見影片同時搭配《JANE DOE》商籟的案例未通過，本機音訊搭配商籟冷啟仍通過。霧盞三次四秒平均 App CPU 時間和記憶體峰值分別為 Apple Silicon 的 0.655 秒和 63,583.232 kB，以及 Intel 的 1.024 秒和 53,522.432 kB。這些是不同 Runner 的取樣。 [Apple Silicon 測試與畫面](https://github.com/Fringetw/Syllume/actions/runs/45017940297/artifacts/14753745830) · [Intel 測試與畫面](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14753606834)
+
+同一份 App 原始碼在真實 Navidrome v0.64.2 服務通過 HTTPS、演出者與錄音版本配對。串流與完整下載均為 380,160 bytes，逐位元與正確錄音相符，完整解碼為 29.975 秒。錯誤帳密在搜尋與下載均回傳 Subsonic 40。公開 HTTPS 音源由 AVPlayer 暫停定位到 11.983 秒、續播到 13.934 秒，通過 1/1。《HELP!!》與 YouTube 示範影片在官方 IFrame 都回傳 150、停在 0:00，實際 YouTube 起播為 0/2。 [Navidrome 原始結果](https://github.com/Fringetw/Syllume/actions/runs/45020718228/artifacts/14753587518) · [公開 HTTPS 與 YouTube 原始結果](https://github.com/Fringetw/Syllume/actions/runs/45020718228/artifacts/14753768828)
+
+公開字幕端點取得 LRCLIB《JANE DOE》21 行、《Lemon》37 行同步歌詞，網易雲 42 行和 QQ 57 行翻譯。YouTube 譯製上傳與 YouTube Music 的字幕仍要求驗證。 [字幕端點原始結果](https://github.com/Fringetw/Syllume/actions/runs/45017940297/artifacts/14752254359)
+
+iPhone Release 使用 iPhoneOS 26.2 SDK 並支援 iOS 17 起的裝置。核對封裝完整性、未簽署狀態、Release 執行檔，以及內建歌詞資源與該提交相符。SHA-256 為 `B593F46A587E7FC9BCCDA1F6525AB2CC32E8BAFE3948E6F4208740A5BB858F13`。 [build 50 IPA](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14752195515)
 
 ## build 49 的橋接與著色器分段測量
 
