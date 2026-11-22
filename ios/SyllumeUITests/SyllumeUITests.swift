@@ -832,10 +832,17 @@ final class SyllumeUITests: XCTestCase {
         let trace = app.staticTexts["nativeTransportDebugProbe"]
         XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "測試 \(transport) 音源")).firstMatch
             .waitForExistence(timeout: 20))
+        if scheme == "https" {
+            // The public sample is only 30 seconds. Keep the play intent stable if XCTest
+            // takes long enough to cross the end between observing motion and tapping Pause.
+            app.buttons["循環佇列"].tap()
+        }
         waitForNativeStreamAdvance(clock, media: scheme, trace: trace)
 
         let toggle = app.buttons["playerToggle"]
-        if toggle.label == "暫停" { toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
+        if scheme == "https" || toggle.label == "暫停" {
+            toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
         let paused = expectation(for: NSPredicate(format: "value ENDSWITH %@", "|0.0|\(scheme)|none"), evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 15), .completed)
         let progress = app.descendants(matching: .any)["playbackProgress"].firstMatch

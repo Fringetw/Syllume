@@ -1,6 +1,21 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。側載候選為 0.4.0 build 52（`9a8b038`），可在 Windows 用 Sideloadly 重簽。Apple Silicon 的 iOS 18.6 與 iOS 26 模擬器回歸及公開 HTTPS 播放通過。Intel iOS 18.6 仍有並行播放與商籟動畫逾時。iPhone 實機尚待驗證。 [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14759912358) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45035913389) · [iOS 26 與 Intel iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45035888866)
+獨立分支 `codex/syllume-player-experience`。側載候選為 0.4.0 build 54（`a449159`），可在 Windows 用 Sideloadly 重簽。iPhone 尚待使用者側載與驗證。 [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14762779645)
+
+## build 54 的逾時續播與重新定位
+
+原生播放逾時會保留 AVPlayer 最後確認的位置。重試時，本機音檔須是相同檔案且屬性相符。已下載音檔仍走原有完整性檢查。直接選取的 Navidrome 曲目保留同一帳號及曲目 ID，重新取得串流網址。新播放項目須完成定位後才開始輸出音訊。若使用者在逾時後先定位，則採用同一播放項目確認的新位置。YouTube 官方播放器和跨音源切換保留各自的播放流程。 [播放修正](https://github.com/Fringetw/Syllume/commit/b1778abafb5a431308fde5d14bda6848624416c6) · [手動定位修正](https://github.com/Fringetw/Syllume/commit/a449159f1b7549454707adbb674de23a51b67f17)
+
+| 驗證層級 | 結果 |
+| --- | --- |
+| iOS 26 模擬器 | 12/12。使用 AVPlayer 真正播放內建音檔並注入時鐘停滯。確認逾時後仍維持暫停、手動重試的首筆定位在原位置 ±0.35 秒內，以及第二次逾時後手動定位會清除舊錯誤並從新位置續播。其餘測試包括暫停拖曳、切歌與循環、霧盞樣式記憶、字幕同步備援及 HTTP 停傳。 [測試、截圖與 HTTP 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14764371164) |
+| iOS 18.6 模擬器 | Intel 25/26，Apple Silicon 24/26。兩者的主要播放套件皆為 19/19。Intel 的《JANE DOE》商籟未就緒。Apple Silicon 的《JANE DOE》商籟收到首幀，《Lemon》繪光在導航後 18.199 秒逾時。另外一項 Apple Silicon 離線快取測試遇到 XCTest 終止 App 失敗。 [Intel](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14765950524) · [Apple Silicon](https://github.com/Fringetw/Syllume/actions/runs/45045169059/artifacts/14764399812) |
+| 核心測試 | macOS Swift 核心、40 項 JavaScript、14 項 Python、5 項商籟與繪光渲染交接測試皆通過。 [核心測試](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14763600903) · [編譯日誌](https://github.com/Fringetw/Syllume/actions/runs/45045168886/job/137278085415) |
+| 真實 Navidrome HTTPS | build 53 的正式 Swift 客戶端通過驗證、搜尋、錄音比對、下載解碼及錯誤帳密分類。串流與下載內容相符，380,160 bytes、29.975 秒。build 54 新增 iOS 模擬器直接用該伺服器播放的逾時續播測試，結果待確認。 [API 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45044889213/artifacts/14762744592) · [模擬器測試](https://github.com/Fringetw/Syllume/actions/runs/45080683460) |
+| 公開 HTTPS | build 53 通過。build 54 首輪確認 AVPlayer 已由 HTTPS 起播，但 XCTest 暫停未達預期。取樣在按鈕操作前看見 18.300 秒、操作後看見 1.401 秒，與測試操作跨過該 30 秒音檔片尾的情形一致。重跑結果待確認。 [build 53](https://github.com/Fringetw/Syllume/actions/runs/45044843532/artifacts/14763227909) · [build 54 初測](https://github.com/Fringetw/Syllume/actions/runs/45045171460/artifacts/14765085621) |
+| 模擬器資源 | iOS 26 的霧盞各取樣 4 秒，共 3 次。平均 App CPU 時間 0.563 秒，平均實體記憶體峰值 75,450 kB。iPhone 的 FPS、GPU、耗電與行動網路流量待驗。 [取樣日誌](https://github.com/Fringetw/Syllume/actions/runs/45045168886/job/137278085180) |
+
+IPA 已核對 ZIP、ARM64、最低 iOS 17、iPhoneOS 26.2 SDK、內建歌詞資源和未簽署狀態。SHA-256 為 `881378C5E8569E49D18C297C632E82F005BBFFC024C95D7BA02524D8D4879BB5`。實機續播、私人 OAuth、官方 YouTube 播放及日常用量待驗。 [build 54 IPA](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14762779645)
 
 ## build 52 的原生時鐘與串流等待
 
