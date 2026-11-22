@@ -157,7 +157,8 @@ private struct SonnetWebView: UIViewRepresentable {
             "program-start", "program-compiled", "pixi-import", "pixi-imported",
             "webgl-request", "webgl-created", "webgl-unavailable", "webgl-extensions-ready",
             "renderer-init", "renderer-initialized", "assets-start", "assets-ready", "scene-start",
-            "shader-link", "shader-linked", "first-frame"
+            "shader-link", "shader-extension", "shader-candidates", "shader-polling",
+            "shader-linked", "shader-deferred", "first-frame"
         ]
         private var lastClockProbe = ""
         private var clockRequest: UUID?

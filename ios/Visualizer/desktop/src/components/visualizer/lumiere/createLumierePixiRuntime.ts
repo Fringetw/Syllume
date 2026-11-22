@@ -206,9 +206,10 @@ export class LumierePixiRuntime {
         this.resizeToHost(true);
         this.renderFrame();
         checkpoint?.('shader-link');
-        await linkPixiPrograms(this.pixi, this.app.renderer, this.app.stage, 'Lumiere', this.options.signal);
+        const warmed = await linkPixiPrograms(this.pixi, this.app.renderer, this.app.stage, 'Lumiere',
+            this.options.signal, undefined, checkpoint);
         if (this.options.signal?.aborted) return;
-        checkpoint?.('shader-linked');
+        checkpoint?.(warmed ? 'shader-linked' : 'shader-deferred');
         this.options.host.appendChild(this.app.canvas);
         this.app.canvas.style.cssText = 'width:100%;height:100%;display:block';
         this.app.ticker.add(this.renderFrame);

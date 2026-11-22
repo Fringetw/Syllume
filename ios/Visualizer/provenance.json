@@ -154,12 +154,12 @@
   },
   "ios_patches": {
     "src/components/visualizer/sonnet/createSonnetPixiRuntime.ts": {
-      "reason": "iOS frame-rate cap, settle in-flight song handover on pause, and opt-in first-frame checkpoints",
-      "patched_sha256": "e7a7c5ffc3eb582ee5477431ffdd21f7a768d4526d45f073edf45f2ef6592af7"
+      "reason": "iOS frame-rate cap, settle in-flight handover on pause, and bounded first-frame warmup checkpoints",
+      "patched_sha256": "65b9a8bed04a6c6d1d19a7f925a1ada5eeeb6130eb04110f7ea40a96663334f3"
     },
     "src/components/visualizer/lumiere/createLumierePixiRuntime.ts": {
-      "reason": "iOS frame-rate cap, settle in-flight song handover on pause, and opt-in first-frame checkpoints",
-      "patched_sha256": "56c39c4858a570a5f0348e4e3d309416eb595a0b136e62bc851c0b5aee4f1169"
+      "reason": "iOS frame-rate cap, settle in-flight handover on pause, and bounded first-frame warmup checkpoints",
+      "patched_sha256": "2c3c8a8a809f44edc9ed8c5be3ced807463bdd1938b47c6f68e6802cf0ceccba"
     },
     "src/utils/lyrics/graphemeTiming.ts": {
       "reason": "Line-only lyrics retain every glyph with the shared line window instead of inventing word timing; real word and syllable timing is unchanged",
@@ -168,6 +168,10 @@
     "src/components/visualizer/pixi/pixiWebGLContext.ts": {
       "reason": "Opt-in iOS checkpoints for the WebGL context and extension setup",
       "patched_sha256": "d1298f719fb8e63b5b03bde0503687cf896b68442391653b6f66a66249fdf39e"
+    },
+    "src/components/visualizer/pixi/pixiProgramLinks.ts": {
+      "reason": "Bound optional shader warmup, release unfinished WebGL objects, and let Pixi link missing programs on first draw",
+      "patched_sha256": "00a74f44abc981545bb4258b2096a44f5e2674be86aa711c4d1252c99a55a79c"
     }
   }
 }

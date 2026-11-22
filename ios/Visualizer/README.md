@@ -6,6 +6,8 @@ The runtime patches allow the iOS host to cap the ticker at 60 or 30 fps. Both s
 
 The offline page signals when its bridge is installed. A navigation token identifies the current document in its messages and in the commands it receives, so queued work from a replaced document cannot update the current page. Debug iOS builds also supply a separate request token to time lyric program compilation, WebGL and Pixi setup, asset preparation, shader warmup, and the first frame. Elapsed times exclude track metadata and lyric text. Release emits no startup trace.
 
+Parallel shader warmup has a 1.5-second budget. Unfinished programs and shaders are released when the budget expires or initialization is cancelled. The first draw then uses Pixi's normal linker for any remaining programs.
+
 `entry.ts` replaces the React host with an offline WKWebView bridge. `stageController.mjs` reuses same-style runtimes for song and lyric changes, rejects late async creations, and renders no repeated paused frames. It consumes native absolute time and interpolates up to one second between corrections. Pausing, visibility changes, style replacement and teardown stop the ticker. Reduce Motion uses static frames. Lumiere currently receives zero audio-band values: its lighting and typography work, but this port does not claim live audio analysis or beat-synchronous light.
 
 Balanced mode uses a 60 fps cap and bounded resolution; energy-saving or system Low Power Mode uses 30 fps, reduced render scale and Lumiere's lower graphics quality. The native atmosphere uses a separate 15 Hz canvas without an extra full-screen blur pass. These are cost limits, not measured device frame-rate guarantees.

@@ -2,6 +2,14 @@
 
 獨立分支 `codex/syllume-player-experience`。目前的側載候選為 0.4.0 build 44（`3caaeaa`）。常規 macOS 核心檢查、iOS 模擬器回歸與裝置編譯全數通過，公開 HTTPS 播放也通過。iPhone 實機尚待驗證，IPA 可用 Sideloadly 重簽。 [build 44 CI](https://github.com/Fringetw/Syllume/actions/runs/44935718039) · [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/44935718039/artifacts/14719598309)
 
+## build 49 的橋接與著色器分段測量
+
+離線頁面主動回報橋接就緒，切換與重建時依導航識別碼比對訊息和命令。iOS 26 常規回歸 11/11，診斷成功量到頁面在 1.148 秒通知橋接就緒、5.416 秒達到商籟首幀。霧盞三次四秒平均 App CPU 時間為 0.403 秒，平均實體記憶體峰值為 75,176.896 kB。 [iOS 26 原始測試與畫面](https://github.com/Fringetw/Syllume/actions/runs/45012566953/artifacts/14750793072)
+
+iOS 18 的《JANE DOE》第 4.128 秒完成橋接，WebGL、字型、資產和場景準備也完成。第 8.930 秒進入著色器預熱，第 21.964 秒仍無預熱完成訊號。這次回歸未通過。 [原始首幀紀錄](https://github.com/Fringetw/Syllume/actions/runs/45012566953/artifacts/14750894926)
+
+`69a5ec1` 已產出未簽署的 0.4.0 build 49，最低 iOS 17。包內離線歌詞資源與該提交逐位元相符。IPA SHA-256 為 `16FC45A10190568A117755FCD48BA3DAD112B3EF4FF279EA716245368B217DBA`。 [build 49 IPA](https://github.com/Fringetw/Syllume/actions/runs/45012566953/artifacts/14750139726)
+
 ## build 48 的動畫交接與 WebKit 追查
 
 新增首幀分段紀錄後，iOS 18 的《JANE DOE》案例在第 13.682 秒完成導航，第 18.105 秒仍未收到 Swift 另行送出的橋接探測回覆。這次尚未進入渲染器。build 47 另有已載入字型後逾時的案例，當時未量到渲染器內部階段。 [iOS 18 原始紀錄](https://github.com/Fringetw/Syllume/actions/runs/45010063984/artifacts/14750166763)

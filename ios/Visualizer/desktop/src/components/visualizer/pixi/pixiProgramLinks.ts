@@ -20,6 +20,8 @@ const COMPLETION_STATUS_KHR = 0x91b1;
 const LOOK_EVERY_MS = 10;
 /** How long one look may hand linked programs to the renderer: each takes a few answers from the GPU process. */
 const HAND_OVER_MS = 4;
+/** The optional warmup must leave time to draw the first frame. */
+const WARMUP_BUDGET_MS = 1500;
 /** The attributes a vertex source declares (GLSL ES 1.00 `attribute`, 3.00 `in`). */
 const DECLARED_ATTRIBUTE = /^[ \t]*(?:attribute|in)[ \t]+(?:(?:lowp|mediump|highp)[ \t]+)?\w+[ \t]+(\w+)[ \t]*;/gm;
 
@@ -125,10 +127,8 @@ const handOver = (pixi: PixiModule, gl: WebGL2RenderingContext, { program, webGL
 };
 
 /**
- * Links every program the next render of `stage` is seen to draw with that `renderer` has not linked
- * yet, and resolves once each is in the renderer's cache: that render then links none of them. The
- * page runs meanwhile. Resolves at once where the GPU cannot link without being waited for, and
- * early when `signal` is aborted (the caller drops the renderer then).
+ * Warms the programs that the next draw of `stage` is expected to use. An unsupported extension
+ * or an expired budget leaves the unfinished programs for Pixi's normal first-draw linker.
  */
 export const linkPixiPrograms = async (
     pixi: PixiModule,
@@ -136,24 +136,32 @@ export const linkPixiPrograms = async (
     stage: Container,
     label: string,
     signal?: AbortSignal,
-): Promise<void> => {
+    maxWaitMs = WARMUP_BUDGET_MS,
+    startupCheckpoint?: (phase: string) => void,
+): Promise<boolean> => {
     // The shader system's cache is reached into, and generateProgram's steps are repeated: both as
     // this version has them.
-    if ((pixi.VERSION as string) !== '8.21.0' || renderer.type !== pixi.RendererType.WEBGL) return;
+    if (signal?.aborted || (pixi.VERSION as string) !== '8.21.0' || renderer.type !== pixi.RendererType.WEBGL) return false;
     const webgl = renderer as WebGLRenderer;
     const gl = webgl.gl;
+    startupCheckpoint?.('shader-extension');
     if (!gl.getExtension('KHR_parallel_shader_compile')) {
         console.info(`[PixiPrograms] ${label}: no parallel shader linking here; programs link on first draw`);
-        return;
+        return false;
     }
     const linked = (webgl.shader as unknown as ShaderSystemInternals)._programDataHash;
     const started = performance.now();
-    const pending: PendingLink[] = programsOf(pixi, webgl, stage)
-        .filter(program => !linked[program._key] && !program.transformFeedbackVaryings)
-        .map((program) => {
+    const deadline = started + maxWaitMs;
+    const pending: PendingLink[] = [];
+    try {
+        startupCheckpoint?.('shader-candidates');
+        for (const program of programsOf(pixi, webgl, stage)) {
+            if (linked[program._key] || program.transformFeedbackVaryings) continue;
+            if (performance.now() >= deadline) return false;
             const vertex = pixi.compileShader(gl, gl.VERTEX_SHADER, program.vertex ?? '');
             const fragment = pixi.compileShader(gl, gl.FRAGMENT_SHADER, program.fragment ?? '');
             const webGLProgram = gl.createProgram();
+            pending.push({ program, webGLProgram, vertex, fragment, rebound: false });
             gl.attachShader(webGLProgram, vertex);
             gl.attachShader(webGLProgram, fragment);
             if (bindsAttributesInNameOrder(program)) {
@@ -161,24 +169,34 @@ export const linkPixiPrograms = async (
                 declared.forEach((name, location) => gl.bindAttribLocation(webGLProgram, location, name));
             }
             gl.linkProgram(webGLProgram);
-            return { program, webGLProgram, vertex, fragment, rebound: false };
-        });
-    const count = pending.length;
-    while (pending.length > 0) {
-        await new Promise((resolve) => { window.setTimeout(resolve, LOOK_EVERY_MS); });
-        if (signal?.aborted || gl.isContextLost()) return;
-        // They finish about in the order they were handed in: only the first unfinished one is asked about.
-        const look = performance.now();
-        while (pending.length > 0 && performance.now() - look < HAND_OVER_MS) {
-            const next = pending[0];
-            if (!gl.getProgramParameter(next.webGLProgram, COMPLETION_STATUS_KHR)) break;
-            pending.shift();
-            if (!next.rebound && bindsAttributesInNameOrder(next.program) && !attributesInNameOrder(gl, next.webGLProgram)) {
-                pending.push({ ...next, rebound: true });
-                continue;
+        }
+        const count = pending.length;
+        if (count > 0) startupCheckpoint?.('shader-polling');
+        while (pending.length > 0) {
+            await new Promise((resolve) => { window.setTimeout(resolve, LOOK_EVERY_MS); });
+            if (signal?.aborted || gl.isContextLost() || performance.now() >= deadline) return false;
+            // Links normally finish in submission order, so only the first unfinished one is checked.
+            const look = performance.now();
+            while (pending.length > 0 && performance.now() - look < HAND_OVER_MS) {
+                const next = pending[0];
+                if (!gl.getProgramParameter(next.webGLProgram, COMPLETION_STATUS_KHR)) break;
+                if (!next.rebound && bindsAttributesInNameOrder(next.program) && !attributesInNameOrder(gl, next.webGLProgram)) {
+                    next.rebound = true;
+                    pending.shift();
+                    pending.push(next);
+                    continue;
+                }
+                linked[next.program._key] = handOver(pixi, gl, next);
+                pending.shift();
             }
-            linked[next.program._key] = handOver(pixi, gl, next);
+        }
+        if (count > 0) console.info(`[PixiPrograms] ${label}: ${count} programs linked side by side in ${Math.round(performance.now() - started)} ms`);
+        return true;
+    } finally {
+        for (const { webGLProgram, vertex, fragment } of pending) {
+            gl.deleteProgram(webGLProgram);
+            gl.deleteShader(vertex);
+            gl.deleteShader(fragment);
         }
     }
-    if (count > 0) console.info(`[PixiPrograms] ${label}: ${count} programs linked side by side in ${Math.round(performance.now() - started)} ms`);
 };
