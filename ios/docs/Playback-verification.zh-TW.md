@@ -1,6 +1,22 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。側載候選為 0.4.0 build 50（`78010c2`），可在 Windows 用 Sideloadly 重簽。Apple Silicon 的 iOS 18.6 與 iOS 26 模擬器回歸全數通過，Intel iOS 18.6 仍有一項並行播放與動畫未通過。iPhone 實機尚待驗證。 [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45015475372/artifacts/14752195515) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45017940297) · [iOS 26 與 Intel iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45015475372)
+獨立分支 `codex/syllume-player-experience`。側載候選為 0.4.0 build 52（`9a8b038`），可在 Windows 用 Sideloadly 重簽。Apple Silicon 的 iOS 18.6 與 iOS 26 模擬器回歸及公開 HTTPS 播放通過。Intel iOS 18.6 仍有並行播放與商籟動畫逾時。iPhone 實機尚待驗證。 [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14759912358) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45035913389) · [iOS 26 與 Intel iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45035888866)
+
+## build 52 的原生時鐘與串流等待
+
+原生媒體在已經起播後，若引擎持續回報播放中但時鐘三秒未前進，會直接重讀時鐘並進入緩衝。暫停、定位或換曲會取消舊的檢查。串流仍可因新資料獲得寬限，單次緩衝最多 34 秒。Swift 核心測試涵蓋無效時鐘樣本、遲到但有前進的樣本、重新開始檢查，以及起播前與起播後持續收資料的絕對期限。 [macOS 核心輸出](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14760121237)
+
+iOS 26 的 12 項常規回歸全數通過。在停滯案例中，先驗證內建音檔的 AVPlayer 時間前進，再注入「播放中但時鐘停止」回報，確認逾時後可手動重試並再次起播。套件另通過限速串流、停傳時的定位恢復、本機冷啟動、片尾切換及霧盞樣式記憶。這個停滯案例由測試注入，iPhone 的自然停滯待實機驗證。 [iOS 26 工作日誌](https://github.com/Fringetw/Syllume/actions/runs/45035888866/job/137249441753) · [常規回歸產物](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14760233849)
+
+Apple Silicon 的 iOS 18.6 完整回歸 26/26，含歌單 5 項、錄影曲目 1 項、主套件 19 項及 iPhone SE 1 項。iOS 26 獨立起播回歸 7/7，所用 App 原始碼與 IPA 相同。該次工作補匯出了停滯測試摘要與截圖。 [iOS 18.6 ARM 回歸](https://github.com/Fringetw/Syllume/actions/runs/45035913389/artifacts/14761976042) · [iOS 26 停滯及重試證據](https://github.com/Fringetw/Syllume/actions/runs/45038646129/artifacts/14761896478)
+
+Intel 的 iOS 18.6 完整回歸 25/26，原生時鐘停滯與重試通過。唯一失敗仍是《JANE DOE》同時呈現影片和商籟。第 23.741 秒交回 Pixi，第 28.148 秒仍無首幀回報。 [Intel 回歸](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14762597649) · [Intel 首幀紀錄](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14761500019)
+
+使用公開 HTTPS 的同一段音檔，iOS 26 的 AVPlayer 確認暫停定位到 11.983 秒並續播至 14.006 秒，通過 1/1。最近一次官方 YouTube 實播仍是 build 50，當時兩支測試影片都回傳 150。 [build 52 公開 HTTPS](https://github.com/Fringetw/Syllume/actions/runs/45035946231/artifacts/14760851755) · [build 50 官方 YouTube 測試](https://github.com/Fringetw/Syllume/actions/runs/45020718228/artifacts/14753768828)
+
+iOS 26 的霧盞三次四秒取樣平均 App CPU 時間為 1.164 秒，三次分別為 1.726、1.167 和 0.597 秒，平均實體記憶體峰值約 75.0 MB。取樣跨 Runner 且有波動，實機 GPU、FPS、耗電及流量待驗。 [XCTest 效能輸出](https://github.com/Fringetw/Syllume/actions/runs/45035888866/job/137249441753)
+
+iPhone Release 為 0.4.0 build 52（`9a8b038`），使用 iPhoneOS 26.2 SDK，最低 iOS 17。已核對 ARM64、封裝、未簽署狀態與內建歌詞資源，SHA-256 為 `BB97FEE4FD94622A3EB9079BB241B08EF705B841AB1DCD614E65166D132DECA0`。 [build 52 IPA](https://github.com/Fringetw/Syllume/actions/runs/45035888866/artifacts/14759912358)
 
 ## build 50 的首幀與跨架構驗證
 
