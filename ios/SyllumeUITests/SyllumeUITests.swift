@@ -188,12 +188,13 @@ final class SyllumeUITests: XCTestCase {
                   let rate = Double(fields[1]) else { return nil }
             return (time, rate)
         }
-        func firstTraceTime(_ event: String) -> Double? {
+        func firstTraceSample(_ event: String, after previousUptime: Double = 0) -> (uptime: Double, time: Double)? {
             for line in (trace.value as? String ?? "").split(whereSeparator: \.isNewline) {
                 let fields = line.split(separator: " ")
-                guard fields.count > 1, fields[1] == event else { continue }
+                guard fields.count > 1, fields[1] == event,
+                      let uptime = Double(fields[0]), uptime > previousUptime else { continue }
                 if let time = fields.first(where: { $0.hasPrefix("time=") }),
-                   let seconds = Double(time.dropFirst("time=".count)), seconds.isFinite { return seconds }
+                   let seconds = Double(time.dropFirst("time=".count)), seconds.isFinite { return (uptime, seconds) }
             }
             return nil
         }
@@ -237,27 +238,70 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(toggle.label, "播放")
         XCTAssertEqual(mediaSample()?.rate, 0)
         XCTAssertEqual(probeTime(clock), frozenTime, accuracy: 0.15)
-        XCTAssertNil(firstTraceTime("recovery-positioned"), "The player must wait for explicit retry.")
+        XCTAssertNil(firstTraceSample("recovery-positioned"), "The player must wait for explicit retry.")
         toggle.tap()
 
-        let restored = expectation(for: NSPredicate { _, _ in firstTraceTime("recovery-positioned") != nil },
+        let restored = expectation(for: NSPredicate { _, _ in firstTraceSample("recovery-positioned") != nil },
                                    evaluatedWith: trace)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 30), .completed,
                        "Retry must confirm its first AVPlayer position. \(String(describing: trace.value))")
-        guard let restoredTime = firstTraceTime("recovery-positioned") else {
+        guard let recovery = firstTraceSample("recovery-positioned") else {
             XCTFail("The confirmed recovery sample was no longer available.")
             return
         }
-        XCTAssertEqual(restoredTime, frozenTime, accuracy: 0.35,
+        XCTAssertEqual(recovery.time, frozenTime, accuracy: 0.35,
                        "Retry must start near the last confirmed sample instead of replaying from zero.")
         let advanced = expectation(for: NSPredicate { _, _ in
             guard let sample = mediaSample() else { return false }
-            return sample.rate > 0 && sample.time > restoredTime + 0.2
+            return sample.rate > 0 && sample.time > recovery.time + 0.2
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [advanced], timeout: 20), .completed,
                        "The actual media clock must advance after recovery.")
         XCTAssertFalse(error.exists)
         capture(app, name: "Syllume-frozen-native-clock-retry")
+
+        hold.tap()
+        let secondTimeout = expectation(for: NSPredicate { _, _ in
+            firstTraceSample("buffer-timeout", after: recovery.uptime) != nil
+        }, evaluatedWith: trace)
+        XCTAssertEqual(XCTWaiter.wait(for: [secondTimeout], timeout: 35), .completed,
+                       "The recovered item must reach another timeout. \(String(describing: trace.value))")
+        XCTAssertTrue(error.waitForExistence(timeout: 12))
+        let secondFrozenTime = waitForPausedNativeClock(clock)
+
+        // Pick a new interior time at least several seconds away from the second stall.
+        let fraction = secondFrozenTime < 12 ? 0.65 : 0.12
+        let target = fraction * 30
+        progress.coordinate(withNormalizedOffset: CGVector(dx: fraction, dy: 0.5)).tap()
+        var newPosition: Double?
+        let manuallyPositioned = expectation(for: NSPredicate { _, _ in
+            guard let sample = mediaSample(), sample.rate == 0, abs(sample.time - target) < 1.5 else { return false }
+            newPosition = sample.time
+            return true
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [manuallyPositioned], timeout: 20), .completed,
+                       "The manual seek must reach the alternate position while AVPlayer is paused.")
+        guard let newPosition else { return }
+        XCTAssertGreaterThan(abs(newPosition - secondFrozenTime), 5)
+        XCTAssertTrue(error.waitForNonExistence(timeout: 15), "A successful manual seek must clear the old timeout.")
+        XCTAssertEqual(mediaSample()?.rate, 0)
+        XCTAssertEqual(probeTime(clock), newPosition, accuracy: 0.15)
+
+        toggle.tap()
+        var firstMotion: Double?
+        let resumedFromManualSeek = expectation(for: NSPredicate { _, _ in
+            guard let sample = mediaSample(), sample.rate > 0, abs(sample.time - newPosition) > 0.2 else { return false }
+            firstMotion = sample.time
+            return true
+        }, evaluatedWith: clock)
+        XCTAssertEqual(XCTWaiter.wait(for: [resumedFromManualSeek], timeout: 20), .completed,
+                       "AVPlayer must move after pressing Play from the manually selected position.")
+        guard let firstMotion else { return }
+        XCTAssertTrue((newPosition...(newPosition + 5)).contains(firstMotion),
+                      "The first moving sample was \(firstMotion), expected close to the new position \(newPosition).")
+        XCTAssertNil(firstTraceSample("recovery-positioned", after: recovery.uptime),
+                     "Play must not restore the obsolete pre-seek bookmark.")
+        capture(app, name: "Syllume-native-retry-manual-seek")
     }
 
     func testSonnetRetriesRejectedInitialization() {

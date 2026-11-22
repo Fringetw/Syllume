@@ -346,7 +346,8 @@ final class PlaybackModel {
             return
         }
         if let index, let nativeRetryPoint, !wantsPlayback {
-            load(index, recovering: nativeRetryPoint)
+            if seeking { startCurrentItem() }
+            else { load(index, recovering: nativeRetryPoint) }
             return
         }
         if let track = current, track.source == .catalogue, error == nil,
@@ -367,7 +368,7 @@ final class PlaybackModel {
 
     private func startCurrentItem() {
         guard let item = player.currentItem, item.status != .failed else { return }
-        if !nativeRestoring, duration > 0, position >= duration - 0.15 { seek(to: 0) }
+        if !seeking, !nativeRestoring, duration > 0, position >= duration - 0.15 { seek(to: 0) }
         do {
             let session = AVAudioSession.sharedInstance()
             try session.setCategory(.playback, mode: .default)
@@ -377,7 +378,7 @@ final class PlaybackModel {
             wantsPlayback = true
             if nativeRestoring {
                 restoreNativePositionWhenReady(item)
-            } else if nativeSeekPreroll == nil {
+            } else if nativeSeekPreroll == nil, !(seeking && nativeRetryPoint != nil) {
                 #if DEBUG
                 if stallFirstLocalStart, (item.asset as? AVURLAsset)?.url.isFileURL == true {
                     stallFirstLocalStart = false
@@ -487,15 +488,14 @@ final class PlaybackModel {
         guard let item = player.currentItem, time.isFinite else { return }
         let target = duration > 0 ? min(duration, max(0, time)) : max(0, time)
         DiagnosticsEvents.shared.record(.seek)
-        let replacingRecovery = nativeRestoring
         nativeRestoring = false
-        nativeRetryPoint = nil
-        seekNativeItem(item, to: target, restarting: replacingRecovery)
+        seekNativeItem(item, to: target, restarting: nativeRetryPoint != nil)
     }
 
     private func seekNativeItem(_ item: AVPlayerItem, to target: Double, restarting: Bool = false) {
         let clock = ContinuousClock()
-        let request = nativeSeek.begin(from: nativeRestoring ? position : player.currentTime().seconds, at: clock.now)
+        let confirmedPosition = nativeRetryPoint?.position ?? player.currentTime().seconds
+        let request = nativeSeek.begin(from: confirmedPosition, at: clock.now)
         let itemID = ObjectIdentifier(item)
         nativeSeekBufferObservation?.invalidate(); nativeSeekBufferObservation = nil
         nativeSeekPreroll = nil
@@ -598,6 +598,15 @@ final class PlaybackModel {
         seekTimeout?.cancel(); seekTimeout = nil
         seeking = false
         guard landed else { nativeSeekFailed(item, request: completed, timedOut: false); return }
+        if !restored, nativeRetryPoint != nil {
+            // An explicit seek has now confirmed a new position on this item.
+            nativeRetryPoint = nil
+            if diagnosticPlaybackProblem?.code == .timeout {
+                diagnosticPlaybackProblem = nil
+                diagnosticPlaybackDetails = nil
+                error = nil
+            }
+        }
         if actual.isFinite {
             position = max(0, actual)
             nativeClock.rebase(to: position)
@@ -631,8 +640,7 @@ final class PlaybackModel {
         item.cancelPendingSeeks()
         player.pause()
         let actual = player.currentTime().seconds
-        position = nativeRestoring ? request.previousPosition :
-            (actual.isFinite && actual >= 0 ? actual : request.previousPosition)
+        position = nativeRetryPoint?.position ?? (actual.isFinite && actual >= 0 ? actual : request.previousPosition)
         nativeClock.rebase(to: position)
         let problem = DiagnosticProblem(code: timedOut ? .timeout : .timeline, nativeCode: -5)
         fail(timedOut ? "音訊定位逾時。可重新選擇進度或重試播放。" : "音訊定位未完成。可重新選擇進度或重試播放。",
