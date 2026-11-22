@@ -51,9 +51,38 @@ enum NativePlaybackClockChecks {
         precondition(loading.observe(2, at: start + .seconds(14)) == 2)
         precondition(loading.bufferDeadline(since: start) == start + .seconds(26))
         print("PASS: native playback clock accepts coarse samples and buffer delivery while bounding unchanged media")
+        checkNativeMotionWatchdog()
         checkNativeSeekState()
         checkNativeSeekBufferAvailability()
         checkNativeEndOrdering()
+    }
+
+    private static func checkNativeMotionWatchdog() {
+        let start = ContinuousClock().now
+        var clock = NativePlaybackClock()
+        clock.rebase(to: 0)
+        precondition(clock.motionWatchdogDeadline(since: start) == start + .seconds(3))
+
+        let advanced = start + .seconds(2)
+        precondition(clock.observe(2, at: advanced) == 2)
+        let stale = start + .seconds(4)
+        precondition(clock.observe(2, at: stale) == 0)
+        precondition(clock.observe(.infinity, at: stale) == 0)
+        clock.observeBuffer(through: 30, at: stale)
+        precondition(clock.motionWatchdogDeadline(since: start) == advanced + .seconds(3),
+                     "Unchanged or invalid samples and new buffer bytes cannot substitute for media motion")
+
+        let delayed = start + .seconds(8)
+        precondition(clock.observe(8, at: delayed) == 6)
+        precondition(clock.motionWatchdogDeadline(since: start) == delayed + .seconds(3),
+                     "A delayed callback that finds current media motion must renew the deadline")
+
+        let restart = start + .seconds(60)
+        clock.rebase(to: 90)
+        precondition(clock.observe(90, at: restart) == 0)
+        precondition(clock.motionWatchdogDeadline(since: restart) == restart + .seconds(3),
+                     "Resuming after pause or seek starts a fresh watchdog without treating the seek as motion")
+        print("PASS: native motion watchdog requires advancing media and resets its window after a pause or seek")
     }
 
     private static func checkNativeSeekState() {

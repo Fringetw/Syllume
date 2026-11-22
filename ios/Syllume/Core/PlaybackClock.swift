@@ -25,6 +25,10 @@ struct NativePlaybackClock {
         return advance
     }
 
+    func motionWatchdogDeadline(since start: ContinuousClock.Instant) -> ContinuousClock.Instant {
+        max(start, lastAdvance ?? start) + .seconds(3)
+    }
+
     func bufferDeadline(since start: ContinuousClock.Instant, waitingForBufferedPlayback: Bool = false) -> ContinuousClock.Instant {
         let bufferActivity = lastBufferAdvance ?? start
         guard let lastAdvance else {

@@ -298,6 +298,12 @@ struct NowPlayingScreen: View {
             .font(.caption2)
             .buttonStyle(.bordered)
         }
+        if ProcessInfo.processInfo.arguments.contains("--native-frozen-clock-fixture") {
+            Button("模擬播放時鐘停住") { player.holdNativeClockForFixture() }
+                .font(.caption2)
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("holdNativeClock")
+        }
         if ProcessInfo.processInfo.arguments.contains("--syllume-recording-regression") ||
             ProcessInfo.processInfo.arguments.contains("--youtube-unavailable-audio-fixture") {
             Text("鎖定畫面資訊檢查").font(.system(size: 1)).frame(height: 1)
@@ -450,7 +456,8 @@ private struct LocalTransportProbe: View {
                 .accessibilityIdentifier("spotifyHandoffProbe").accessibilityValue(player.handoffFixtureProbe)
         }
         if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") ||
-            ProcessInfo.processInfo.arguments.contains("--native-local-start-fixture") {
+            ProcessInfo.processInfo.arguments.contains("--native-local-start-fixture") ||
+            ProcessInfo.processInfo.arguments.contains("--native-frozen-clock-fixture") {
             Text("原生串流取樣").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("nativeTransportDebugProbe")
                 .accessibilityValue(player.nativeTransportDebugProbe)

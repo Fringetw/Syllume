@@ -341,6 +341,7 @@ jobs:
             run_player_check SyllumeIOS26NativeEnd testNativeDelayedEndDoesNotReplaceSeekAndSeekingToEndRepeats || failed=1
           fi
           run_player_check SyllumeIOS26LocalStartup testNativeLocalStartupRecoversOnce || failed=1
+          run_player_check SyllumeIOS26NativeClockStall testNativeFrozenClockStopsPlayingAndCanRetry || failed=1
           run_player_check SyllumeIOS26SonnetRetry testSonnetRetriesRejectedInitialization || failed=1
           run_player_check SyllumeIOS26SonnetTimeout testSonnetTimeoutEndsWithoutStoppingAudio || failed=1
           if [ "$STARTUP_ONLY" = "true" ]; then

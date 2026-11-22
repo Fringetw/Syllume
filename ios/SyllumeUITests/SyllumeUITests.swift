@@ -173,6 +173,35 @@ final class SyllumeUITests: XCTestCase {
         capture(app, name: "Syllume-local-start-recovered")
     }
 
+    func testNativeFrozenClockStopsPlayingAndCanRetry() {
+        continueAfterFailure = false
+        let app = openDemoWithPlaybackFixture("--native-frozen-clock-fixture")
+        app.buttons["循環佇列"].tap()
+        waitForDemoAudio(app)
+
+        let hold = app.buttons["holdNativeClock"]
+        XCTAssertTrue(hold.waitForExistence(timeout: 10))
+        hold.tap()
+        let trace = app.staticTexts["nativeTransportDebugProbe"]
+        let stalled = expectation(for: NSPredicate(format: "value CONTAINS %@ AND value CONTAINS %@",
+            "clock-held", "clock-stale"), evaluatedWith: trace)
+        XCTAssertEqual(XCTWaiter.wait(for: [stalled], timeout: 20), .completed,
+                       "A playing transport with a frozen clock must enter buffering. \(String(describing: trace.value))")
+
+        let error = app.staticTexts["等待音訊逾時。請點播放重試。"]
+        XCTAssertTrue(error.waitForExistence(timeout: 30), String(describing: trace.value))
+        XCTAssertTrue((trace.value as? String)?.contains("buffer-timeout") == true)
+        XCTAssertFalse((trace.value as? String)?.contains("local-start-retry") == true,
+                       "An item that already played must not use the initial-start retry.")
+        capture(app, name: "Syllume-frozen-native-clock-timeout")
+
+        let frozenTime = probeTime(app.staticTexts["localTransportProbe"])
+        app.buttons["playerToggle"].tap()
+        waitForDemoAudio(app, from: frozenTime)
+        XCTAssertFalse(error.exists)
+        capture(app, name: "Syllume-frozen-native-clock-retry")
+    }
+
     func testSonnetRetriesRejectedInitialization() {
         continueAfterFailure = false
         let app = openDemoWithPlaybackFixture("--stage-initialization-fails-once")

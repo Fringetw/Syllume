@@ -52,7 +52,13 @@ final class PlaybackModel {
     var isSeeking: Bool { embeddedVideo?.isSeeking ?? seeking }
     var transportLabel: String { isBuffering && wantsPlayback ? "取消載入" : wantsPlayback ? "暫停" : "播放" }
     var transportIcon: String { isBuffering && wantsPlayback ? "stop.fill" : wantsPlayback ? "pause.fill" : "play.fill" }
-    private var nativeTransportRunning: Bool { wantsPlayback && player.currentItem != nil && player.timeControlStatus == .playing }
+    private var nativeTransportRunning: Bool {
+        guard wantsPlayback, player.currentItem != nil else { return false }
+        #if DEBUG
+        if holdsNativeClockForFixture { return true }
+        #endif
+        return player.timeControlStatus == .playing
+    }
 
     var diagnosticTransportMetrics: [String: Double] {
         guard current != nil else { return [:] }
@@ -108,6 +114,15 @@ final class PlaybackModel {
     private var handoffFixtureSequence = 0
     private var handoffFixtureAdvance = 0.0
     private var stallFirstLocalStart = ProcessInfo.processInfo.arguments.contains("--native-local-start-fixture")
+    @ObservationIgnored private var holdsNativeClockForFixture = false
+
+    func holdNativeClockForFixture() {
+        guard ProcessInfo.processInfo.arguments.contains("--native-frozen-clock-fixture"),
+              isPlaying, !seeking, !holdsNativeClockForFixture, let item = player.currentItem else { return }
+        holdsNativeClockForFixture = true
+        player.pause()
+        recordNativeTransportTrace("clock-held", item: item)
+    }
 
     var handoffFixtureProbe: String {
         let advancing = isPlaying && handoffFixtureAdvance >= 0.2
@@ -207,6 +222,7 @@ final class PlaybackModel {
     private var seeking = false
     @ObservationIgnored private var resolveTask: Task<Void, Never>?
     @ObservationIgnored private var nativeBufferTimeout: Task<Void, Never>?
+    @ObservationIgnored private var nativeMotionWatchdog: Task<Void, Never>?
     @ObservationIgnored private var startupTimeout: Task<Void, Never>?
     @ObservationIgnored private var youtubeConnection: PlatformConnection?
     private var catalogueTarget: SyncedYouTubeSong?
@@ -366,6 +382,9 @@ final class PlaybackModel {
             return
         }
         if isPlaying { DiagnosticsEvents.shared.record(.playbackPaused) }
+        #if DEBUG
+        holdsNativeClockForFixture = false
+        #endif
         resumeAfterInterruption = false
         player.pause()
         wantsPlayback = false
@@ -454,6 +473,7 @@ final class PlaybackModel {
         player.cancelPendingPrerolls()
         seekTimeout?.cancel()
         nativeBufferTimeout?.cancel(); nativeBufferTimeout = nil
+        stopNativeMotionWatchdog()
         if diagnosticPlaybackProblem?.nativeCode == -5 {
             diagnosticPlaybackProblem = nil
             diagnosticPlaybackDetails = nil
@@ -756,6 +776,7 @@ final class PlaybackModel {
 
     func playbackFailed(item: AVPlayerItem, failure: DiagnosticProblem? = nil) {
         guard player.currentItem === item else { return }
+        stopNativeMotionWatchdog()
         cancelNativeSeek()
         let status = item.errorLog()?.events.last?.errorStatusCode
         let problem: DiagnosticProblem
@@ -883,6 +904,10 @@ final class PlaybackModel {
     }
 
     private func install(_ asset: AVURLAsset) {
+        stopNativeMotionWatchdog()
+        #if DEBUG
+        holdsNativeClockForFixture = false
+        #endif
         cancelNativeSeek()
         nativeReady = false
         nativeHasAdvanced = false
@@ -1335,6 +1360,10 @@ final class PlaybackModel {
         nativeHasAdvanced = false
         nativeStartupRetried = false
         nativeClock = NativePlaybackClock()
+        stopNativeMotionWatchdog()
+        #if DEBUG
+        holdsNativeClockForFixture = false
+        #endif
         videoHasAdvanced = false
         didAdvancePlayback = false
         diagnosticPlaybackProblem = nil
@@ -1405,6 +1434,7 @@ final class PlaybackModel {
         isPlaying = enginePlaying && nativeHasAdvanced
         isBuffering = wantsPlayback && !isPlaying
         lyricClockRunning = isPlaying && !seeking
+        updateNativeMotionWatchdog()
         if isBuffering && !wasBuffering { DiagnosticsEvents.shared.record(.playbackStalled) }
         if lyricClockRunning {
             startupTimeout?.cancel(); startupTimeout = nil
@@ -1464,6 +1494,40 @@ final class PlaybackModel {
             }
         }
         publishNowPlaying()
+    }
+
+    private func stopNativeMotionWatchdog() {
+        nativeMotionWatchdog?.cancel()
+        nativeMotionWatchdog = nil
+    }
+
+    private func updateNativeMotionWatchdog() {
+        guard lyricClockRunning, let item = player.currentItem else { stopNativeMotionWatchdog(); return }
+        guard nativeMotionWatchdog == nil else { return }
+        let clock = ContinuousClock()
+        let began = clock.now
+        let firstCheck = nativeClock.motionWatchdogDeadline(since: began)
+        nativeMotionWatchdog = Task { [weak self, weak item] in
+            var check = firstCheck
+            while !Task.isCancelled {
+                do { try await clock.sleep(until: check) } catch { return }
+                guard let self, let item, !Task.isCancelled, lyricClockRunning,
+                      player.currentItem === item else { return }
+                // Sample the player directly in case the periodic observer has stopped firing.
+                tick()
+                guard !Task.isCancelled, lyricClockRunning, player.currentItem === item else { return }
+                check = nativeClock.motionWatchdogDeadline(since: began)
+                if clock.now >= check {
+                    nativeMotionWatchdog = nil
+                    nativeHasAdvanced = false
+                    #if DEBUG
+                    recordNativeTransportTrace("clock-stale", item: item)
+                    #endif
+                    refreshTransport()
+                    return
+                }
+            }
+        }
     }
 
     private func nativeBufferDeadline(item: AVPlayerItem, since start: ContinuousClock.Instant) -> ContinuousClock.Instant {
