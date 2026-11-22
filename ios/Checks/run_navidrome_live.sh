@@ -42,6 +42,7 @@ password = os.environ.get("SYLLUME_REDACT_PASSWORD", "")
 def sanitized(text):
     if password:
         text = text.replace(password, "<redacted>")
+    text = re.sub(r'(?im)^.*\bType\b.*SecureTextField.*$', "<secure input redacted>", text)
     text = re.sub(r"(?im)^.*(?:TEST_RUNNER_)?SYLLUME_NAVIDROME_(?:URL|USER|PASSWORD).*$",
                   "<Navidrome test environment redacted>", text)
     text = re.sub(r"\badmin\b", "<redacted-user>", text)
@@ -223,17 +224,34 @@ sys.exit("No available iOS 26 iPhone runtime and device type")
     xcrun simctl bootstatus "$simulator_id" -b
     xcrun simctl keychain "$simulator_id" add-root-cert "$work_dir/ca.pem"
 
+    echo "Building and signing the simulator app for its own test Keychain access group."
+    build="$work_dir/SimulatorBuild"
+    destination="platform=iOS Simulator,id=$simulator_id"
+    xcodebuild -project "$ios_dir/Syllume.xcodeproj" -scheme Syllume -configuration Debug \
+        -destination "$destination" -derivedDataPath "$build" \
+        CODE_SIGNING_ALLOWED=NO build-for-testing >"$work_dir/xcodebuild.log" 2>&1
+    app="$build/Build/Products/Debug-iphonesimulator/Syllume.app"
+    bundle_id="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")"
+    application_id="SYLLUMEDEV.$bundle_id"
+    python3 - "$work_dir/simulator.entitlements" "$application_id" <<'PY'
+import plistlib, sys
+path, identifier = sys.argv[1:]
+with open(path, "wb") as entitlements:
+    plistlib.dump({"application-identifier": identifier, "keychain-access-groups": [identifier]}, entitlements)
+PY
+    codesign --force --sign - --entitlements "$work_dir/simulator.entitlements" "$app"
+    codesign --verify --strict "$app"
+
     echo "LIVE PLAYBACK: the app uses the trusted Navidrome HTTPS service and normal AVPlayer."
     status=0
     TEST_RUNNER_SYLLUME_NAVIDROME_URL="$server_url" TEST_RUNNER_SYLLUME_NAVIDROME_USER=admin \
         TEST_RUNNER_SYLLUME_NAVIDROME_PASSWORD="$password" \
         xcodebuild -project "$ios_dir/Syllume.xcodeproj" -scheme Syllume -configuration Debug \
-        -destination "platform=iOS Simulator,id=$simulator_id" \
-        -derivedDataPath "$work_dir/SimulatorBuild" \
+        -destination "$destination" -derivedDataPath "$build" \
         -resultBundlePath "${RUNNER_TEMP:?}/SyllumeNavidromePlayback.xcresult" \
         -only-testing:SyllumeUITests/SyllumeUITests/testLiveNavidromeResumesAtConfirmedTimeAfterTimeout \
-        -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test \
-        >"$work_dir/xcodebuild.log" 2>&1 || status=$?
+        -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building \
+        >>"$work_dir/xcodebuild.log" 2>&1 || status=$?
     if [[ "$status" == 0 ]]; then
         xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/SyllumeNavidromePlayback.xcresult" \
             >"$work_dir/test-summary.json"

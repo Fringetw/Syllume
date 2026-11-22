@@ -333,7 +333,11 @@ final class SyllumeUITests: XCTestCase {
         app.buttons["測試並儲存"].tap()
 
         let query = app.textFields["搜尋歌曲、歌手或專輯"]
-        XCTAssertTrue(query.waitForExistence(timeout: 25), "The app must connect through its normal HTTPS client.")
+        guard query.waitForExistence(timeout: 25) else {
+            let keychainError = app.staticTexts["無法讀寫 iPhone 的鑰匙圈。"].exists
+            XCTFail("The app did not open Navidrome search after connecting. Keychain notice: \(keychainError).")
+            return
+        }
         query.tap()
         query.typeText("Syllume")
         app.buttons["搜尋"].tap()
