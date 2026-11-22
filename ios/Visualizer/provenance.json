@@ -154,12 +154,12 @@
   },
   "ios_patches": {
     "src/components/visualizer/sonnet/createSonnetPixiRuntime.ts": {
-      "reason": "iOS frame-rate cap, paused song handover, and opt-in first-frame checkpoints",
-      "patched_sha256": "40bb200813291c93e16f1422c730598c3de21b97810958cd5a9634bb5b441bc0"
+      "reason": "iOS frame-rate cap, settle in-flight song handover on pause, and opt-in first-frame checkpoints",
+      "patched_sha256": "e7a7c5ffc3eb582ee5477431ffdd21f7a768d4526d45f073edf45f2ef6592af7"
     },
     "src/components/visualizer/lumiere/createLumierePixiRuntime.ts": {
-      "reason": "iOS frame-rate cap and opt-in first-frame checkpoints",
-      "patched_sha256": "5eca009add2f0b31b209f8e31cf9a4b9dedfcaae4c00a45d22d1a44b0f2a97f5"
+      "reason": "iOS frame-rate cap, settle in-flight song handover on pause, and opt-in first-frame checkpoints",
+      "patched_sha256": "56c39c4858a570a5f0348e4e3d309416eb595a0b136e62bc851c0b5aee4f1169"
     },
     "src/utils/lyrics/graphemeTiming.ts": {
       "reason": "Line-only lyrics retain every glyph with the shared line window instead of inventing word timing; real word and syllable timing is unchanged",

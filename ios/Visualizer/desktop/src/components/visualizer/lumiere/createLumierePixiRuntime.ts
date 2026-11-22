@@ -496,6 +496,7 @@ export class LumierePixiRuntime {
         this.options.paused = paused;
         if (paused) {
             this.app.stop();
+            this.songSwap.settle(true);
             this.renderOnce();
         } else {
             this.app.start();

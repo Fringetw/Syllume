@@ -80,6 +80,10 @@ jobs:
           name: Syllume-diagnostics-fixture
           path: ${{ runner.temp }}/Syllume-diagnostics-fixture.json
           if-no-files-found: error
+      - name: Test paused handover in the Sonnet and Lumiere runtimes
+        run: |
+          npm ci --prefix ios/Visualizer --ignore-scripts --no-audit --no-fund
+          node --test ios/Visualizer/test/runtimeHandover.integration.mjs
       - name: Compile for iOS Simulator
         run: >-
           xcodebuild -project ios/Syllume.xcodeproj -scheme Syllume

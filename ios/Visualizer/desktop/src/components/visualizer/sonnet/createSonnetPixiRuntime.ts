@@ -537,15 +537,6 @@ export class SonnetPixiRuntime {
      */
     async swapSong(next: SonnetSongContext, signal?: AbortSignal): Promise<void> {
         if (this.destroyed) return;
-        // Nothing is on screen to protect: no scene has been sized yet, or the outgoing program
-        // had no paragraphs at all. Covering an empty frame would only add a flash. And a swap
-        // that is not a track change gets no dissolve at all - see SonnetSongContext.seed.
-        const isCoverWorthwhile = next.seed !== this.options.songSeed
-            && !this.options.paused
-            && !this.songSwap
-            && this.lastWidth > 0
-            && this.options.program.paragraphs.length > 0
-            && !signal?.aborted;
 
         // Warmed before the cover starts, so the dissolve is never waiting on a decode.
         const pendingIcons = await this.loadIconTextures(next.theme);
@@ -553,8 +544,19 @@ export class SonnetPixiRuntime {
             this.releaseIconUrls(pendingIcons.urls);
             return;
         }
+
+        // Nothing is on screen to protect: no scene has been sized yet, or the outgoing program
+        // had no paragraphs at all. Covering an empty frame would only add a flash. And a swap
+        // that is not a track change gets no dissolve at all - see SonnetSongContext.seed.
+        // Playback can also pause while the icons are loading.
+        const isCoverWorthwhile = next.seed !== this.options.songSeed
+            && !this.options.paused
+            && !this.songSwap
+            && this.lastWidth > 0
+            && this.options.program.paragraphs.length > 0;
         if (!isCoverWorthwhile) {
             this.commitSongContext(next, pendingIcons);
+            if (this.options.paused) this.renderOnce();
             return;
         }
 
@@ -569,9 +571,6 @@ export class SonnetPixiRuntime {
                 detachAbort: () => signal?.removeEventListener('abort', onAbort),
             };
             signal?.addEventListener('abort', onAbort, { once: true });
-            // The ticker is stopped while paused, so the cover would freeze halfway. Run it for
-            // the length of the dissolve and hand the pause back at the end.
-            if (this.options.paused) this.app.start();
         });
     }
 
@@ -620,7 +619,6 @@ export class SonnetPixiRuntime {
             } else if (swap.staged) {
                 this.destroyScene(swap.staged.scene);
             }
-            if (this.options.paused) this.app.stop();
         }
         this.disposeSwapCover();
         swap.settle();
@@ -756,6 +754,7 @@ export class SonnetPixiRuntime {
         this.options.paused = paused;
         if (paused) {
             this.app.stop();
+            this.settleSongSwap();
             this.renderOnce();
         } else {
             this.app.start();
