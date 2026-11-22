@@ -315,29 +315,14 @@ final class SyllumeUITests: XCTestCase {
             throw XCTSkip("Requires the isolated Navidrome HTTPS workflow and its simulator certificate.")
         }
         let app = XCUIApplication()
-        app.launchArguments = ["--native-frozen-clock-fixture", "--playback-probe", "-Folia.LyricDisplayMode", "cover"]
+        app.launchArguments = ["--navidrome-live-simulator", "--native-frozen-clock-fixture", "--playback-probe",
+                               "-Folia.LyricDisplayMode", "cover"]
+        app.launchEnvironment = ["SYLLUME_NAVIDROME_URL": server, "SYLLUME_NAVIDROME_USER": user,
+                                 "SYLLUME_NAVIDROME_PASSWORD": password]
         app.launch()
         app.segmentedControls.buttons["Navidrome"].tap()
-        app.buttons["設定伺服器"].tap()
-
-        let address = app.textFields["https://music.example.com"]
-        XCTAssertTrue(address.waitForExistence(timeout: 15))
-        address.tap()
-        address.typeText(server)
-        let username = app.textFields["帳號"]
-        username.tap()
-        username.typeText(user)
-        let secret = app.secureTextFields["密碼"]
-        secret.tap()
-        secret.typeText(password)
-        app.buttons["測試並儲存"].tap()
-
         let query = app.textFields["搜尋歌曲、歌手或專輯"]
-        guard query.waitForExistence(timeout: 25) else {
-            let keychainError = app.staticTexts["無法讀寫 iPhone 的鑰匙圈。"].exists
-            XCTFail("The app did not open Navidrome search after connecting. Keychain notice: \(keychainError).")
-            return
-        }
+        XCTAssertTrue(query.waitForExistence(timeout: 25), "The simulator should open Navidrome with its disposable account.")
         query.tap()
         query.typeText("Syllume")
         app.buttons["搜尋"].tap()

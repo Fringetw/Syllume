@@ -231,6 +231,19 @@ final class NavidromeConnection {
     ]
 
     init() {
+        #if DEBUG && targetEnvironment(simulator)
+        // The isolated HTTPS playback test supplies its disposable account in memory.
+        let process = ProcessInfo.processInfo
+        if process.arguments.contains("--navidrome-live-simulator"),
+           let server = process.environment["SYLLUME_NAVIDROME_URL"],
+           let user = process.environment["SYLLUME_NAVIDROME_USER"],
+           let password = process.environment["SYLLUME_NAVIDROME_PASSWORD"],
+           let fixture = try? NavidromeAccount(server: server, username: user, password: password),
+           fixture.server.host == "localhost", fixture.server.port != nil {
+            account = fixture
+            return
+        }
+        #endif
         var result: CFTypeRef?
         var query = key
         query[kSecReturnData as String] = true
