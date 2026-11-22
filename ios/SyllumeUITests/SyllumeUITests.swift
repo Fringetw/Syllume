@@ -327,7 +327,7 @@ final class SyllumeUITests: XCTestCase {
         query.typeText("Syllume")
         app.buttons["搜尋"].tap()
         let song = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
-            "潮汐之間", "Syllume Fixture")).firstMatch
+            "潮汐之間", "Syllume Originals")).firstMatch
         XCTAssertTrue(song.waitForExistence(timeout: 25), "Navidrome must return the test recording.")
         song.tap()
 
@@ -355,17 +355,19 @@ final class SyllumeUITests: XCTestCase {
         let frozenTime = waitForPausedNativeClock(clock)
         XCTAssertTrue((8...26).contains(frozenTime))
         XCTAssertEqual(toggle.label, "播放")
-        XCTAssertFalse((trace.value as? String ?? "").contains("recovery-positioned"))
+        let beforeRetry = trace.value as? String ?? ""
+        XCTAssertFalse(beforeRetry.contains("recovery-positioned"))
+        let heldItem = beforeRetry.split(whereSeparator: \.isNewline).last?.split(separator: " ")
+            .first { $0.hasPrefix("item=") }
+        XCTAssertNotNil(heldItem, "Capture the original paused item before the retry replaces trace entries.")
         capture(app, name: "Syllume-Navidrome-confirmed-timeout")
 
         toggle.tap()
         let restored = expectation(for: NSPredicate(format: "value CONTAINS %@", "recovery-positioned"), evaluatedWith: trace)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 48), .completed, String(describing: trace.value))
         let entries = (trace.value as? String ?? "").split(whereSeparator: \.isNewline)
-        let heldItem = entries.first { $0.contains(" clock-held ") }?.split(separator: " ").first { $0.hasPrefix("item=") }
         let recovery = entries.first { $0.contains(" recovery-positioned ") }?.split(separator: " ") ?? []
         let newItem = recovery.first { $0.hasPrefix("item=") }
-        XCTAssertNotNil(heldItem)
         XCTAssertNotNil(newItem)
         XCTAssertNotEqual(heldItem, newItem, "The retry must use a new AVPlayerItem.")
         guard let field = recovery.first(where: { $0.hasPrefix("time=") }),
@@ -378,7 +380,10 @@ final class SyllumeUITests: XCTestCase {
             probeTime(clock) > restoredTime + 0.2 && (clock.value as? String)?.hasSuffix("|1.0") == true
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [moving], timeout: 25), .completed)
-        print("Navidrome resume evidence: frozen=\(frozenTime), restored=\(restoredTime), advanced=\(probeTime(clock))")
+        let samples = XCTAttachment(string: "frozen=\(frozenTime); restored=\(restoredTime); advanced=\(probeTime(clock))")
+        samples.name = "Syllume-Navidrome-recovery-samples"
+        samples.lifetime = .keepAlways
+        add(samples)
         XCTAssertFalse(timeout.exists)
         capture(app, name: "Syllume-Navidrome-confirmed-retry")
     }
@@ -412,6 +417,47 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["animatedLyricsFallback"].waitForExistence(timeout: 15))
         waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
         capture(app, name: "Syllume-Sonnet-timeout")
+    }
+
+    func testLyricStageRetriesSilentNavigationAndKeepsAudioPlaying() {
+        continueAfterFailure = false
+        let (app, stage, deadline) = openPlayingSonnetForNavigationFixture("--stage-stall-first-navigation")
+        let recovered = expectation(for: NSPredicate(format: "value BEGINSWITH %@ AND value ENDSWITH %@",
+            "已就緒", " · 已重載"), evaluatedWith: stage)
+        XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: max(1, deadline - ProcessInfo.processInfo.systemUptime)),
+                       .completed, "The replacement page must render. \(String(describing: stage.value))")
+        XCTAssertFalse(app.staticTexts["正在準備歌詞動畫"].exists)
+        waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
+        capture(app, name: "Syllume-Sonnet-navigation-recovered")
+    }
+
+    func testLyricStageStopsAfterSilentNavigationRetry() {
+        continueAfterFailure = false
+        let (app, stage, deadline) = openPlayingSonnetForNavigationFixture("--stage-stall-navigation")
+        let failed = expectation(for: NSPredicate(format: "value BEGINSWITH %@ AND value ENDSWITH %@",
+            "載入失敗：等候歌詞動畫逾時。", " · 已重載"), evaluatedWith: stage)
+        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: max(1, deadline - ProcessInfo.processInfo.systemUptime)),
+                       .completed, "Both attempts must share the initialization budget. \(String(describing: stage.value))")
+        XCTAssertFalse(app.staticTexts["正在準備歌詞動畫"].exists)
+        XCTAssertTrue(app.staticTexts["animatedLyricsFallback"].waitForExistence(timeout: 15))
+        waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
+        capture(app, name: "Syllume-Sonnet-navigation-timeout")
+    }
+
+    private func openPlayingSonnetForNavigationFixture(_ fixture: String) -> (XCUIApplication, XCUIElement, TimeInterval) {
+        let app = openDemoWithPlaybackFixture(fixture)
+        app.buttons["循環佇列"].tap()
+        waitForDemoAudio(app)
+        let mode = app.segmentedControls.buttons["商籟"]
+        XCTAssertTrue(mode.waitForExistence(timeout: 10))
+        let beforeNavigation = probeTime(app.staticTexts["localTransportProbe"])
+        // The stage shares 36 seconds across attempts. Leave room for XCTest interaction and polling.
+        let deadline = ProcessInfo.processInfo.systemUptime + 48
+        mode.tap()
+        let stage = app.descendants(matching: .any)["syllumeSonnetStage"].firstMatch
+        XCTAssertTrue(stage.waitForExistence(timeout: 15))
+        waitForDemoAudio(app, from: beforeNavigation)
+        return (app, stage, deadline)
     }
 
     private func openDemoWithPlaybackFixture(_ fixture: String) -> XCUIApplication {

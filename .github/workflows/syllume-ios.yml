@@ -357,6 +357,8 @@ jobs:
           run_player_check SyllumeIOS26NativeClockStall testNativeFrozenClockStopsPlayingAndCanRetry || failed=1
           run_player_check SyllumeIOS26SonnetRetry testSonnetRetriesRejectedInitialization || failed=1
           run_player_check SyllumeIOS26SonnetTimeout testSonnetTimeoutEndsWithoutStoppingAudio || failed=1
+          run_player_check SyllumeIOS26NavigationRetry testLyricStageRetriesSilentNavigationAndKeepsAudioPlaying || failed=1
+          run_player_check SyllumeIOS26NavigationLimit testLyricStageStopsAfterSilentNavigationRetry || failed=1
           if [ "$STARTUP_ONLY" = "true" ]; then
             run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
             run_player_check SyllumeIOS26RecordedSonnet testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics || failed=1
@@ -483,6 +485,7 @@ jobs:
           for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub \
             SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26NativeClockStall \
             SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26RecordedSonnet \
+            SyllumeIOS26NavigationRetry SyllumeIOS26NavigationLimit \
             SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek \
             SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"

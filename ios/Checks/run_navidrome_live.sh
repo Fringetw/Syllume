@@ -66,7 +66,11 @@ for name in ["test-summary.json", "xcodebuild.log", "server.log", "native-transp
         else:
             content = sanitized(content)
         (destination / name).write_text(content, encoding="utf-8")
-screenshots = {"Syllume-Navidrome-confirmed-timeout", "Syllume-Navidrome-confirmed-retry"}
+player_evidence = {
+    "Syllume-Navidrome-confirmed-timeout": ".png",
+    "Syllume-Navidrome-confirmed-retry": ".png",
+    "Syllume-Navidrome-recovery-samples": ".txt",
+}
 private_attachments = source / "SimulatorAttachments"
 for manifest in private_attachments.rglob("manifest.json"):
     for test in json.loads(manifest.read_text()):
@@ -74,12 +78,16 @@ for manifest in private_attachments.rglob("manifest.json"):
             continue
         for attachment in test.get("attachments", []):
             name = attachment.get("suggestedHumanReadableName", "")
-            expected = next((item for item in screenshots if name.startswith(item + "_")), None)
+            expected = next((item for item in player_evidence if name.startswith(item + "_")), None)
             filename = attachment.get("exportedFileName", "")
-            if expected and pathlib.Path(filename).name == filename and filename.lower().endswith(".png"):
-                image = manifest.parent / filename
-                if image.is_file():
-                    shutil.copyfile(image, destination / (expected + ".png"))
+            if expected and pathlib.Path(filename).name == filename and filename.lower().endswith(player_evidence[expected]):
+                artifact = manifest.parent / filename
+                if artifact.is_file():
+                    output = destination / (expected + player_evidence[expected])
+                    if output.suffix == ".txt":
+                        output.write_text(sanitized(artifact.read_text(errors="replace")), encoding="utf-8")
+                    else:
+                        shutil.copyfile(artifact, output)
 PY
 }
 cleanup() {
