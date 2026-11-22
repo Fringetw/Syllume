@@ -108,11 +108,11 @@ final class DiagnosticStageProbe {
     }
 
     private func waitForReady(_ count: Int) async throws {
-        let end = ProcessInfo.processInfo.systemUptime + 24
+        let end = ContinuousClock.now.advanced(by: SonnetStage.initializationLimit + .seconds(4))
         while readyCount < count {
             try Task.checkCancellation()
             if let fault { throw fault }
-            guard ProcessInfo.processInfo.systemUptime < end else { throw DiagnosticProblem(code: .timeout) }
+            guard ContinuousClock.now < end else { throw DiagnosticProblem(code: .timeout) }
             try await Task.sleep(for: .milliseconds(100))
         }
     }

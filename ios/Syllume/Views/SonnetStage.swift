@@ -3,6 +3,8 @@ import WebKit
 
 // The bundled desktop renderer receives song data once and bounded absolute clock corrections.
 struct SonnetStage: View {
+    static let initializationLimit: Duration = .seconds(36)
+
     let songID: String
     let title: String
     let artist: String
@@ -28,8 +30,23 @@ struct SonnetStage: View {
                           time: position, playing: playing && scenePhase == .active, reduceMotion: reduceMotion,
                           style: style, energySaving: energySaving || lowPower, rendering: rendering && scenePhase == .active,
                           diagnosticProbe: diagnosticProbe, clockProbe: clockProbe, ready: $ready, failed: $failed)
-            if failed { Text("動畫載入失敗，請切換歌詞清單。").font(.callout).foregroundStyle(.orange) }
-            else if !ready { ProgressView("正在準備歌詞動畫").frame(maxHeight: .infinity) }
+            if !ready {
+                VStack(spacing: 12) {
+                    if let index = timeline.activeIndex(at: position) {
+                        Text(timeline.lines[index].fullText)
+                            .font(SyllumeLyricFont.text(.title2, size: 26))
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("animatedLyricsFallback")
+                    }
+                    if failed {
+                        Text("動畫載入失敗，改顯示同步歌詞。").font(.caption).foregroundStyle(.orange)
+                    } else {
+                        ProgressView("正在準備歌詞動畫").font(.caption)
+                    }
+                }
+                .padding(.horizontal, 20)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             if showsTranslation, let index = timeline.activeIndex(at: position), let translation = timeline.lines[index].translationText {
                 let focus = LyricFocus(line: timeline.lines[index], position: position)
                 Text(translation).font(SyllumeLyricFont.text(.callout, size: 16))
@@ -103,6 +120,16 @@ private struct SonnetWebView: UIViewRepresentable {
 
     @MainActor final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         private enum State { case loading, ready, failed }
+        private enum InitializationPhase: Int {
+            case navigation, bridge, font
+
+            var timeAllowance: Duration {
+                switch self {
+                case .navigation, .bridge: .seconds(18)
+                case .font: .seconds(16)
+                }
+            }
+        }
 
         var parent: SonnetWebView
         weak var view: WKWebView?
@@ -116,6 +143,8 @@ private struct SonnetWebView: UIViewRepresentable {
         private(set) var didRetrySongCommand = false
         private var attemptedReload = false
         private var initializationTimeout: Task<Void, Never>?
+        private var initializationDeadline: ContinuousClock.Instant?
+        private var initializationPhase = InitializationPhase.navigation
         private var loadStarted = Date()
         private var lastTime = 0.0
         private var lastStamp = Date.distantPast
@@ -185,7 +214,7 @@ private struct SonnetWebView: UIViewRepresentable {
             let elapsed = Date().timeIntervalSince(lastStamp)
             let expected = lastTime + (lastPlaying ? elapsed : 0)
             let needsTime = parent.playing ? elapsed >= 0.2 || abs(expected - parent.time) > 0.25 : abs(lastTime - parent.time) > 0.001
-            if sendSong || wasSuspended || needsTime || lastPlaying != parent.playing {
+            if sendSong || wasSuspended || lastPlaying != parent.playing || (state == .ready && needsTime) {
                 sendClock(to: view, playing: parent.playing)
             }
         }
@@ -196,6 +225,7 @@ private struct SonnetWebView: UIViewRepresentable {
         }
 
         private func initializeSong(in view: WKWebView) {
+            advanceInitialization(to: .bridge)
             let request = UUID()
             self.request = request
             let document = navigation
@@ -236,11 +266,27 @@ private struct SonnetWebView: UIViewRepresentable {
         }
 
         private func startInitialization() {
-            guard initializationTimeout == nil else { return }
+            guard initializationDeadline == nil else { return }
             loadStarted = Date()
-            // Retries and reloads share the original visible deadline.
+            initializationPhase = .navigation
+            initializationDeadline = ContinuousClock.now.advanced(by: SonnetStage.initializationLimit)
+            scheduleInitializationTimeout()
+        }
+
+        private func advanceInitialization(to phase: InitializationPhase) {
+            guard initializationDeadline != nil, phase.rawValue > initializationPhase.rawValue else { return }
+            initializationPhase = phase
+            scheduleInitializationTimeout()
+        }
+
+        private func scheduleInitializationTimeout() {
+            guard let initializationDeadline else { return }
+            // WebKit milestones earn time for the next step. Retries share the absolute cap.
+            let phaseDeadline = ContinuousClock.now.advanced(by: initializationPhase.timeAllowance)
+            let deadline = min(phaseDeadline, initializationDeadline)
+            initializationTimeout?.cancel()
             initializationTimeout = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(15)) }
+                do { try await ContinuousClock().sleep(until: deadline) }
                 catch { return }
                 self?.markFailure("等候歌詞動畫逾時。", code: .timeout, mayReload: false)
             }
@@ -249,6 +295,7 @@ private struct SonnetWebView: UIViewRepresentable {
         private func cancelInitialization() {
             initializationTimeout?.cancel()
             initializationTimeout = nil
+            initializationDeadline = nil
         }
 
         private func stageCheckpoint(_ event: String) {
@@ -277,12 +324,14 @@ private struct SonnetWebView: UIViewRepresentable {
             if type == "font" {
                 lyricFont = body["detail"] as? String ?? ""
                 stageCheckpoint(lyricFont == "GenSenRounded2JP-M" ? "font-bundled" : "font-fallback")
+                advanceInitialization(to: .font)
                 if let probe = currentProbe { probe.font = lyricFont }
             } else if type == "ready" {
                 stageCheckpoint("ready")
                 request = nil
                 cancelInitialization()
                 transition(to: .ready)
+                if let view { sendClock(to: view, playing: parent.playing) }
                 if let probe = currentProbe { probe.readyCount += 1 }
                 else if parent.diagnosticProbe == nil { DiagnosticsEvents.shared.record(.stageReady, source: stageSource, since: loadStarted) }
             } else if type == "error" {

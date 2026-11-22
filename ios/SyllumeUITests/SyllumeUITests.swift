@@ -196,9 +196,10 @@ final class SyllumeUITests: XCTestCase {
         let stage = app.descendants(matching: .any)["syllumeSonnetStage"].firstMatch
         XCTAssertTrue(stage.waitForExistence(timeout: 15))
         let failed = expectation(for: NSPredicate(format: "value BEGINSWITH %@", "載入失敗："), evaluatedWith: stage)
-        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 35), .completed,
+        XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: 48), .completed,
                        "A renderer that never becomes ready should leave the loading state.")
         XCTAssertFalse(app.staticTexts["正在準備歌詞動畫"].exists)
+        XCTAssertTrue(app.staticTexts["animatedLyricsFallback"].waitForExistence(timeout: 15))
         waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
         capture(app, name: "Syllume-Sonnet-timeout")
     }
