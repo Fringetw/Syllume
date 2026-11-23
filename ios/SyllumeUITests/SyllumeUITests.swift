@@ -1263,6 +1263,7 @@ final class SyllumeUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-sync-reset", "--youtube-device-playback-regression",
                                "--youtube-playback-fixture", "--youtube-reject-resume-fixture", "--subtitle-fixture",
+                               "--youtube-duplicate-hidden-fixture",
                                "-Folia.LyricDisplayMode", "cover",
                                "-Folia.EnergySavingAnimation", "YES"]
         app.launch()
@@ -1285,6 +1286,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertTrue(mini.waitForExistence(timeout: 10))
         let paused = expectation(for: NSPredicate(format: "label == %@", "播放"), evaluatedWith: mini)
         XCTAssertEqual(XCTWaiter.wait(for: [paused], timeout: 10), .completed)
+        // A repeated hidden-state notification must preserve the pending Play request.
         mini.tap()
         XCTAssertTrue(video.waitForExistence(timeout: 15))
         waitForYouTubePlayback(transport, above: beforeClosing + 0.5, timeout: 40,

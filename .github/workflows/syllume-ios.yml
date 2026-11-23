@@ -15,6 +15,10 @@ on:
         description: Run AVPlayer against the public HTTPS sample on the iOS 26 simulator
         type: boolean
         default: false
+      youtube_reopen_only:
+        description: Exercise reopening the visible YouTube player with local test media
+        type: boolean
+        default: false
       navidrome_only:
         description: Run the production Navidrome client against an isolated HTTPS server
         type: boolean
@@ -50,7 +54,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: ${{ inputs.ios18_arm64 && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 105
     env:
@@ -343,6 +347,7 @@ jobs:
         if: ${{ inputs.startup_only || (!inputs.public_youtube_only && !inputs.public_native_only) }}
         env:
           STARTUP_ONLY: ${{ inputs.startup_only || false }}
+          YOUTUBE_REOPEN_ONLY: ${{ inputs.youtube_reopen_only || false }}
         run: |
           simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
           derived_data="$RUNNER_TEMP/SyllumeIOS26Build"
@@ -359,6 +364,10 @@ jobs:
               -only-testing:"SyllumeUITests/SyllumeUITests/$test_name" \
               -parallel-testing-enabled NO CODE_SIGNING_ALLOWED=NO test-without-building
           }
+          if [ "$YOUTUBE_REOPEN_ONLY" = "true" ]; then
+            run_player_check SyllumeIOS26YouTubeReopen testYouTubeSongAutomaticallyPlaysVisibleOriginal
+            exit $?
+          fi
           failed=0
           if [ "$STARTUP_ONLY" = "true" ]; then
             run_player_check SyllumeIOS26ColdSonnet testAnimatedPlayback || failed=1
@@ -501,6 +510,7 @@ jobs:
             SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26NativeClockStall \
             SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26RecordedSonnet \
             SyllumeIOS26NavigationRetry SyllumeIOS26NavigationLimit \
+            SyllumeIOS26YouTubeReopen \
             SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek \
             SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"

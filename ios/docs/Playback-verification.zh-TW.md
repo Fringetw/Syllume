@@ -1,6 +1,16 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前側載候選為 0.4.0 build 55（`93f0ea4`）。iPhone 尚待使用者側載與驗證。
+獨立分支 `codex/syllume-player-experience`。目前側載候選為 0.4.0 build 57（`ff4bc0c`）。iPhone 尚待使用者側載與驗證。
+
+## build 57 的編譯與模擬器結果
+
+`ff4bc0c` 補齊兩條尚未載入封面的路徑。若使用者先手動定位，保留原先進行中的封面載入。若重新開啟串流時時長不符，會重新評估歌詞並重試缺少的封面。
+
+iOS 26 常規回歸 14/14。霧盞三次 4 秒取樣的平均 App CPU 時間為 0.973 秒，平均實體記憶體峰值 75,581 kB。首次 Navidrome 測試因 XCTest 無障礙快照取樣逾時，手動重試未執行。同一提交重跑通過 1/1，AVPlayer 在 11.915 秒停住，11.915 秒重啟並前進至 14.700 秒。重試後保留封面和歌詞版本，兩項資料的額外請求皆為 0，伺服器另收到 2 次串流請求。 [iOS 26 常規結果](https://github.com/Fringetw/Syllume/actions/runs/45090504785/artifacts/14782770260) · [Navidrome 重跑通過](https://github.com/Fringetw/Syllume/actions/runs/45090505247/artifacts/14782965115) · [正式 API 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45090505247/artifacts/14782970238)
+
+iOS 18.6 的 Apple Silicon 為 27/28。唯一失敗是在迷你播放器按播放後，重新開啟的 YouTube 測試播放器停在 11.000 秒，未恢復前進。Intel 為 24/28，含《JANE DOE》商籟首幀與三次 XCTest 觀測逾時。後三項在逾時後的狀態讀取已顯示預期結果，原測試仍計為未通過。 [Apple Silicon 全套](https://github.com/Fringetw/Syllume/actions/runs/45090533426/artifacts/14783356597) · [Intel 全套](https://github.com/Fringetw/Syllume/actions/runs/45090504785/artifacts/14783108791)
+
+iPhone Release 0.4.0 build 57 已編譯。已核對 ZIP、ARM64、最低 iOS 17、未簽署狀態及離線歌詞資源。SHA-256 為 `C28F3FECA07596A2A095EC7A174DDD065C7796C58BFDF073572691A5ADC42256`。 [build 57 未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45090504785/artifacts/14780653700)
 
 ## build 55 的歌詞導航與 Navidrome 實際續播
 

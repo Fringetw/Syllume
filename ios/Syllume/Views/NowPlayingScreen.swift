@@ -558,8 +558,16 @@ struct MiniPlayer: View {
                 ? "已載入歌曲封面" : "")
             #endif
             Button {
+                #if DEBUG
+                let duplicateHiddenUpdate = player.embeddedVideo?.visible == false &&
+                    ProcessInfo.processInfo.arguments.contains("--youtube-duplicate-hidden-fixture")
+                if duplicateHiddenUpdate { player.setVideoSurfaceVisible(false) }
+                #endif
                 if !player.wantsPlayback, player.embeddedVideo != nil || player.offersVideoFallback { open() }
                 player.toggle(inApp: true)
+                #if DEBUG
+                if duplicateHiddenUpdate { player.setVideoSurfaceVisible(false) }
+                #endif
             } label: {
                 Image(systemName: player.transportIcon).frame(width: 44, height: 44)
             }
