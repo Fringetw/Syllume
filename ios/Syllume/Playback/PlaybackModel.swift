@@ -178,7 +178,8 @@ final class PlaybackModel {
         let identity = item.map { String(describing: ObjectIdentifier($0)) } ?? "none"
         let clock = String(format: "time=%.6f rate=%.1f bufferEnd=%.6f duration=%.3f",
                            player.currentTime().seconds, player.rate, end, item?.duration.seconds ?? .nan)
-        let fields = ["item=" + identity, clock, "state=" + state,
+        let itemStatus = item.map { String($0.status.rawValue) } ?? "none"
+        let fields = ["item=" + identity, clock, "state=" + state, "itemStatus=" + itemStatus,
             "waiting=" + (player.reasonForWaitingToPlay?.rawValue ?? "none"),
             "ranges=[" + loadedRanges + "]", "empty=" + String(item?.isPlaybackBufferEmpty ?? false),
             "keepUp=" + String(item?.isPlaybackLikelyToKeepUp ?? false),

@@ -23,6 +23,10 @@ on:
         description: Run the iOS 26 paused HTTP seek recovery case
         type: boolean
         default: false
+      http_start_only:
+        description: Run the iOS 26 HTTP startup case with a delayed first media range
+        type: boolean
+        default: false
       navidrome_only:
         description: Run the production Navidrome client against an isolated HTTPS server
         type: boolean
@@ -58,7 +62,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.http_seek_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.http_seek_only && !inputs.http_start_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: ${{ inputs.ios18_arm64 && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 105
     env:
@@ -221,6 +225,7 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativePublicHTTPSStreamsAndSeeks \
             -skip-testing:SyllumeUITests/SyllumeUITests/testLiveNavidromeResumesAtConfirmedTimeAfterTimeout \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackFallsBackAfterTimeout \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStartsAfterDelayedInitialRange \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativePausedSeekEndsWhenHTTPStopsResponding \
             -skip-testing:SyllumeUITests/SyllumeUITests/testCompactYouTubePlayerKeepsVideoAndControlsVisibleWithLargeText \
             -skip-testing:SyllumeUITests/SyllumeUITests/testPublicYouTubeIFrameReferenceVideo \
@@ -362,6 +367,7 @@ jobs:
           STARTUP_ONLY: ${{ inputs.startup_only || false }}
           YOUTUBE_REOPEN_ONLY: ${{ inputs.youtube_reopen_only || false }}
           HTTP_SEEK_ONLY: ${{ inputs.http_seek_only || false }}
+          HTTP_START_ONLY: ${{ inputs.http_start_only || false }}
         run: |
           simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
           derived_data="$RUNNER_TEMP/SyllumeIOS26Build"
@@ -390,6 +396,9 @@ jobs:
             if [ "$mode" = paced ]; then rate=65536; fi
             media=ios/Syllume/Resources/tide.m4a
             control=()
+            if [ "$mode" = delayed ]; then
+              control=(--allow-control --stall-after-byte 2 --resume-after-stall 10)
+            fi
             if [ "$mode" = seek ]; then
               media="$fixture/long.wav"
               rate=65536
@@ -438,11 +447,19 @@ jobs:
           if sys.argv[2] == 'seek':
               assert [r['action'] for r in records if r['event'] == 'control'] == ['stall', 'resume'], "Expected a controlled seek stall and recovery"
               assert any(r['event'] == 'stall' and r['offset'] > 0 for r in records), "The paused seek must require unavailable bytes"
+          if sys.argv[2] == 'delayed':
+              resume = [r for r in records if r['event'] == 'timed-resume']
+              assert len(resume) == 1 and resume[0]['elapsedMs'] >= 10_000, "Expected a ten second initial range delay"
+              assert any(r['event'] == 'stall' and r['offset'] >= 2 for r in records), "Expected the initial media body to block beyond the probe"
           PY
             exit "$status"
           )
           if [ "$HTTP_SEEK_ONLY" = "true" ]; then
             run_http_check SyllumeIOS26HTTPSeek testNativePausedSeekEndsWhenHTTPStopsResponding seek
+            exit $?
+          fi
+          if [ "$HTTP_START_ONLY" = "true" ]; then
+            run_http_check SyllumeIOS26HTTPInitialRange testNativeLoopbackStartsAfterDelayedInitialRange delayed
             exit $?
           fi
           failed=0
@@ -529,13 +546,19 @@ jobs:
                 > "$RUNNER_TEMP/SyllumeIOS26Evidence/YouTube-iOS26.log" ||
                 echo "::warning::Could not export the simulator YouTube transport checkpoints."
             fi
+            if [ "${{ inputs.http_start_only || false }}" = "true" ]; then
+              xcrun simctl spawn "$FOLIA_IOS26_SIMULATOR_ID" log show --last 55m --style compact \
+                --predicate 'process == "Syllume" AND eventMessage CONTAINS "Syllume native transport:"' \
+                > "$RUNNER_TEMP/SyllumeIOS26Evidence/Native-iOS26.log" ||
+                echo "::warning::Could not export the native startup checkpoints."
+            fi
           fi
           for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub \
             SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26NativeClockStall \
             SyllumeIOS26SonnetRetry SyllumeIOS26SonnetTimeout SyllumeIOS26ColdSonnet SyllumeIOS26RecordedSonnet \
             SyllumeIOS26NavigationRetry SyllumeIOS26NavigationLimit \
             SyllumeIOS26YouTubeReopen \
-            SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek \
+            SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek SyllumeIOS26HTTPInitialRange \
             SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"
             if [ -f "$result/Info.plist" ]; then

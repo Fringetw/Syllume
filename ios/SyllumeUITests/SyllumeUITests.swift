@@ -967,6 +967,16 @@ final class SyllumeUITests: XCTestCase {
         capture(app, name: "Syllume-HTTP-stream-fallback")
     }
 
+    func testNativeLoopbackStartsAfterDelayedInitialRange() throws {
+        continueAfterFailure = false
+        let app = try openNativeNetworkPlaylistTrack()
+        let clock = app.staticTexts["localTransportProbe"]
+        let trace = app.staticTexts["nativeTransportDebugProbe"]
+        waitForNativeStreamAdvance(clock, media: "http", trace: trace)
+        XCTAssertFalse(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.exists)
+        capture(app, name: "Syllume-delayed-HTTP-startup")
+    }
+
     func testNativePausedSeekEndsWhenHTTPStopsResponding() throws {
         continueAfterFailure = false
         let app = try openNativeNetworkPlaylistTrack(seekFixture: true)

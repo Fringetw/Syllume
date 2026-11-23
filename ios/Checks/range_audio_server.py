@@ -18,11 +18,13 @@ class AudioServer(ThreadingHTTPServer):
     daemon_threads = False
 
     def __init__(self, media, log, port=0, bytes_per_second=0, stall_file=None,
-                 allow_control=False, stall_after_byte=None, content_type="audio/mp4"):
+                 allow_control=False, stall_after_byte=None, content_type="audio/mp4", resume_after_stall=None):
         if not media:
             raise ValueError("The fixture audio must not be empty")
         if stall_after_byte is not None and stall_after_byte < 0:
             raise ValueError("The stall offset must be nonnegative")
+        if resume_after_stall is not None and (stall_after_byte is None or resume_after_stall <= 0):
+            raise ValueError("A timed resume requires a prefix limit and a positive delay")
         self.media = memoryview(media)
         self.log = log
         self.rate = bytes_per_second
@@ -32,6 +34,8 @@ class AudioServer(ThreadingHTTPServer):
         self.content_type = content_type
         self.control_stalled = False
         self.prefix_released = False
+        self.resume_after_stall = resume_after_stall
+        self.stalled_since = None
         self.control_lock = threading.Lock()
         self.stopping = threading.Event()
         self.sequence = itertools.count(1)
@@ -54,7 +58,17 @@ class AudioServer(ThreadingHTTPServer):
         if self.control_stalled or (self.stall_file is not None and self.stall_file.exists()):
             return cursor
         if not self.prefix_released and self.stall_after_byte is not None:
-            return max(cursor, min(end, self.stall_after_byte))
+            limited_end = max(cursor, min(end, self.stall_after_byte))
+            if limited_end == cursor and self.resume_after_stall is not None:
+                now = time.monotonic()
+                if self.stalled_since is None:
+                    self.stalled_since = now
+                elapsed = now - self.stalled_since
+                if elapsed >= self.resume_after_stall:
+                    self.prefix_released = True
+                    self.record(event="timed-resume", elapsedMs=round(elapsed * 1000))
+                    return end
+            return limited_end
         return end
 
 
@@ -187,11 +201,14 @@ def main():
     parser.add_argument("--stall-file", type=Path, help="Block response bodies while this path exists")
     parser.add_argument("--allow-control", action="store_true", help="Enable loopback POST /control/stall and /control/resume")
     parser.add_argument("--stall-after-byte", type=int, help="Serve this prefix, then wait until /control/resume")
+    parser.add_argument("--resume-after-stall", type=int, help="Release the prefix limit this many seconds after it first blocks a response")
     args = parser.parse_args()
     if args.bytes_per_second < 0 or not 0 <= args.port <= 65535:
         parser.error("A valid port and nonnegative body rate are required")
     if args.stall_after_byte is not None and (args.stall_after_byte < 0 or not args.allow_control):
         parser.error("A nonnegative stall offset requires --allow-control")
+    if args.resume_after_stall is not None and (args.stall_after_byte is None or args.resume_after_stall <= 0):
+        parser.error("A positive resume delay requires --stall-after-byte")
     paths = [args.media, args.log, args.ready_file] + ([args.stall_file] if args.stall_file is not None else [])
     if len({path.resolve() for path in paths}) != len(paths):
         parser.error("Media, log, readiness and stall paths must be distinct")
@@ -202,7 +219,7 @@ def main():
     content_type = "audio/wav" if args.media.suffix.lower() == ".wav" else "audio/mp4"
     with args.log.open("w", encoding="utf-8") as log, AudioServer(
             media, log, args.port, args.bytes_per_second, args.stall_file,
-            args.allow_control, args.stall_after_byte, content_type) as server:
+            args.allow_control, args.stall_after_byte, content_type, args.resume_after_stall) as server:
         def stop(_signal, _frame):
             server.stopping.set()
 

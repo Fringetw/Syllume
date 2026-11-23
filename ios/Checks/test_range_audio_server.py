@@ -138,6 +138,14 @@ class RangeAudioServerTests(unittest.TestCase):
             self.assertEqual(self.request("POST", path=path)[0], 404)
         self.assertEqual(self.request()[::2], (200, MEDIA))
 
+    def test_prefix_resumes_after_the_first_blocked_range(self):
+        self.start_server(stall_after_byte=2, resume_after_stall=0.15)
+        self.assertEqual(self.request(headers={"Range": "bytes=0-1"})[::2], (206, b"01"))
+        self.assertIsNone(self.server.stalled_since)
+        self.assertEqual(self.request(headers={"Range": "bytes=2-15"})[::2], (206, MEDIA[2:]))
+        self.assertEqual(self.records(1, event="stall")[0]["offset"], 2)
+        self.assertGreaterEqual(self.records(1, event="timed-resume")[0]["elapsedMs"], 150)
+
     def test_prefix_limit_applies_across_ranges_until_resume(self):
         self.start_server(allow_control=True, stall_after_byte=5)
         self.assertEqual(self.request(headers={"Range": "bytes=0-4"})[::2], (206, b"01234"))
