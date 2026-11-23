@@ -350,6 +350,15 @@ private struct SonnetWebView: UIViewRepresentable {
                   parent.rendering, state == .loading, activeSong == songKey,
                   let body = message.body as? [String: Any], body["documentID"] as? String == documentID.uuidString,
                   let type = body["type"] as? String else { return }
+            #if DEBUG
+            if type == "document-checkpoint" {
+                if let checkpoint = body["detail"] as? String,
+                   ["document-start", "script-loaded", "script-load-failed", "script-execution-failed"].contains(checkpoint) {
+                    stageCheckpoint(checkpoint)
+                }
+                return
+            }
+            #endif
             if type == "loaded" {
                 guard !loaded else { return }
                 stageCheckpoint("bridge-ready")
@@ -395,8 +404,29 @@ private struct SonnetWebView: UIViewRepresentable {
             self.documentID = documentID
             let content = view.configuration.userContentController
             content.removeAllUserScripts()
-            content.addUserScript(WKUserScript(source: "window.syllumeStageDocumentID = '\(documentID.uuidString)';",
-                injectionTime: .atDocumentStart, forMainFrameOnly: true))
+            #if DEBUG
+            let script = """
+                window.syllumeStageDocumentID = '\(documentID.uuidString)';
+                (() => {
+                    const report = detail => window.webkit.messageHandlers.stage.postMessage({
+                        type: 'document-checkpoint', documentID: '\(documentID.uuidString)', detail
+                    });
+                    const isStageScript = target => target instanceof HTMLScriptElement &&
+                        target.getAttribute('src') === 'sonnet.js';
+                    report('document-start');
+                    window.addEventListener('load', event => {
+                        if (isStageScript(event.target)) report('script-loaded');
+                    }, true);
+                    window.addEventListener('error', event => {
+                        if (isStageScript(event.target)) report('script-load-failed');
+                        else if (event.filename?.endsWith('/sonnet.js')) report('script-execution-failed');
+                    }, true);
+                })();
+                """
+            #else
+            let script = "window.syllumeStageDocumentID = '\(documentID.uuidString)';"
+            #endif
+            content.addUserScript(WKUserScript(source: script, injectionTime: .atDocumentStart, forMainFrameOnly: true))
             stageCheckpoint("navigation-start")
             #if DEBUG
             let arguments = ProcessInfo.processInfo.arguments
@@ -470,12 +500,25 @@ private struct SonnetWebView: UIViewRepresentable {
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             guard webView === view else { return }
+            stageCheckpoint("web-content-terminated")
             if parent.rendering { markFailure("歌詞動畫程序已中止。") }
             else if state != .failed {
                 discardPage(in: webView)
                 transition(to: .loading)
             }
         }
+
+        #if DEBUG
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
+            stageCheckpoint("navigation-provisional")
+        }
+
+        func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
+            guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
+            stageCheckpoint("navigation-committed")
+        }
+        #endif
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
@@ -484,6 +527,7 @@ private struct SonnetWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             guard webView === view, let navigation, navigation === self.navigation,
                   (error as NSError).code != NSURLErrorCancelled else { return }
+            stageCheckpoint("navigation-error \((error as NSError).code)")
             markFailure("無法載入歌詞動畫。")
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
