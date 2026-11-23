@@ -1,10 +1,14 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。iPhone 尚待使用者側載與驗證。
+獨立分支 `codex/syllume-player-experience`。目前側載候選為 0.4.0 build 55（`93f0ea4`）。iPhone 尚待使用者側載與驗證。
 
 ## build 55 的歌詞導航與 Navidrome 實際續播
 
-`93f0ea4` 在 WebKit 離線頁面導航完全無回應時重載一次，兩次共用原本的 36 秒期限。第二次仍無回應會保留同步文字，AVPlayer 持續運作。新增「首次無回應後恢復」和「持續無回應」的模擬器夾具。常規和跨架構回歸仍在執行。 [常規回歸](https://github.com/Fringetw/Syllume/actions/runs/45084938011) · [起播回歸](https://github.com/Fringetw/Syllume/actions/runs/45084938659) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45085793464)
+`93f0ea4` 在 WebKit 離線頁面導航完全無回應時重載一次，兩次共用原本的 36 秒期限。iOS 26 起播回歸 9/9。首次無回應的案例在 18.066 秒重載，22.375 秒畫出首幀。兩次都無回應的案例在 36.023 秒結束等待並顯示同步文字。兩項都確認 AVPlayer 的時鐘持續前進。常規和跨架構回歸另行執行。 [9 項測試摘要、日誌及截圖](https://github.com/Fringetw/Syllume/actions/runs/45084938659/artifacts/14779780935) · [常規回歸](https://github.com/Fringetw/Syllume/actions/runs/45084938011) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45085793464)
+
+iOS 26 常規回歸 14/14，包含暫停拖曳、定位停傳後恢復、切歌、循環、霧盞記憶及大字級。Apple Silicon iOS 18.6 的錄影曲目案例通過，《Lemon》繪光在 2.768 秒就緒。這次錄影曲目載入直接成功，限次重載另以 iOS 26 夾具驗證。霧盞三次 4 秒取樣的平均 App CPU 時間為 1.180 秒，平均實體記憶體峰值 75,308 kB，實機的 FPS、GPU、耗電與流量尚待驗證。 [iOS 26 常規結果](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14779702389) · [iOS 18.6 錄影曲目日誌](https://github.com/Fringetw/Syllume/actions/runs/45085793464/artifacts/14779113245)
+
+Intel iOS 18.6 的錄影曲目案例仍失敗。商籟在 17.315 秒將著色工作交給渲染器，隨後在 30.213 秒收到錯誤，重載於 36.190 秒到期。官方 YouTube IFrame 的兩支公開影片本輪皆停在 0:00 並回傳 `150`，真實 YouTube 播放未通過。 [Intel 首幀紀錄](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14780201023) · [官方 YouTube IFrame 結果](https://github.com/Fringetw/Syllume/actions/runs/45086804281/artifacts/14779967306)
 
 iOS 26 模擬器透過正式 Navidrome 0.64.2 的 HTTPS API 搜尋原版曲目，AVPlayer 實際下載音訊。測試注入時鐘停滯並等到逾時，重試換了 AVPlayerItem 並重新請求同一曲目。停滯時鐘為 11.564 秒，重試首筆定位為 11.563333 秒，隨後前進至 13.200 秒。測試使用 Debug 模擬器的暫存帳戶，iPhone 鑰匙圈與真實網路中斷尚待實機驗證。macOS 的 Swift API 測試同時驗證帳密、唯一原版配對及 380,160 bytes 的串流與下載內容。 [iOS 模擬器 1/1、實際取樣與截圖](https://github.com/Fringetw/Syllume/actions/runs/45084942118/artifacts/14778314533) · [正式 API 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45084942118/artifacts/14778473118)
 

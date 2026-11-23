@@ -362,6 +362,7 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertNotNil(heldItem, "Capture the original paused item before the retry replaces trace entries.")
         capture(app, name: "Syllume-Navidrome-confirmed-timeout")
 
+        let retryEpoch = Date().timeIntervalSince1970
         toggle.tap()
         let restored = expectation(for: NSPredicate(format: "value CONTAINS %@", "recovery-positioned"), evaluatedWith: trace)
         XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 48), .completed, String(describing: trace.value))
@@ -380,7 +381,8 @@ final class SyllumeUITests: XCTestCase {
             probeTime(clock) > restoredTime + 0.2 && (clock.value as? String)?.hasSuffix("|1.0") == true
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [moving], timeout: 25), .completed)
-        let samples = XCTAttachment(string: "frozen=\(frozenTime); restored=\(restoredTime); advanced=\(probeTime(clock))")
+        let samples = XCTAttachment(string: "frozen=\(frozenTime); restored=\(restoredTime); " +
+            "advanced=\(probeTime(clock))\nretryEpoch=\(retryEpoch)")
         samples.name = "Syllume-Navidrome-recovery-samples"
         samples.lifetime = .keepAlways
         add(samples)

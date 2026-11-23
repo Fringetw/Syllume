@@ -35,7 +35,7 @@ export_simulator_evidence() {
             >"$work_dir/native-transport.log" 2>/dev/null || true
     fi
     SYLLUME_REDACT_PASSWORD="${password:-}" python3 - "$work_dir" "$simulator_evidence" <<'PY' || true
-import json, os, pathlib, re, shutil, sys
+import datetime, json, math, os, pathlib, re, shutil, sys
 source, destination = map(pathlib.Path, sys.argv[1:])
 password = os.environ.get("SYLLUME_REDACT_PASSWORD", "")
 
@@ -88,6 +88,49 @@ for manifest in private_attachments.rglob("manifest.json"):
                         output.write_text(sanitized(artifact.read_text(errors="replace")), encoding="utf-8")
                     else:
                         shutil.copyfile(artifact, output)
+
+paths = ["/rest/getCoverArt", "/rest/getLyricsBySongId", "/rest/getLyrics", "/rest/stream"]
+counts = {phase: dict.fromkeys(paths, 0) for phase in ["total", "beforeRetry", "afterRetry", "unknownPhase"]}
+samples = destination / "Syllume-Navidrome-recovery-samples.txt"
+retry_second = None
+if samples.is_file():
+    epoch = re.search(r"(?m)^retryEpoch=([0-9]+(?:\.[0-9]+)?)$", samples.read_text())
+    if epoch:
+        value = float(epoch.group(1))
+        now = datetime.datetime.now(datetime.timezone.utc).timestamp()
+        if math.isfinite(value) and 946684800 <= value <= now + 60:
+            retry_second = math.floor(value)
+offset_file = source / "simulator-log-offset"
+server_log = source / "server.log"
+if offset_file.is_file() and server_log.is_file():
+    offset = int(offset_file.read_text())
+    with server_log.open("rb") as logfile:
+        partial_line = False
+        if offset > 0:
+            logfile.seek(offset - 1)
+            partial_line = logfile.read(1) != b"\n"
+        logfile.seek(offset)
+        lines = logfile.read().decode("utf-8", errors="replace").splitlines()
+    if partial_line:
+        lines = lines[1:]
+    request_path = re.compile(r"API: New request (/rest/[A-Za-z0-9]+)(?=[\s\"']|$)")
+    timestamp = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})")
+    for line in lines:
+        request = request_path.search(line)
+        if not request or request.group(1) not in paths:
+            continue
+        path = request.group(1)
+        counts["total"][path] += 1
+        phase = "unknownPhase"
+        stamp = timestamp.search(line)
+        if retry_second is not None and stamp:
+            try:
+                second = math.floor(datetime.datetime.fromisoformat(stamp.group().replace("Z", "+00:00")).timestamp())
+                phase = "afterRetry" if second >= retry_second else "beforeRetry"
+            except ValueError:
+                pass
+        counts[phase][path] += 1
+(destination / "simulator-request-counts.json").write_text(json.dumps(counts, indent=2) + "\n", encoding="utf-8")
 PY
 }
 cleanup() {
@@ -136,6 +179,10 @@ make_recording() {
 make_recording '潮汐之間' 'Syllume Fixture' 'Syllume Originals' "$exact"
 make_recording '潮汐之間' 'Other Performer' 'Other Recordings' "$work_dir/music/wrong-performer.m4a"
 make_recording '潮汐之間 (Live)' 'Syllume Fixture' 'Syllume Live' "$work_dir/music/live-version.m4a"
+if [[ "${SYLLUME_NAVIDROME_SIMULATOR:-}" == 1 ]]; then
+    cp "$ios_dir/Syllume/Resources/Assets.xcassets/AppIcon.appiconset/SyllumeIcon.png" "$work_dir/music/cover.png"
+    printf '%s\n' '[00:00.00]Navidrome 測試歌詞' >"$work_dir/music/exact.lrc"
+fi
 
 echo "Compiling the Swift Navidrome integration probe."
 xcrun swiftc -swift-version 6 -D SYLLUME_LIVE_NAVIDROME "$ios_dir"/Syllume/Core/*.swift \
@@ -182,9 +229,11 @@ password="$(openssl rand -hex 24)"
 printf '::add-mask::%s\n' "$password"
 server_url="https://localhost:$port"
 : > "$work_dir/navidrome.toml"
+log_level=info
+if [[ "${SYLLUME_NAVIDROME_SIMULATOR:-}" == 1 ]]; then log_level=debug; fi
 ND_ADDRESS=127.0.0.1 ND_PORT="$port" ND_MUSICFOLDER="$work_dir/music" ND_DATAFOLDER="$work_dir/data" \
     ND_TLSCERT="$work_dir/chain.pem" ND_TLSKEY="$work_dir/server.key" ND_FFMPEGPATH="$ffmpeg_path" \
-    ND_ENABLEEXTERNALSERVICES=false ND_ENABLEDOWNLOADS=true ND_DEVAUTOCREATEADMINPASSWORD="$password" ND_LOGLEVEL=info \
+    ND_ENABLEEXTERNALSERVICES=false ND_ENABLEDOWNLOADS=true ND_DEVAUTOCREATEADMINPASSWORD="$password" ND_LOGLEVEL="$log_level" \
     "$work_dir/navidrome" --configfile "$work_dir/navidrome.toml" >"$work_dir/server.log" 2>&1 &
 server_pid=$!
 
@@ -210,6 +259,10 @@ SYLLUME_NAVIDROME_URL="$server_url" SYLLUME_NAVIDROME_USER=admin SYLLUME_NAVIDRO
     "$work_dir/navidrome-live-probe"
 
 if [[ "${SYLLUME_NAVIDROME_SIMULATOR:-}" == 1 ]]; then
+    python3 - "$work_dir/server.log" "$work_dir/simulator-log-offset" <<'PY'
+import pathlib, sys
+pathlib.Path(sys.argv[2]).write_text(str(pathlib.Path(sys.argv[1]).stat().st_size))
+PY
     simulator_evidence="${RUNNER_TEMP:?}/SyllumeNavidromePlayback"
     mkdir -p "$simulator_evidence"
     echo "Preparing the production Navidrome playback path on a disposable iOS 26 simulator."
