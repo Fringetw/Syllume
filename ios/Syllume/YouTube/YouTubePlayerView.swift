@@ -79,6 +79,8 @@ struct YouTubePlayerView: UIViewRepresentable {
         var pausedRevision: Int?
         #if DEBUG
         private var rejectedResumeFixture = false
+        private var lastPrintedSnapshot: String?
+        private let tracesPlayback = ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression")
         #endif
         init(input: YouTubePlayerView) { self.input = input }
 
@@ -89,6 +91,9 @@ struct YouTubePlayerView: UIViewRepresentable {
                 guard player.visible, view.hasVisibleViewport else { return }
                 session = input.requestSession; loaded = false; sentRevision = nil; pausedRevision = nil
                 retriedRevision = nil
+                #if DEBUG
+                lastPrintedSnapshot = nil
+                #endif
                 // A new iframe can start from the retained position without seeking a paused, unloaded video.
                 let start = Int(player.position.rounded(.down))
                 sentSeek = input.requestSeek
@@ -133,6 +138,7 @@ struct YouTubePlayerView: UIViewRepresentable {
             sentRevision = revision
             var script = "window.FoliaYouTube.setPlayback(wants, revision)\nreturn true"
             #if DEBUG
+            if tracesPlayback { NSLog("[SyllumeYouTube] send revision=\(revision) wants=\(wants)") }
             let rejectedForTest = wants && input.requestSeek != nil && !rejectedResumeFixture &&
                 ProcessInfo.processInfo.arguments.contains("--youtube-reject-resume-fixture")
             if rejectedForTest {
@@ -172,6 +178,9 @@ struct YouTubePlayerView: UIViewRepresentable {
                   session == self.session?.uuidString, session == player.session.uuidString,
                   let type = body["type"] as? String else { return }
             if type == "loaded" || type == "visible" {
+                #if DEBUG
+                if tracesPlayback { NSLog("[SyllumeYouTube] bridge \(type)") }
+                #endif
                 loaded = true
                 if type == "visible" { sentRevision = nil }
                 update()
@@ -189,6 +198,15 @@ struct YouTubePlayerView: UIViewRepresentable {
             }
             else if type == "snapshot", let data = try? JSONSerialization.data(withJSONObject: body),
                     let snapshot = try? JSONDecoder().decode(YouTubeSnapshot.self, from: data) {
+                #if DEBUG
+                if tracesPlayback {
+                    let sample = "\(snapshot.commandRevision ?? -1)|\(snapshot.state)"
+                    if sample != lastPrintedSnapshot {
+                        lastPrintedSnapshot = sample
+                        NSLog("[SyllumeYouTube] snapshot revision/state=\(sample) time=\(snapshot.time)")
+                    }
+                }
+                #endif
                 player.receive(snapshot)
                 // A presentation transition can settle without another layout or SwiftUI update.
                 if (input.requestPlayback && sentRevision != input.requestRevision) || sentSeek != input.requestSeek { update() }

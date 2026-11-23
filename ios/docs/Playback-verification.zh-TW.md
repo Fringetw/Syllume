@@ -2,6 +2,10 @@
 
 獨立分支 `codex/syllume-player-experience`。目前側載候選為 0.4.0 build 57（`ff4bc0c`）。iPhone 尚待使用者側載與驗證。
 
+## YouTube 播放器重開
+
+build 57 的 Apple Silicon iOS 18.6 錄影顯示播放器重開後於 11.000 秒緩衝，之後觸發播放停滯逾時。另用 iOS 26 本機 WebKit 測試音軌重現一條獨立問題。在迷你播放器按播放後送出重複的隱藏通知，舊程式會清除待處理的播放請求。修正前的基準測試在首次起播通過後，重開停在 11.000 秒。 [build 57 ARM 測試](https://github.com/Fringetw/Syllume/actions/runs/45090533426/artifacts/14783356597) · [重現基準](https://github.com/Fringetw/Syllume/actions/runs/45142375764/artifacts/14802558017)
+
 ## build 57 的編譯與模擬器結果
 
 `ff4bc0c` 補齊兩條尚未載入封面的路徑。若使用者先手動定位，保留原先進行中的封面載入。若重新開啟串流時時長不符，會重新評估歌詞並重試缺少的封面。

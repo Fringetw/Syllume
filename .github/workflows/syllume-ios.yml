@@ -167,6 +167,14 @@ jobs:
               exit 1
             fi
           fi
+      - name: Export iOS 18 YouTube transport checkpoints
+        if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
+          xcrun simctl spawn "$FOLIA_SIMULATOR_ID" log show --last 35m --style compact \
+            --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeYouTube]"' \
+            > "$RUNNER_TEMP/SyllumeUIScreenshots/YouTube-iOS18.log" ||
+            echo "::warning::Could not export the iOS 18 YouTube transport checkpoints."
       - name: Exercise recorded-song playback, artwork and lyric clocks on iPhone Simulator
         if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
         timeout-minutes: 12
@@ -505,6 +513,12 @@ jobs:
               --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
               > "$RUNNER_TEMP/SyllumeIOS26Evidence/Sonnet-stage.log" ||
               echo "::warning::Could not export the simulator stage checkpoints."
+            if [ "${{ inputs.youtube_reopen_only || false }}" = "true" ]; then
+              xcrun simctl spawn "$FOLIA_IOS26_SIMULATOR_ID" log show --last 35m --style compact \
+                --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeYouTube]"' \
+                > "$RUNNER_TEMP/SyllumeIOS26Evidence/YouTube-iOS26.log" ||
+                echo "::warning::Could not export the simulator YouTube transport checkpoints."
+            fi
           fi
           for name in SyllumeIOS26LargeText SyllumeIOS26Resources SyllumeIOS26Scrub \
             SyllumeIOS26NativeEnd SyllumeIOS26LocalStartup SyllumeIOS26NativeClockStall \

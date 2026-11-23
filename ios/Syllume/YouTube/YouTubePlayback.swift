@@ -222,6 +222,11 @@ final class YouTubePlayback {
 
     func failed(_ code: Int, session: String) {
         guard self.session.uuidString == session else { return }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression") {
+            NSLog("[SyllumeYouTube] failure code=\(code) time=\(position) revision=\(playbackRevision)")
+        }
+        #endif
         discardPendingSeek()
         pause()
         didBlockAutoplay = false

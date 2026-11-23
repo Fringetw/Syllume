@@ -1255,9 +1255,15 @@ final class PlaybackModel {
     }
 
     func setVideoSurfaceVisible(_ visible: Bool) {
+        // A duplicate hidden callback can arrive while the mini player is opening a new surface.
+        if videoSurfaceVisible, !visible { videoRequested = false }
         videoSurfaceVisible = visible
         if visible { loadArtistPortraitIfNeeded() }
-        if !visible { videoRequested = false }
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression") {
+            NSLog("[SyllumeYouTube] surface visible=\(visible) pending=\(videoRequested)")
+        }
+        #endif
         if embeddedVideo != nil { setEmbeddedVideoVisible(visible) }
         else { startRequestedVideoIfVisible() }
     }
