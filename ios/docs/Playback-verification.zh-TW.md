@@ -1,6 +1,14 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。側載候選為 0.4.0 build 54（`a449159`），可在 Windows 用 Sideloadly 重簽。iPhone 尚待使用者側載與驗證。 [未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14762779645)
+獨立分支 `codex/syllume-player-experience`。iPhone 尚待使用者側載與驗證。
+
+## build 55 的歌詞導航與 Navidrome 實際續播
+
+`93f0ea4` 在 WebKit 離線頁面導航完全無回應時重載一次，兩次共用原本的 36 秒期限。第二次仍無回應會保留同步文字，AVPlayer 持續運作。新增「首次無回應後恢復」和「持續無回應」的模擬器夾具。常規和跨架構回歸仍在執行。 [常規回歸](https://github.com/Fringetw/Syllume/actions/runs/45084938011) · [起播回歸](https://github.com/Fringetw/Syllume/actions/runs/45084938659) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45085793464)
+
+iOS 26 模擬器透過正式 Navidrome 0.64.2 的 HTTPS API 搜尋原版曲目，AVPlayer 實際下載音訊。測試注入時鐘停滯並等到逾時，重試換了 AVPlayerItem 並重新請求同一曲目。停滯時鐘為 11.564 秒，重試首筆定位為 11.563333 秒，隨後前進至 13.200 秒。測試使用 Debug 模擬器的暫存帳戶，iPhone 鑰匙圈與真實網路中斷尚待實機驗證。macOS 的 Swift API 測試同時驗證帳密、唯一原版配對及 380,160 bytes 的串流與下載內容。 [iOS 模擬器 1/1、實際取樣與截圖](https://github.com/Fringetw/Syllume/actions/runs/45084942118/artifacts/14778314533) · [正式 API 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45084942118/artifacts/14778473118)
+
+iPhone Release 0.4.0 build 55 已編譯，最低 iOS 17。已核對 ZIP、ARM64、iPhoneOS 26.2 SDK、未簽署狀態與內建歌詞資源。SHA-256 為 `F285DFAE38E5ED4E2F0639CDD19421ECE4E079015351EFF479207C7A0A99C1DC`。Windows 可使用 Sideloadly 重簽。 [build 55 未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14778544440)
 
 ## build 54 的逾時續播與重新定位
 
@@ -11,7 +19,7 @@
 | iOS 26 模擬器 | 12/12。使用 AVPlayer 真正播放內建音檔並注入時鐘停滯。確認逾時後仍維持暫停、手動重試的首筆定位在原位置 ±0.35 秒內，以及第二次逾時後手動定位會清除舊錯誤並從新位置續播。其餘測試包括暫停拖曳、切歌與循環、霧盞樣式記憶、字幕同步備援及 HTTP 停傳。 [測試、截圖與 HTTP 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14764371164) |
 | iOS 18.6 模擬器 | Intel 25/26，Apple Silicon 24/26。兩者的主要播放套件皆為 19/19。Intel 的《JANE DOE》商籟未就緒。Apple Silicon 的《JANE DOE》商籟收到首幀，《Lemon》繪光在導航後 18.199 秒逾時。另外一項 Apple Silicon 離線快取測試遇到 XCTest 終止 App 失敗。 [Intel](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14765950524) · [Apple Silicon](https://github.com/Fringetw/Syllume/actions/runs/45045169059/artifacts/14764399812) |
 | 核心測試 | macOS Swift 核心、40 項 JavaScript、14 項 Python、5 項商籟與繪光渲染交接測試皆通過。 [核心測試](https://github.com/Fringetw/Syllume/actions/runs/45045168886/artifacts/14763600903) · [編譯日誌](https://github.com/Fringetw/Syllume/actions/runs/45045168886/job/137278085415) |
-| 真實 Navidrome HTTPS | 正式 Swift 客戶端通過驗證、搜尋、錄音比對、下載解碼及錯誤帳密分類。串流與下載內容相符，380,160 bytes、29.975 秒。模擬器首輪在認證後停在帳戶設定，ad hoc 簽署重跑則未能啟動 App。第三輪用 Debug 模擬器的暫存帳戶測試正式 HTTPS 搜尋和 AVPlayer 續播，結果待確認。 [API 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45080683460/artifacts/14778125210) · [模擬器第二輪](https://github.com/Fringetw/Syllume/actions/runs/45082285248) |
+| 真實 Navidrome HTTPS | 正式 Swift 客戶端通過驗證、搜尋、錄音比對、下載解碼及錯誤帳密分類。串流與下載內容相符，380,160 bytes、29.975 秒。模擬器首輪在認證後停在帳戶設定，ad hoc 簽署重跑未能啟動 App。第三輪已取得重試定位事件，但測試從已更新的事件清單尋找舊項目而失敗。build 55 在重試前擷取舊項目並完成續播驗證。 [build 54 嘗試](https://github.com/Fringetw/Syllume/actions/runs/45083594875) · [build 55 通過](https://github.com/Fringetw/Syllume/actions/runs/45084942118/artifacts/14778314533) |
 | 公開 HTTPS | build 54 的 AVPlayer 完成暫停、定位至約 12 秒並續播。首輪的 UI 操作跨片尾，重跑通過。另讓公開測試的 30 秒夾具循環，消除觀察與點按跨片尾的競態，調整後通過 1/1。 [原版重跑](https://github.com/Fringetw/Syllume/actions/runs/45045171460/artifacts/14777810391) · [調整後重跑](https://github.com/Fringetw/Syllume/actions/runs/45081181796/artifacts/14777736631) |
 | 模擬器資源 | iOS 26 的霧盞各取樣 4 秒，共 3 次。平均 App CPU 時間 0.563 秒，平均實體記憶體峰值 75,450 kB。iPhone 的 FPS、GPU、耗電與行動網路流量待驗。 [取樣日誌](https://github.com/Fringetw/Syllume/actions/runs/45045168886/job/137278085180) |
 
