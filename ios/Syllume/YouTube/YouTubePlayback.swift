@@ -223,7 +223,8 @@ final class YouTubePlayback {
     func failed(_ code: Int, session: String) {
         guard self.session.uuidString == session else { return }
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--youtube-device-playback-regression") {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--youtube-device-playback-regression") || arguments.contains("--youtube-public-smoke") {
             NSLog("[SyllumeYouTube] failure code=\(code) time=\(position) revision=\(playbackRevision)")
         }
         #endif

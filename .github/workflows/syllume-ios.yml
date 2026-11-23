@@ -513,7 +513,7 @@ jobs:
               --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
               > "$RUNNER_TEMP/SyllumeIOS26Evidence/Sonnet-stage.log" ||
               echo "::warning::Could not export the simulator stage checkpoints."
-            if [ "${{ inputs.youtube_reopen_only || false }}" = "true" ]; then
+            if [ "${{ inputs.youtube_reopen_only || inputs.public_youtube_only || false }}" = "true" ]; then
               xcrun simctl spawn "$FOLIA_IOS26_SIMULATOR_ID" log show --last 35m --style compact \
                 --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeYouTube]"' \
                 > "$RUNNER_TEMP/SyllumeIOS26Evidence/YouTube-iOS26.log" ||
