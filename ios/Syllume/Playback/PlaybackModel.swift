@@ -159,7 +159,7 @@ final class PlaybackModel {
             + details + " deadlineIn=" + wait
         nativeTransportTrace.append(entry)
         if nativeTransportTrace.count > 12 { nativeTransportTrace.removeFirst(nativeTransportTrace.count - 12) }
-        print("Syllume native transport: " + entry)
+        NSLog("%@", "Syllume native transport: " + entry)
     }
 
     private func nativeTransportSnapshot(item: AVPlayerItem?) -> String {

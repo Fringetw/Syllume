@@ -370,25 +370,39 @@ final class SyllumeUITests: XCTestCase {
         hold.tap()
 
         let timeout = app.staticTexts["等待音訊逾時。請點播放重試。"]
-        XCTAssertTrue(timeout.waitForExistence(timeout: 48), String(describing: trace.value))
+        var beforeRetry = ""
+        let reachedTimeout = expectation(for: NSPredicate { _, _ in
+            guard let value = trace.value as? String,
+                  value.contains(" clock-held "), value.contains(" buffer-timeout ") else { return false }
+            beforeRetry = value
+            return true
+        }, evaluatedWith: trace)
+        XCTAssertEqual(XCTWaiter.wait(for: [reachedTimeout], timeout: 48), .completed,
+                       "Navidrome playback must time out after an injected clock stall.")
+        XCTAssertTrue(timeout.exists, "The timeout must also be presented in the player.")
         let frozenTime = waitForPausedNativeClock(clock)
         XCTAssertTrue((8...26).contains(frozenTime))
         XCTAssertEqual(toggle.label, "播放")
         XCTAssertEqual(metadata.value as? String, originalMetadata,
                        "The timeout must leave the current track's loaded lyrics and cover in place.")
-        let beforeRetry = trace.value as? String ?? ""
         XCTAssertFalse(beforeRetry.contains("recovery-positioned"))
-        let heldItem = beforeRetry.split(whereSeparator: \.isNewline).last?.split(separator: " ")
+        let heldItem = beforeRetry.split(whereSeparator: \.isNewline)
+            .first { $0.contains(" clock-held ") }?.split(separator: " ")
             .first { $0.hasPrefix("item=") }
         XCTAssertNotNil(heldItem, "Capture the original paused item before the retry replaces trace entries.")
         capture(app, name: "Syllume-Navidrome-confirmed-timeout")
 
         let retryEpoch = Date().timeIntervalSince1970
         toggle.tap()
-        let restored = expectation(for: NSPredicate(format: "value CONTAINS %@", "recovery-positioned"), evaluatedWith: trace)
-        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 48), .completed, String(describing: trace.value))
-        let entries = (trace.value as? String ?? "").split(whereSeparator: \.isNewline)
-        let recovery = entries.first { $0.contains(" recovery-positioned ") }?.split(separator: " ") ?? []
+        var recovery: [Substring] = []
+        let restored = expectation(for: NSPredicate { _, _ in
+            let entries = (trace.value as? String ?? "").split(whereSeparator: \.isNewline)
+            guard let positioned = entries.first(where: { $0.contains(" recovery-positioned ") }) else { return false }
+            recovery = positioned.split(separator: " ")
+            return true
+        }, evaluatedWith: trace)
+        XCTAssertEqual(XCTWaiter.wait(for: [restored], timeout: 48), .completed,
+                       "Navidrome playback retry must report its confirmed AVPlayer position.")
         let newItem = recovery.first { $0.hasPrefix("item=") }
         XCTAssertNotNil(newItem)
         XCTAssertNotEqual(heldItem, newItem, "The retry must use a new AVPlayerItem.")
