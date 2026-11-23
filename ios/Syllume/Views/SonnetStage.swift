@@ -162,7 +162,7 @@ private struct SonnetWebView: UIViewRepresentable {
             "webgl-request", "webgl-created", "webgl-unavailable", "webgl-extensions-ready",
             "renderer-init", "renderer-initialized", "assets-start", "assets-ready", "scene-start",
             "shader-link", "shader-extension", "shader-candidates", "shader-polling",
-            "shader-linked", "shader-deferred", "first-frame"
+            "shader-linked", "shader-deferred", "canvas-attached", "first-render-start", "first-frame"
         ]
         private var lastClockProbe = ""
         private var clockRequest: UUID?
@@ -525,9 +525,10 @@ private struct SonnetWebView: UIViewRepresentable {
             stageCheckpoint("navigation-finished")
         }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            guard webView === view, let navigation, navigation === self.navigation,
-                  (error as NSError).code != NSURLErrorCancelled else { return }
-            stageCheckpoint("navigation-error \((error as NSError).code)")
+            guard webView === view, let navigation, navigation === self.navigation else { return }
+            let code = (error as NSError).code
+            stageCheckpoint("navigation-error \(code)")
+            guard code != NSURLErrorCancelled else { return }
             markFailure("無法載入歌詞動畫。")
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

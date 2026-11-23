@@ -245,12 +245,14 @@ export class SonnetPixiRuntime {
         checkpoint?.(warmed ? 'shader-linked' : 'shader-deferred');
         this.options.host.appendChild(this.app.canvas);
         this.app.canvas.style.cssText = 'width:100%;height:100%;display:block';
+        checkpoint?.('canvas-attached');
         this.app.ticker.add(this.renderFrame);
         this.resizeObserver = new ResizeObserver(() => {
             if (this.destroyed || !this.resizeToHost()) return;
             if (this.options.paused) this.renderOnce();
         });
         this.resizeObserver.observe(this.options.host);
+        checkpoint?.('first-render-start');
         this.app.renderer.render(this.app.stage);
         checkpoint?.('first-frame');
         if (!this.options.paused) this.app.start();

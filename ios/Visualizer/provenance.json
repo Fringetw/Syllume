@@ -155,7 +155,7 @@
   "ios_patches": {
     "src/components/visualizer/sonnet/createSonnetPixiRuntime.ts": {
       "reason": "iOS frame-rate cap, settle in-flight handover on pause, and bounded first-frame warmup checkpoints",
-      "patched_sha256": "65b9a8bed04a6c6d1d19a7f925a1ada5eeeb6130eb04110f7ea40a96663334f3"
+      "patched_sha256": "9c16dec67e4a6f712852bf3959ff83d1f3db64acb229dd3c6fd8e49105c90a2c"
     },
     "src/components/visualizer/lumiere/createLumierePixiRuntime.ts": {
       "reason": "iOS frame-rate cap, settle in-flight handover on pause, and bounded first-frame warmup checkpoints",
