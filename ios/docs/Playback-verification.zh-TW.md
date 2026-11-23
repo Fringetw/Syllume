@@ -1,10 +1,32 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前側載候選為 0.4.0 build 57（`ff4bc0c`）。iPhone 尚待使用者側載與驗證。
+獨立分支 `codex/syllume-player-experience`。目前供側載驗證的版本為 0.4.0 build 58（`b200795`）。此版本需在 Windows 以 Sideloadly 重簽，iPhone 安裝和播放尚待驗證。
 
 ## YouTube 播放器重開
 
 build 57 的 Apple Silicon iOS 18.6 錄影顯示播放器重開後於 11.000 秒緩衝，之後觸發播放停滯逾時。另用 iOS 26 本機 WebKit 測試音軌重現一條獨立問題。在迷你播放器按播放後送出重複的隱藏通知，舊程式會清除待處理的播放請求。修正前的基準測試在首次起播通過後，重開停在 11.000 秒。 [build 57 ARM 測試](https://github.com/Fringetw/Syllume/actions/runs/45090533426/artifacts/14783356597) · [重現基準](https://github.com/Fringetw/Syllume/actions/runs/45142375764/artifacts/14802558017)
+
+build 58（`b200795`）只在畫面真正由可見切到隱藏時清除待處理的播放請求。iOS 26 重現案例為 1/1。日誌顯示重複隱藏通知後仍有待處理請求，WebKit 重開時為 11.000 秒，暫停前已到 13.452 秒。測試也包含暫停定位及同一播放指令被 WebKit 拒絕一次後重送。這輪使用本機媒體，另一次自然停滯的原因和 iPhone 實際 YouTube 播放仍待確認。 [通過的測試、畫面與橋接日誌](https://github.com/Fringetw/Syllume/actions/runs/45170857536/artifacts/14817057339)
+
+iPhone Release 0.4.0 build 58 已從 Apple Silicon Runner 編譯。已核對 ZIP、ARM64、最低 iOS 17、未簽署狀態及離線資源。SHA-256 為 `87FEA9F18600C0FEC07B5AEDE2ED8839F559C68641BA779A76AA7EC2B4A2D8B9`。 [build 58 未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45170864029/artifacts/14817131593)
+
+## build 58 的模擬器回歸與效能
+
+iOS 26.4.1 的常規工作在 40 分鐘上限前完成 13 項，全部通過。涵蓋暫停拖曳、切歌與循環、商籟失敗備援、霧盞記憶、大字級與常速、限速及停傳 HTTP。最後的暫停定位停傳案例在 `9afc23c` 以相同的 Release 播放邏輯獨立補跑並通過，伺服器收到 6 次 GET 並回應 756,407 bytes。工作流程已保留匯出證據的時間。 [13 項結果與畫面](https://github.com/Fringetw/Syllume/actions/runs/45170855472/artifacts/14818912056) · [補跑結果與 HTTP 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45177707504/artifacts/14821105652)
+
+在同一個 iPhone 17 Pro 模擬器上，霧盞執行三次各 4 秒的取樣。平均 App CPU 時間為 0.700 秒，平均實體記憶體峰值為 75,832 kB。FPS、GPU、耗電及行動網路用量待實機測量。 [XCTest 效能日誌](https://github.com/Fringetw/Syllume/actions/runs/45170855472/job/137679701378)
+
+iOS 18.6 Apple Silicon 為 27/28。歌單與 YouTube 重開 5/5、一般回歸 21/21、iPhone SE 大字級 1/1。《JANE DOE》已通過 YouTube 測試媒體時鐘斷言，商籟離線頁面兩次皆未回報導航或首幀，36.004 秒結束等待。 [UI 結果](https://github.com/Fringetw/Syllume/actions/runs/45170864029/artifacts/14819672566) · [商籟檢查點](https://github.com/Fringetw/Syllume/actions/runs/45170864029/artifacts/14818596003)
+
+iOS 18.6 Intel 同為 27/28。歌單與 YouTube 重開 5/5、一般回歸 21/21、iPhone SE 大字級 1/1。《JANE DOE》的商籟在 15.274 秒完成 WebGL 與素材準備，之後未回報首幀，27.744 秒逾時。兩個架構的 YouTube 重開案例皆使用本機測試媒體。 [UI 結果](https://github.com/Fringetw/Syllume/actions/runs/45170855472/artifacts/14821781052) · [商籟檢查點](https://github.com/Fringetw/Syllume/actions/runs/45170855472/artifacts/14818980407)
+
+## build 58 的 HTTPS 與實際 YouTube
+
+macOS 的正式 Swift 客戶端通過 Navidrome HTTPS 憑證、驗證、搜尋及原曲比對。原始串流與下載內容完全相同，380,160 bytes，下載可解碼至 29.975 秒。iOS 模擬器使用隔離測試帳號連接同一個伺服器。第一次測試在等待逾時提示時發生 XCTest 快照逾時。第二次測試的伺服器紀錄有 AVPlayer 的 HTTP 206 音訊回應，但 XCTest 最後讀到 `0.000|0.0`。兩次都沒有執行重試。`1cc19d9` 將測試等待點改為明確的 AVPlayer 停滯、逾時及確認定位事件，並將這些 Debug 事件寫入可匯出的系統日誌。 [真實 Swift API](https://github.com/Fringetw/Syllume/actions/runs/45172555789/artifacts/14817438421) · [首次模擬器紀錄](https://github.com/Fringetw/Syllume/actions/runs/45172555789/artifacts/14817288503) · [再次模擬器紀錄](https://github.com/Fringetw/Syllume/actions/runs/45172555789/artifacts/14818706352) · [測試與 Debug 日誌更新](https://github.com/Fringetw/Syllume/commit/1cc19d9)
+
+`1cc19d9` 的 iOS 26.4.1 模擬器測試通過 1/1。AVPlayer 從注入停滯的 11.478 秒重新定位至 11.477 秒，隨後前進至 13.701 秒。前後使用不同的 AVPlayerItem、相同的曲目及相同的歌詞版本，封面也保留。重試後封面、新版歌詞及舊版歌詞的額外請求皆為 0，另有 4 次串流請求。實機網路中斷與總流量尚待驗證。 [續播時間、伺服器請求及畫面](https://github.com/Fringetw/Syllume/actions/runs/45174445529/artifacts/14819911944)
+
+這次 iOS 26 的官方 IFrame 為 0/2。首輪《HELP!!》停在 0.000 秒並收到 `150`。另一支參考影片的播放器已出現，但測試在讀取來源標籤時結束。`5c2e382` 重測會直接讀取媒體時間與錯誤碼。兩支影片皆回報 `0.000|permission:150`，播放器可見，且介面提供前往 YouTube Music 的連結。官方文件將 `150` 歸為影片不允許內嵌播放。這次重測未驗證實際 iPhone 和私人歌單。 [官方 IFrame 首輪](https://github.com/Fringetw/Syllume/actions/runs/45173191965/artifacts/14818561813) · [重測摘要、截圖與錯誤日誌](https://github.com/Fringetw/Syllume/actions/runs/45175373345/artifacts/14819169235) · [YouTube IFrame 錯誤碼](https://developers.google.com/youtube/iframe_api_reference#Events)
 
 ## build 57 的編譯與模擬器結果
 
