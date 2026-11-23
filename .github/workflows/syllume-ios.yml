@@ -19,6 +19,10 @@ on:
         description: Exercise reopening the visible YouTube player with local test media
         type: boolean
         default: false
+      http_seek_only:
+        description: Run the iOS 26 paused HTTP seek recovery case
+        type: boolean
+        default: false
       navidrome_only:
         description: Run the production Navidrome client against an isolated HTTPS server
         type: boolean
@@ -54,7 +58,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.http_seek_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: ${{ inputs.ios18_arm64 && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 105
     env:
@@ -334,7 +338,7 @@ jobs:
   ios-26-player:
     if: ${{ !inputs.intel_recorded_only && !inputs.ios18_arm64 && ((!inputs.navidrome_only && !inputs.navidrome_simulator) || inputs.public_youtube_only || inputs.public_native_only || inputs.startup_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Prepare lyric font
@@ -353,9 +357,11 @@ jobs:
             CODE_SIGNING_ALLOWED=NO build-for-testing
       - name: Exercise progress, Mist and large text on iOS 26
         if: ${{ inputs.startup_only || (!inputs.public_youtube_only && !inputs.public_native_only) }}
+        timeout-minutes: 50
         env:
           STARTUP_ONLY: ${{ inputs.startup_only || false }}
           YOUTUBE_REOPEN_ONLY: ${{ inputs.youtube_reopen_only || false }}
+          HTTP_SEEK_ONLY: ${{ inputs.http_seek_only || false }}
         run: |
           simulator_id="$FOLIA_IOS26_SIMULATOR_ID"
           derived_data="$RUNNER_TEMP/SyllumeIOS26Build"
@@ -375,26 +381,6 @@ jobs:
           if [ "$YOUTUBE_REOPEN_ONLY" = "true" ]; then
             run_player_check SyllumeIOS26YouTubeReopen testYouTubeSongAutomaticallyPlaysVisibleOriginal
             exit $?
-          fi
-          failed=0
-          if [ "$STARTUP_ONLY" = "true" ]; then
-            run_player_check SyllumeIOS26ColdSonnet testAnimatedPlayback || failed=1
-          else
-            run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
-            run_player_check SyllumeIOS26Resources testMistRenderingResourceSample || failed=1
-            run_player_check SyllumeIOS26Scrub testMistStylePersistsAndProgressControlsSeekPausedAudio || failed=1
-            run_player_check SyllumeIOS26NativeEnd testNativeDelayedEndDoesNotReplaceSeekAndSeekingToEndRepeats || failed=1
-          fi
-          run_player_check SyllumeIOS26LocalStartup testNativeLocalStartupRecoversOnce || failed=1
-          run_player_check SyllumeIOS26NativeClockStall testNativeFrozenClockStopsPlayingAndCanRetry || failed=1
-          run_player_check SyllumeIOS26SonnetRetry testSonnetRetriesRejectedInitialization || failed=1
-          run_player_check SyllumeIOS26SonnetTimeout testSonnetTimeoutEndsWithoutStoppingAudio || failed=1
-          run_player_check SyllumeIOS26NavigationRetry testLyricStageRetriesSilentNavigationAndKeepsAudioPlaying || failed=1
-          run_player_check SyllumeIOS26NavigationLimit testLyricStageStopsAfterSilentNavigationRetry || failed=1
-          if [ "$STARTUP_ONLY" = "true" ]; then
-            run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
-            run_player_check SyllumeIOS26RecordedSonnet testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics || failed=1
-            exit "$failed"
           fi
           run_http_check() (
             name="$1"; test_name="$2"; mode="$3"
@@ -455,6 +441,30 @@ jobs:
           PY
             exit "$status"
           )
+          if [ "$HTTP_SEEK_ONLY" = "true" ]; then
+            run_http_check SyllumeIOS26HTTPSeek testNativePausedSeekEndsWhenHTTPStopsResponding seek
+            exit $?
+          fi
+          failed=0
+          if [ "$STARTUP_ONLY" = "true" ]; then
+            run_player_check SyllumeIOS26ColdSonnet testAnimatedPlayback || failed=1
+          else
+            run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
+            run_player_check SyllumeIOS26Resources testMistRenderingResourceSample || failed=1
+            run_player_check SyllumeIOS26Scrub testMistStylePersistsAndProgressControlsSeekPausedAudio || failed=1
+            run_player_check SyllumeIOS26NativeEnd testNativeDelayedEndDoesNotReplaceSeekAndSeekingToEndRepeats || failed=1
+          fi
+          run_player_check SyllumeIOS26LocalStartup testNativeLocalStartupRecoversOnce || failed=1
+          run_player_check SyllumeIOS26NativeClockStall testNativeFrozenClockStopsPlayingAndCanRetry || failed=1
+          run_player_check SyllumeIOS26SonnetRetry testSonnetRetriesRejectedInitialization || failed=1
+          run_player_check SyllumeIOS26SonnetTimeout testSonnetTimeoutEndsWithoutStoppingAudio || failed=1
+          run_player_check SyllumeIOS26NavigationRetry testLyricStageRetriesSilentNavigationAndKeepsAudioPlaying || failed=1
+          run_player_check SyllumeIOS26NavigationLimit testLyricStageStopsAfterSilentNavigationRetry || failed=1
+          if [ "$STARTUP_ONLY" = "true" ]; then
+            run_player_check SyllumeIOS26LargeText testLargeTextPlaybackKeepsStyleMenuAndControlsUsable || failed=1
+            run_player_check SyllumeIOS26RecordedSonnet testRecordedSongsUseVisibleFallbackWithSharedArtworkAndTimedLyrics || failed=1
+            exit "$failed"
+          fi
           run_http_check SyllumeIOS26HTTP testNativeLoopbackStreamsAndSeeks playing || failed=1
           run_http_check SyllumeIOS26HTTPPaced testNativeLoopbackStreamsAndSeeks paced || failed=1
           run_http_check SyllumeIOS26HTTPStall testNativeLoopbackFallsBackAfterTimeout stalled || failed=1
@@ -509,7 +519,7 @@ jobs:
         run: |
           if [ -n "$FOLIA_IOS26_SIMULATOR_ID" ]; then
             mkdir -p "$RUNNER_TEMP/SyllumeIOS26Evidence"
-            xcrun simctl spawn "$FOLIA_IOS26_SIMULATOR_ID" log show --last 35m --style compact \
+            xcrun simctl spawn "$FOLIA_IOS26_SIMULATOR_ID" log show --last 60m --style compact \
               --predicate 'process == "Syllume" AND eventMessage CONTAINS "[SyllumeStage]"' \
               > "$RUNNER_TEMP/SyllumeIOS26Evidence/Sonnet-stage.log" ||
               echo "::warning::Could not export the simulator stage checkpoints."
@@ -528,7 +538,7 @@ jobs:
             SyllumeIOS26HTTP SyllumeIOS26HTTPPaced SyllumeIOS26HTTPStall SyllumeIOS26HTTPSeek \
             SyllumePublicYouTube SyllumePublicNativeHTTPS; do
             result="$RUNNER_TEMP/$name.xcresult"
-            if [ -d "$result" ]; then
+            if [ -f "$result/Info.plist" ]; then
               evidence="$RUNNER_TEMP/SyllumeIOS26Evidence/$name"
               mkdir -p "$evidence"
               xcrun xcresulttool get test-results summary --path "$result" > "$evidence/test-summary.json"
