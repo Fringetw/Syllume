@@ -14,6 +14,10 @@ iOS 26 模擬器透過正式 Navidrome 0.64.2 的 HTTPS API 搜尋原版曲目�
 
 iPhone Release 0.4.0 build 55 已編譯，最低 iOS 17。已核對 ZIP、ARM64、iPhoneOS 26.2 SDK、未簽署狀態與內建歌詞資源。SHA-256 為 `F285DFAE38E5ED4E2F0639CDD19421ECE4E079015351EFF479207C7A0A99C1DC`。Windows 可使用 Sideloadly 重簽。 [build 55 未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14778544440)
 
+## Navidrome 重試流量
+
+同一首有封面和同步歌詞的曲目，build 55 在重試後多送出 1 次 `getCoverArt` 和 1 次 `getLyricsBySongId`。build 56（`6419f8b`）重試後兩者皆為 0 次。歌詞版本、封面和同一曲目身分確認相符。真實 HTTPS 媒體從 11.844 秒停滯，在 11.843333 秒恢復，隨後前進到 14.503 秒。測試計算實際 API 請求，串流請求仍依 AVPlayer 的 Range 行為變動。實機總流量待驗。 [build 55 請求基準](https://github.com/Fringetw/Syllume/actions/runs/45088558812/artifacts/14780427428) · [build 56 通過](https://github.com/Fringetw/Syllume/actions/runs/45089179391/artifacts/14780209098)
+
 ## build 54 的逾時續播與重新定位
 
 原生播放逾時會保留 AVPlayer 最後確認的位置。重試時，本機音檔須是相同檔案且屬性相符。已下載音檔仍走原有完整性檢查。直接選取的 Navidrome 曲目保留同一帳號及曲目 ID，重新取得串流網址。新播放項目須完成定位後才開始輸出音訊。若使用者在逾時後先定位，則採用同一播放項目確認的新位置。YouTube 官方播放器和跨音源切換保留各自的播放流程。 [播放修正](https://github.com/Fringetw/Syllume/commit/b1778abafb5a431308fde5d14bda6848624416c6) · [手動定位修正](https://github.com/Fringetw/Syllume/commit/a449159f1b7549454707adbb674de23a51b67f17)
