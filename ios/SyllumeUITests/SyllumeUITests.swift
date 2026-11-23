@@ -443,10 +443,11 @@ final class SyllumeUITests: XCTestCase {
 
     func testLyricStageRetriesSilentNavigationAndKeepsAudioPlaying() {
         continueAfterFailure = false
-        let (app, stage, deadline) = openPlayingSonnetForNavigationFixture("--stage-stall-first-navigation")
+        let (app, stage, _) = openPlayingSonnetForNavigationFixture("--stage-stall-first-navigation")
         let recovered = expectation(for: NSPredicate(format: "value BEGINSWITH %@ AND value ENDSWITH %@",
             "已就緒", " · 已重載"), evaluatedWith: stage)
-        XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: max(1, deadline - ProcessInfo.processInfo.systemUptime)),
+        // The app already enforces its deadline. Give XCTest time to sample the resulting view.
+        XCTAssertEqual(XCTWaiter.wait(for: [recovered], timeout: 45),
                        .completed, "The replacement page must render. \(String(describing: stage.value))")
         XCTAssertFalse(app.staticTexts["正在準備歌詞動畫"].exists)
         waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
