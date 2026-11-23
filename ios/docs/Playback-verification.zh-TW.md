@@ -6,7 +6,7 @@
 
 `93f0ea4` 在 WebKit 離線頁面導航完全無回應時重載一次，兩次共用原本的 36 秒期限。iOS 26 起播回歸 9/9。首次無回應的案例在 18.066 秒重載，22.375 秒畫出首幀。兩次都無回應的案例在 36.023 秒結束等待並顯示同步文字。兩項都確認 AVPlayer 的時鐘持續前進。常規和跨架構回歸另行執行。 [9 項測試摘要、日誌及截圖](https://github.com/Fringetw/Syllume/actions/runs/45084938659/artifacts/14779780935) · [常規回歸](https://github.com/Fringetw/Syllume/actions/runs/45084938011) · [Apple Silicon iOS 18.6](https://github.com/Fringetw/Syllume/actions/runs/45085793464)
 
-iOS 26 常規回歸 14/14，包含暫停拖曳、定位停傳後恢復、切歌、循環、霧盞記憶及大字級。Apple Silicon iOS 18.6 的錄影曲目案例通過，《Lemon》繪光在 2.768 秒就緒。這次錄影曲目載入直接成功，限次重載另以 iOS 26 夾具驗證。霧盞三次 4 秒取樣的平均 App CPU 時間為 1.180 秒，平均實體記憶體峰值 75,308 kB，實機的 FPS、GPU、耗電與流量尚待驗證。 [iOS 26 常規結果](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14779702389) · [iOS 18.6 錄影曲目日誌](https://github.com/Fringetw/Syllume/actions/runs/45085793464/artifacts/14779113245)
+iOS 26 常規回歸 14/14，包含暫停拖曳、定位停傳後恢復、切歌、循環、霧盞記憶及大字級。Apple Silicon iOS 18.6 全套 28/28，含 iPhone SE 大字級。《Lemon》繪光在 2.768 秒就緒。這次錄影曲目載入直接成功，限次重載另以 iOS 26 夾具驗證。霧盞三次 4 秒取樣的平均 App CPU 時間為 1.180 秒，平均實體記憶體峰值 75,308 kB。實機 FPS、GPU、耗電與流量待驗。 [iOS 26 常規結果](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14779702389) · [iOS 18.6 全套](https://github.com/Fringetw/Syllume/actions/runs/45085793464/artifacts/14780641756) · [錄影曲目日誌](https://github.com/Fringetw/Syllume/actions/runs/45085793464/artifacts/14779113245)
 
 Intel iOS 18.6 的錄影曲目案例仍失敗。商籟在 17.315 秒將著色工作交給渲染器，隨後在 30.213 秒收到錯誤，重載於 36.190 秒到期。官方 YouTube IFrame 的兩支公開影片本輪皆停在 0:00 並回傳 `150`，真實 YouTube 播放未通過。 [Intel 首幀紀錄](https://github.com/Fringetw/Syllume/actions/runs/45084938011/artifacts/14780201023) · [官方 YouTube IFrame 結果](https://github.com/Fringetw/Syllume/actions/runs/45086804281/artifacts/14779967306)
 

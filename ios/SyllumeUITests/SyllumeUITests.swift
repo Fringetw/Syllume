@@ -346,6 +346,22 @@ final class SyllumeUITests: XCTestCase {
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [positioned], timeout: 25), .completed)
         let interiorTime = probeTime(clock)
+        let metadata = app.staticTexts["navidromeMetadataProbe"]
+        var originalMetadata: String?
+        let loadedMetadata = expectation(for: NSPredicate { _, _ in
+            guard metadata.exists, let value = metadata.value as? String else { return false }
+            let fields = value.split(separator: "|", omittingEmptySubsequences: false)
+            guard fields.count == 3, UUID(uuidString: String(fields[0])) != nil,
+                  let lines = Int(fields[1]), lines > 0, !fields[2].isEmpty, fields[2] != "empty" else { return false }
+            originalMetadata = value
+            return true
+        }, evaluatedWith: metadata)
+        XCTAssertEqual(XCTWaiter.wait(for: [loadedMetadata], timeout: 15), .completed,
+                       "Navidrome must load both the synchronized lyric fixture and cover before playback recovery.")
+        guard let originalMetadata else {
+            XCTFail("The initial Navidrome metadata sample was unavailable.")
+            return
+        }
         toggle.tap()
         waitForDemoAudio(app, from: interiorTime)
         hold.tap()
@@ -355,6 +371,8 @@ final class SyllumeUITests: XCTestCase {
         let frozenTime = waitForPausedNativeClock(clock)
         XCTAssertTrue((8...26).contains(frozenTime))
         XCTAssertEqual(toggle.label, "播放")
+        XCTAssertEqual(metadata.value as? String, originalMetadata,
+                       "The timeout must leave the current track's loaded lyrics and cover in place.")
         let beforeRetry = trace.value as? String ?? ""
         XCTAssertFalse(beforeRetry.contains("recovery-positioned"))
         let heldItem = beforeRetry.split(whereSeparator: \.isNewline).last?.split(separator: " ")
@@ -387,6 +405,8 @@ final class SyllumeUITests: XCTestCase {
         samples.lifetime = .keepAlways
         add(samples)
         XCTAssertFalse(timeout.exists)
+        XCTAssertEqual(metadata.value as? String, originalMetadata,
+                       "Opening a fresh stream must preserve the original lyric revision and artwork.")
         capture(app, name: "Syllume-Navidrome-confirmed-retry")
     }
 

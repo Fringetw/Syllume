@@ -291,6 +291,21 @@ jobs:
         run: |
           set -o pipefail
           bash ios/Checks/run_navidrome_live.sh 2>&1 | tee "$RUNNER_TEMP/Syllume-Navidrome-live.txt"
+      - name: Verify the retry opens a stream without fetching loaded metadata again
+        if: inputs.navidrome_simulator
+        run: |
+          python3 - "$RUNNER_TEMP/SyllumeNavidromePlayback/simulator-request-counts.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as report:
+              counts = json.load(report)
+          before, after = counts["beforeRetry"], counts["afterRetry"]
+          metadata = ("/rest/getCoverArt", "/rest/getLyricsBySongId", "/rest/getLyrics")
+          print(json.dumps(counts, indent=2))
+          if (before["/rest/getCoverArt"] < 1 or before["/rest/getLyricsBySongId"] < 1
+                  or after["/rest/stream"] < 1 or any(after[path] for path in metadata)
+                  or any(counts["unknownPhase"].values())):
+              sys.exit("Expected initial cover and lyrics, a new stream on retry, and no repeated metadata.")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

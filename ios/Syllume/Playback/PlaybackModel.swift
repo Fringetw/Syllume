@@ -41,7 +41,7 @@ final class PlaybackModel {
     private struct NativeRetryPoint {
         static let timeTolerance = 0.35
 
-        enum Source {
+        enum Source: Equatable {
             case file(URL, DownloadVerification.FileStamp)
             case navidrome
         }
@@ -227,6 +227,7 @@ final class PlaybackModel {
     @ObservationIgnored private var statusObservation: NSKeyValueObservation?
     @ObservationIgnored private var system: PlaybackSystem?
     @ObservationIgnored private var artworkTask: Task<Void, Never>?
+    @ObservationIgnored private var remoteLyricsNeedRetry = false
     @ObservationIgnored private var artistPortraitTask: Task<Void, Never>?
     @ObservationIgnored private var lyricsTask: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
@@ -346,8 +347,16 @@ final class PlaybackModel {
             return
         }
         if let index, let nativeRetryPoint, !wantsPlayback {
-            if seeking { startCurrentItem() }
-            else { load(index, recovering: nativeRetryPoint) }
+            if seeking {
+                startCurrentItem()
+            } else if nativeRetryPoint.source == .navidrome, let track = current, track.source == .navidrome,
+                      let client, let url = try? client.stream(for: track) {
+                // The same queued track and account can retain their metadata while the stream reopens.
+                didAdvancePlayback = false
+                install(AVURLAsset(url: url), recovering: nativeRetryPoint)
+            } else {
+                load(index, recovering: nativeRetryPoint)
+            }
             return
         }
         if let track = current, track.source == .catalogue, error == nil,
@@ -974,7 +983,10 @@ final class PlaybackModel {
             }
         case .navidrome:
             url = try? client?.stream(for: track)
-            if let client { loadRemoteDetails(track, client: client) }
+            if let client {
+                loadRemoteLyrics(track, client: client)
+                loadRemoteArtwork(track, client: client)
+            }
         }
         guard let url else {
             system?.updateCommands(model: self)
@@ -1041,8 +1053,17 @@ final class PlaybackModel {
             nativeRestoring = false
             nativeRetryPoint = nil
             position = 0
+            if point.source == .navidrome, let track = current, let client, length.isFinite, length > 0 {
+                manualLyrics = false
+                timeline = LyricTimeline(lines: [])
+                loadRemoteLyrics(track, client: client)
+            }
             player.play()
             return
+        }
+        if point.source == .navidrome, let track = current, let client {
+            if remoteLyricsNeedRetry, !manualLyrics { loadRemoteLyrics(track, client: client) }
+            if artwork == nil, artworkTask == nil { loadRemoteArtwork(track, client: client) }
         }
         seekNativeItem(item, to: point.position, restarting: true)
     }
@@ -1447,18 +1468,32 @@ final class PlaybackModel {
         }
     }
 
-    private func loadRemoteDetails(_ track: Track, client: NavidromeClient) {
+    private func loadRemoteLyrics(_ track: Track, client: NavidromeClient) {
+        lyricsTask?.cancel()
         let revision = generation
+        remoteLyricsNeedRetry = false
         lyricsLoading = true
         lyricsTask = Task { [weak self] in
-            let timeline = await client.lyrics(for: track)
-            guard let self, generation == revision, !Task.isCancelled else { return }
-            self.timeline = timeline?.prepared(for: duration) ?? LyricTimeline(lines: [])
-            lyricsLoading = false
+            do {
+                let loaded = try await client.subtitleLyrics(for: track)
+                guard let self, generation == revision, !Task.isCancelled else { return }
+                timeline = loaded?.prepared(for: duration) ?? LyricTimeline(lines: [])
+                lyricsLoading = false
+            } catch {
+                guard let self, generation == revision, !Task.isCancelled else { return }
+                remoteLyricsNeedRetry = true
+                lyricsLoading = false
+            }
         }
+    }
+
+    private func loadRemoteArtwork(_ track: Track, client: NavidromeClient) {
+        let revision = generation
+        guard track.coverID != nil else { return }
         artworkTask = Task { [weak self] in
             let data = await client.artwork(for: track)
             guard let self, generation == revision, !Task.isCancelled else { return }
+            artworkTask = nil
             artwork = data.flatMap { UIImage(data: $0) }
             publishNowPlaying()
         }
@@ -1513,6 +1548,7 @@ final class PlaybackModel {
         artistPortraitTask?.cancel()
         artistPortraitTask = nil
         lyricsLoading = false
+        remoteLyricsNeedRetry = false
         position = 0
         duration = 0
         artwork = nil
@@ -1536,6 +1572,10 @@ final class PlaybackModel {
     }
 
     private func fail(_ message: String, problem: DiagnosticProblem = DiagnosticProblem(code: .unavailable)) {
+        if problem.code == .timeout, nativeRetryPoint?.source == .navidrome {
+            if lyricsLoading { remoteLyricsNeedRetry = true }
+            if artwork == nil { artworkTask?.cancel(); artworkTask = nil }
+        }
         lyricsTask?.cancel(); lyricsLoading = false
         diagnosticPlaybackProblem = problem
         DiagnosticsEvents.shared.record(.playbackFailed, problem: problem)
