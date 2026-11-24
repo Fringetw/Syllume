@@ -460,7 +460,8 @@ private struct LocalTransportProbe: View {
                 .accessibilityIdentifier("navidromeMetadataProbe")
                 .accessibilityValue("\(player.timelineRevision.uuidString)|\(player.timeline.lines.count)|\(player.artwork == nil ? "empty" : "artwork")")
         }
-        if ProcessInfo.processInfo.arguments.contains("--native-network-fixture") ||
+        if ProcessInfo.processInfo.arguments.contains("--navidrome-live-simulator") ||
+            ProcessInfo.processInfo.arguments.contains("--native-network-fixture") ||
             ProcessInfo.processInfo.arguments.contains("--native-local-start-fixture") ||
             ProcessInfo.processInfo.arguments.contains("--native-frozen-clock-fixture") {
             Text("原生串流取樣").font(.system(size: 1)).frame(height: 1)

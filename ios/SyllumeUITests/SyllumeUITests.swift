@@ -407,13 +407,22 @@ final class SyllumeUITests: XCTestCase {
         continueAfterFailure = false
         let app = try openLiveNavidromeTrack()
         waitForDemoAudio(app)
-        XCTAssertFalse(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.exists)
-        let trace = app.staticTexts["nativeTransportDebugProbe"].value as? String ?? ""
+        let probe = app.staticTexts["nativeTransportDebugProbe"]
+        XCTAssertTrue(probe.waitForExistence(timeout: 10))
+        let trace = try XCTUnwrap(probe.value as? String)
         let sample = XCTAttachment(string: trace)
         sample.name = "Syllume-Navidrome-delayed-start-samples"
         sample.lifetime = .keepAlways
         add(sample)
+        let events = trace.split(whereSeparator: \.isNewline)
+        let armed = try XCTUnwrap(events.first { $0.contains(" buffer-armed ") })
+        let item = try XCTUnwrap(armed.split(separator: " ").first { $0.hasPrefix("item=") && $0 != "item=none" })
+        XCTAssertTrue(events.contains { event in
+            event.contains(" buffer-ended ") && event.contains(" state=playing ") &&
+                event.split(separator: " ").contains(item)
+        }, "The first AVPlayerItem must finish buffering and play.")
         XCTAssertFalse(trace.contains(" buffer-timeout "), "The first request must start without a manual retry.")
+        XCTAssertFalse(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.exists)
         capture(app, name: "Syllume-Navidrome-delayed-start")
     }
 
@@ -775,7 +784,6 @@ final class SyllumeUITests: XCTestCase {
         let selected = app.staticTexts["selectedYouTubePlaylist"]
         let changed = expectation(for: NSPredicate(format: "label == %@", "測試歌單"), evaluatedWith: selected)
         XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 10), .completed)
-        app.terminate()
         app.launchArguments = ["--youtube-sync-fixture", "--playback-probe"]
         app.launch(); app.segmentedControls.buttons["YouTube"].tap()
         XCTAssertTrue(selected.waitForExistence(timeout: 10))
