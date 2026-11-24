@@ -6,6 +6,12 @@ if [[ "${GITHUB_ACTIONS:-}" != true || "${RUNNER_ENVIRONMENT:-}" != github-hoste
     exit 1
 fi
 
+delayed_start="${SYLLUME_NAVIDROME_DELAYED_START:-0}"
+if [[ "$delayed_start" == 1 && "${SYLLUME_NAVIDROME_SIMULATOR:-}" != 1 ]]; then
+    echo "The delayed Navidrome startup check requires the simulator mode." >&2
+    exit 1
+fi
+
 ios_dir="$(cd "$(dirname "$0")/.." && pwd)"
 version=0.64.2
 case "$(uname -m)" in
@@ -17,6 +23,7 @@ esac
 umask 077
 work_dir="$(mktemp -d "${RUNNER_TEMP:?}/syllume-navidrome.XXXXXX")"
 server_pid=""
+proxy_pid=""
 simulator_id=""
 simulator_evidence=""
 export_simulator_evidence() {
@@ -57,7 +64,7 @@ def sanitized_json(value):
         return {key: sanitized_json(item) for key, item in value.items()}
     return value
 
-for name in ["test-summary.json", "xcodebuild.log", "server.log", "native-transport.log"]:
+for name in ["test-summary.json", "xcodebuild.log", "server.log", "native-transport.log", "delayed-stream-proxy.jsonl"]:
     path = source / name
     if path.is_file():
         content = path.read_text(errors="replace")
@@ -70,11 +77,14 @@ player_evidence = {
     "Syllume-Navidrome-confirmed-timeout": ".png",
     "Syllume-Navidrome-confirmed-retry": ".png",
     "Syllume-Navidrome-recovery-samples": ".txt",
+    "Syllume-Navidrome-delayed-start": ".png",
+    "Syllume-Navidrome-delayed-start-samples": ".txt",
 }
 private_attachments = source / "SimulatorAttachments"
 for manifest in private_attachments.rglob("manifest.json"):
     for test in json.loads(manifest.read_text()):
-        if not test.get("testIdentifier", "").endswith("testLiveNavidromeResumesAtConfirmedTimeAfterTimeout()"):
+        if not test.get("testIdentifier", "").endswith(("testLiveNavidromeResumesAtConfirmedTimeAfterTimeout()",
+                                                       "testLiveNavidromeStartsAfterDelayedInitialRange()")):
             continue
         for attachment in test.get("attachments", []):
             name = attachment.get("suggestedHumanReadableName", "")
@@ -139,6 +149,10 @@ cleanup() {
     if [[ -n "$simulator_id" ]]; then
         xcrun simctl shutdown "$simulator_id" 2>/dev/null || true
         xcrun simctl delete "$simulator_id" 2>/dev/null || true
+    fi
+    if [[ -n "$proxy_pid" ]]; then
+        kill "$proxy_pid" 2>/dev/null || true
+        wait "$proxy_pid" 2>/dev/null || true
     fi
     if [[ -n "$server_pid" ]]; then
         kill "$server_pid" 2>/dev/null || true
@@ -265,6 +279,34 @@ pathlib.Path(sys.argv[2]).write_text(str(pathlib.Path(sys.argv[1]).stat().st_siz
 PY
     simulator_evidence="${RUNNER_TEMP:?}/SyllumeNavidromePlayback"
     mkdir -p "$simulator_evidence"
+    simulator_url="$server_url"
+    simulator_test=testLiveNavidromeResumesAtConfirmedTimeAfterTimeout
+    if [[ "$delayed_start" == 1 ]]; then
+        simulator_test=testLiveNavidromeStartsAfterDelayedInitialRange
+        proxy_ready="$work_dir/proxy-ready"
+        python3 "$ios_dir/Checks/delayed_navidrome_proxy.py" --upstream-port "$port" \
+            --ca "$work_dir/ca.pem" --chain "$work_dir/chain.pem" --key "$work_dir/server.key" \
+            --log "$work_dir/delayed-stream-proxy.jsonl" --ready-file "$proxy_ready" &
+        proxy_pid=$!
+        for ((attempt = 0; attempt < 50; attempt++)); do
+            if [[ -s "$proxy_ready" ]]; then break; fi
+            if ! kill -0 "$proxy_pid" 2>/dev/null; then break; fi
+            sleep 0.1
+        done
+        if [[ ! -s "$proxy_ready" ]]; then
+            echo "The delayed media proxy did not start." >&2
+            exit 1
+        fi
+        read -r simulator_url < "$proxy_ready"
+        # Check both TLS legs without requesting media or putting authentication in proxy logs.
+        proxy_status="$(curl --silent --show-error --noproxy '*' --connect-timeout 2 --max-time 5 \
+            --cacert "$work_dir/ca.pem" --output /dev/null --write-out '%{http_code}' "$simulator_url/rest/ping")"
+        case "$proxy_status" in
+            200|400|401|403) ;;
+            *) echo "The delayed media proxy preflight returned HTTP $proxy_status." >&2; exit 1 ;;
+        esac
+        echo "LIVE PLAYBACK: first Navidrome audio range body delayed by 12 seconds after the first GET."
+    fi
     echo "Preparing the production Navidrome playback path on a disposable iOS 26 simulator."
     python3 "$ios_dir/Tools/prepare_lyric_font.py"
     selection="$(xcrun simctl list devices available -j | python3 -c '
@@ -289,14 +331,32 @@ sys.exit("No available iOS 26 iPhone runtime and device type")
     destination="platform=iOS Simulator,id=$simulator_id"
     echo "LIVE PLAYBACK: the app uses the trusted Navidrome HTTPS service and normal AVPlayer."
     status=0
-    TEST_RUNNER_SYLLUME_NAVIDROME_URL="$server_url" TEST_RUNNER_SYLLUME_NAVIDROME_USER=admin \
+    TEST_RUNNER_SYLLUME_NAVIDROME_URL="$simulator_url" TEST_RUNNER_SYLLUME_NAVIDROME_USER=admin \
         TEST_RUNNER_SYLLUME_NAVIDROME_PASSWORD="$password" \
         xcodebuild -project "$ios_dir/Syllume.xcodeproj" -scheme Syllume -configuration Debug \
         -destination "$destination" -derivedDataPath "$build" \
         -resultBundlePath "${RUNNER_TEMP:?}/SyllumeNavidromePlayback.xcresult" \
-        -only-testing:SyllumeUITests/SyllumeUITests/testLiveNavidromeResumesAtConfirmedTimeAfterTimeout \
+        -only-testing:"SyllumeUITests/SyllumeUITests/$simulator_test" \
         -parallel-testing-enabled NO ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test \
         >"$work_dir/xcodebuild.log" 2>&1 || status=$?
+    if [[ "$delayed_start" == 1 ]]; then
+        if ! python3 - "$work_dir/delayed-stream-proxy.jsonl" "$status" <<'PY'
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as evidence:
+    events = [json.loads(line) for line in evidence]
+releases = [event["elapsedMs"] for event in events if event["event"] == "stream-released"]
+body = sum(event["bodyBytes"] for event in events if event["event"] == "stream-body")
+print(f"Navidrome delayed start: bulk releases at {releases} ms, completed bulk response bytes={body}")
+assert any(event["event"] == "proxy-preflight" and event["status"] in {200, 400, 401, 403} for event in events), "Expected verified loopback HTTPS"
+assert any(event["event"] == "stream-gated" for event in events), "Expected AVPlayer to wait for a media body"
+assert releases and min(releases) >= 11990, "Expected the shared 12-second delay before releasing a media body"
+if sys.argv[2] == "0":
+    assert body > 0, "Playback success requires the proxy to send delayed audio bytes"
+PY
+        then
+            status=1
+        fi
+    fi
     if [[ "$status" == 0 ]]; then
         xcrun xcresulttool get test-results summary --path "$RUNNER_TEMP/SyllumeNavidromePlayback.xcresult" \
             >"$work_dir/test-summary.json"

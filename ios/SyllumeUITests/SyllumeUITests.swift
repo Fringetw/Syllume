@@ -309,31 +309,7 @@ final class SyllumeUITests: XCTestCase {
 
     func testLiveNavidromeResumesAtConfirmedTimeAfterTimeout() throws {
         continueAfterFailure = false
-        let environment = ProcessInfo.processInfo.environment
-        guard let server = environment["SYLLUME_NAVIDROME_URL"],
-              let url = URLComponents(string: server), url.scheme == "https", url.host == "localhost",
-              url.port != nil, url.user == nil, url.password == nil,
-              let user = environment["SYLLUME_NAVIDROME_USER"], !user.isEmpty,
-              let password = environment["SYLLUME_NAVIDROME_PASSWORD"], !password.isEmpty else {
-            throw XCTSkip("Requires the isolated Navidrome HTTPS workflow and its simulator certificate.")
-        }
-        let app = XCUIApplication()
-        app.launchArguments = ["--navidrome-live-simulator", "--native-frozen-clock-fixture", "--playback-probe",
-                               "-Folia.LyricDisplayMode", "cover"]
-        app.launchEnvironment = ["SYLLUME_NAVIDROME_URL": server, "SYLLUME_NAVIDROME_USER": user,
-                                 "SYLLUME_NAVIDROME_PASSWORD": password]
-        app.launch()
-        app.segmentedControls.buttons["Navidrome"].tap()
-        let query = app.textFields["搜尋歌曲、歌手或專輯"]
-        XCTAssertTrue(query.waitForExistence(timeout: 25), "The simulator should open Navidrome with its disposable account.")
-        query.tap()
-        query.typeText("Syllume")
-        app.buttons["搜尋"].tap()
-        let song = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
-            "潮汐之間", "Syllume Originals")).firstMatch
-        XCTAssertTrue(song.waitForExistence(timeout: 25), "Navidrome must return the test recording.")
-        song.tap()
-
+        let app = try openLiveNavidromeTrack(extraArguments: ["--native-frozen-clock-fixture"])
         let clock = app.staticTexts["localTransportProbe"]
         let trace = app.staticTexts["nativeTransportDebugProbe"]
         let toggle = app.buttons["playerToggle"]
@@ -425,6 +401,47 @@ final class SyllumeUITests: XCTestCase {
         XCTAssertEqual(metadata.value as? String, originalMetadata,
                        "Opening a fresh stream must preserve the original lyric revision and artwork.")
         capture(app, name: "Syllume-Navidrome-confirmed-retry")
+    }
+
+    func testLiveNavidromeStartsAfterDelayedInitialRange() throws {
+        continueAfterFailure = false
+        let app = try openLiveNavidromeTrack()
+        waitForDemoAudio(app)
+        XCTAssertFalse(app.descendants(matching: .any)["youtubeEmbeddedPlayer"].firstMatch.exists)
+        let trace = app.staticTexts["nativeTransportDebugProbe"].value as? String ?? ""
+        let sample = XCTAttachment(string: trace)
+        sample.name = "Syllume-Navidrome-delayed-start-samples"
+        sample.lifetime = .keepAlways
+        add(sample)
+        XCTAssertFalse(trace.contains(" buffer-timeout "), "The first request must start without a manual retry.")
+        capture(app, name: "Syllume-Navidrome-delayed-start")
+    }
+
+    private func openLiveNavidromeTrack(extraArguments: [String] = []) throws -> XCUIApplication {
+        let environment = ProcessInfo.processInfo.environment
+        guard let server = environment["SYLLUME_NAVIDROME_URL"],
+              let url = URLComponents(string: server), url.scheme == "https", url.host == "localhost",
+              url.port != nil, url.user == nil, url.password == nil,
+              let user = environment["SYLLUME_NAVIDROME_USER"], !user.isEmpty,
+              let password = environment["SYLLUME_NAVIDROME_PASSWORD"], !password.isEmpty else {
+            throw XCTSkip("Requires the isolated Navidrome HTTPS workflow and its simulator certificate.")
+        }
+        let app = XCUIApplication()
+        app.launchArguments = ["--navidrome-live-simulator", "--playback-probe", "-Folia.LyricDisplayMode", "cover"] + extraArguments
+        app.launchEnvironment = ["SYLLUME_NAVIDROME_URL": server, "SYLLUME_NAVIDROME_USER": user,
+                                 "SYLLUME_NAVIDROME_PASSWORD": password]
+        app.launch()
+        app.segmentedControls.buttons["Navidrome"].tap()
+        let query = app.textFields["搜尋歌曲、歌手或專輯"]
+        XCTAssertTrue(query.waitForExistence(timeout: 25), "The simulator should open Navidrome with its disposable account.")
+        query.tap()
+        query.typeText("Syllume")
+        app.buttons["搜尋"].tap()
+        let song = app.buttons.matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS %@",
+            "潮汐之間", "Syllume Originals")).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 25), "Navidrome must return the test recording.")
+        song.tap()
+        return app
     }
 
     func testSonnetRetriesRejectedInitialization() {
@@ -528,7 +545,7 @@ final class SyllumeUITests: XCTestCase {
             return time.isFinite && time > 0.2 && rate > 0 && abs(time - previousTime) > 0.2
         }, evaluatedWith: clock)
         XCTAssertEqual(XCTWaiter.wait(for: [playing], timeout: 30), .completed,
-                       "The bundled audio clock should advance. \(String(describing: clock.value))", file: file, line: line)
+                       "The native audio clock should advance. \(String(describing: clock.value))", file: file, line: line)
     }
 
     func testLineOnlyLyricsRemainVisibleInBothAnimatedStylesAfterSeek() {

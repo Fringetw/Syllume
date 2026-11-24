@@ -35,6 +35,10 @@ on:
         description: Run the Navidrome HTTPS checks and play through that server on the iOS 26 simulator
         type: boolean
         default: false
+      navidrome_delayed_start:
+        description: Play through the Navidrome HTTPS service with a delayed first media range
+        type: boolean
+        default: false
       startup_only:
         description: Run local audio and animated lyrics startup recovery on the iOS 26 simulator
         type: boolean
@@ -62,7 +66,7 @@ permissions:
 jobs:
   build:
     # Same-repository branches are already checked on push; keep PR checks for forks.
-    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.http_seek_only && !inputs.http_start_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ (inputs.intel_recorded_only || (!inputs.public_youtube_only && !inputs.public_native_only && !inputs.youtube_reopen_only && !inputs.http_seek_only && !inputs.http_start_only && !inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.navidrome_delayed_start && !inputs.startup_only)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: ${{ inputs.ios18_arm64 && 'macos-15' || 'macos-15-intel' }}
     timeout-minutes: 105
     env:
@@ -176,7 +180,7 @@ jobs:
             fi
           fi
       - name: Export iOS 18 YouTube transport checkpoints
-        if: ${{ !cancelled() && !inputs.intel_recorded_only && env.FOLIA_SIMULATOR_ID != '' }}
+        if: ${{ !cancelled() && env.FOLIA_SIMULATOR_ID != '' }}
         run: |
           mkdir -p "$RUNNER_TEMP/SyllumeUIScreenshots"
           xcrun simctl spawn "$FOLIA_SIMULATOR_ID" log show --last 35m --style compact \
@@ -224,6 +228,7 @@ jobs:
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStreamsAndSeeks \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativePublicHTTPSStreamsAndSeeks \
             -skip-testing:SyllumeUITests/SyllumeUITests/testLiveNavidromeResumesAtConfirmedTimeAfterTimeout \
+            -skip-testing:SyllumeUITests/SyllumeUITests/testLiveNavidromeStartsAfterDelayedInitialRange \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackFallsBackAfterTimeout \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativeLoopbackStartsAfterDelayedInitialRange \
             -skip-testing:SyllumeUITests/SyllumeUITests/testNativePausedSeekEndsWhenHTTPStopsResponding \
@@ -301,19 +306,20 @@ jobs:
           if-no-files-found: ignore
 
   navidrome-api:
-    if: inputs.navidrome_only || inputs.navidrome_simulator
+    if: inputs.navidrome_only || inputs.navidrome_simulator || inputs.navidrome_delayed_start
     runs-on: macos-26
-    timeout-minutes: ${{ inputs.navidrome_simulator && 35 || 18 }}
+    timeout-minutes: ${{ (inputs.navidrome_simulator || inputs.navidrome_delayed_start) && 35 || 18 }}
     steps:
       - uses: actions/checkout@v4
       - name: Verify authenticated Navidrome lookup, streaming and download
         env:
-          SYLLUME_NAVIDROME_SIMULATOR: ${{ inputs.navidrome_simulator && '1' || '0' }}
+          SYLLUME_NAVIDROME_SIMULATOR: ${{ (inputs.navidrome_simulator || inputs.navidrome_delayed_start) && '1' || '0' }}
+          SYLLUME_NAVIDROME_DELAYED_START: ${{ inputs.navidrome_delayed_start && '1' || '0' }}
         run: |
           set -o pipefail
           bash ios/Checks/run_navidrome_live.sh 2>&1 | tee "$RUNNER_TEMP/Syllume-Navidrome-live.txt"
       - name: Verify the retry opens a stream without fetching loaded metadata again
-        if: inputs.navidrome_simulator
+        if: inputs.navidrome_simulator && !inputs.navidrome_delayed_start
         run: |
           python3 - "$RUNNER_TEMP/SyllumeNavidromePlayback/simulator-request-counts.json" <<'PY'
           import json, sys
@@ -334,14 +340,14 @@ jobs:
           path: ${{ runner.temp }}/Syllume-Navidrome-live.txt
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
-        if: ${{ always() && inputs.navidrome_simulator }}
+        if: ${{ always() && (inputs.navidrome_simulator || inputs.navidrome_delayed_start) }}
         with:
           name: Syllume-Navidrome-iOS26-recovery
           path: ${{ runner.temp }}/SyllumeNavidromePlayback
           if-no-files-found: error
 
   ios-26-player:
-    if: ${{ !inputs.intel_recorded_only && !inputs.ios18_arm64 && ((!inputs.navidrome_only && !inputs.navidrome_simulator) || inputs.public_youtube_only || inputs.public_native_only || inputs.startup_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
+    if: ${{ !inputs.intel_recorded_only && !inputs.ios18_arm64 && ((!inputs.navidrome_only && !inputs.navidrome_simulator && !inputs.navidrome_delayed_start) || inputs.public_youtube_only || inputs.public_native_only || inputs.startup_only) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository) }}
     runs-on: macos-26
     timeout-minutes: 60
     steps:
