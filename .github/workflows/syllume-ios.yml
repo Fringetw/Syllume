@@ -24,7 +24,7 @@ on:
         type: boolean
         default: false
       http_start_only:
-        description: Run the iOS 26 HTTP startup case with a delayed first media range
+        description: Run iOS 26 HTTP startup with delayed delivery and permanent stalls
         type: boolean
         default: false
       navidrome_only:
@@ -459,8 +459,10 @@ jobs:
             exit $?
           fi
           if [ "$HTTP_START_ONLY" = "true" ]; then
-            run_http_check SyllumeIOS26HTTPInitialRange testNativeLoopbackStartsAfterDelayedInitialRange delayed
-            exit $?
+            failed=0
+            run_http_check SyllumeIOS26HTTPInitialRange testNativeLoopbackStartsAfterDelayedInitialRange delayed || failed=1
+            run_http_check SyllumeIOS26HTTPStall testNativeLoopbackFallsBackAfterTimeout stalled || failed=1
+            exit "$failed"
           fi
           failed=0
           if [ "$STARTUP_ONLY" = "true" ]; then
@@ -485,6 +487,7 @@ jobs:
           run_http_check SyllumeIOS26HTTP testNativeLoopbackStreamsAndSeeks playing || failed=1
           run_http_check SyllumeIOS26HTTPPaced testNativeLoopbackStreamsAndSeeks paced || failed=1
           run_http_check SyllumeIOS26HTTPStall testNativeLoopbackFallsBackAfterTimeout stalled || failed=1
+          run_http_check SyllumeIOS26HTTPInitialRange testNativeLoopbackStartsAfterDelayedInitialRange delayed || failed=1
           run_http_check SyllumeIOS26HTTPSeek testNativePausedSeekEndsWhenHTTPStopsResponding seek || failed=1
           exit "$failed"
       - name: Verify published media through the official YouTube IFrame

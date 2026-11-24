@@ -1147,8 +1147,10 @@ final class PlaybackModel {
                                 let verification = try await library.verifiedDownload(local, asset: asset, expected: candidate.duration)
                                 length = verification.duration
                             } else {
+                                // A small initial Range response does not make the track headers available yet.
+                                // Keep the inspection bounded while a slow source delivers those headers.
                                 length = try await AudioIntegrity.inspect(asset, expected: candidate.duration,
-                                    decode: false, deadline: url.isFileURL ? nil : .seconds(5))
+                                    decode: false, deadline: url.isFileURL ? nil : .seconds(15))
                             }
                             try check()
                             candidates.removeFirst()
