@@ -170,8 +170,8 @@
       "patched_sha256": "d1298f719fb8e63b5b03bde0503687cf896b68442391653b6f66a66249fdf39e"
     },
     "src/components/visualizer/pixi/pixiProgramLinks.ts": {
-      "reason": "Bound optional shader warmup, release unfinished WebGL objects, and let Pixi link missing programs on first draw",
-      "patched_sha256": "00a74f44abc981545bb4258b2096a44f5e2674be86aa711c4d1252c99a55a79c"
+      "reason": "Poll shader links without head-of-line blocking while preserving the warmup deadline, resource disposal, and ordinary first-draw fallback",
+      "patched_sha256": "c226b5350937d795ecc9c1a016cb6e90f904661ca125ec28e12a739eb311d230"
     }
   }
 }

@@ -99,6 +99,36 @@ test('completed shader warmup caches linked programs and keeps their GL programs
     assert.equal(gl.cache[3], gl.previous);
 });
 
+test('shader warmup hands off a completed link behind an unfinished earlier program', async t => {
+    const gl = shaderFixture(t, { complete: program => program.id === 1 });
+    assert.equal(await gl.finish(linkPixiPrograms(gl.pixi, gl.renderer, gl.stage, 'test', undefined, 25)), false);
+
+    const [stalled, ready] = gl.allocatedPrograms;
+    assert.equal(gl.cache[2]?.program, ready);
+    assert.equal(gl.cache[1], undefined);
+    assert.equal(gl.cache[3], gl.previous);
+    assert.deepEqual(gl.linkChecks, [ready]);
+    assert.deepEqual(gl.deletedPrograms, [stalled]);
+    assert.deepEqual(new Set(gl.deletedShaders), new Set(gl.allocatedShaders));
+});
+
+test('a throwing link poll releases every unfinished program after queue rotation', async t => {
+    const failure = new Error('completion poll failed');
+    const gl = shaderFixture(t, { complete: program => {
+        if (program.id === 1) throw failure;
+        return false;
+    } });
+    await assert.rejects(gl.finish(linkPixiPrograms(gl.pixi, gl.renderer, gl.stage, 'test', undefined, 25)),
+        error => error === failure);
+
+    assert.deepEqual(new Set(gl.deletedPrograms), new Set(gl.allocatedPrograms));
+    assert.equal(gl.deletedPrograms.length, gl.allocatedPrograms.length);
+    assert.deepEqual(new Set(gl.deletedShaders), new Set(gl.allocatedShaders));
+    assert.equal(gl.deletedShaders.length, gl.allocatedShaders.length);
+    assert.deepEqual(gl.linkChecks, []);
+    assert.deepEqual(gl.cache, { 3: gl.previous });
+});
+
 test('cancelling shader warmup releases every unfinished link', async t => {
     const gl = shaderFixture(t);
     const abort = new AbortController();

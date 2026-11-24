@@ -175,11 +175,18 @@ export const linkPixiPrograms = async (
         while (pending.length > 0) {
             await new Promise((resolve) => { window.setTimeout(resolve, LOOK_EVERY_MS); });
             if (signal?.aborted || gl.isContextLost() || performance.now() >= deadline) return false;
-            // Links normally finish in submission order, so only the first unfinished one is checked.
+            // Parallel links can finish out of order. Check each at most once per poll, rotating
+            // unfinished work so an earlier slow program cannot hide a later completed one.
             const look = performance.now();
-            while (pending.length > 0 && performance.now() - look < HAND_OVER_MS) {
+            let checksRemaining = pending.length;
+            while (checksRemaining > 0 && pending.length > 0 && performance.now() - look < HAND_OVER_MS) {
+                checksRemaining -= 1;
                 const next = pending[0];
-                if (!gl.getProgramParameter(next.webGLProgram, COMPLETION_STATUS_KHR)) break;
+                if (!gl.getProgramParameter(next.webGLProgram, COMPLETION_STATUS_KHR)) {
+                    pending.shift();
+                    pending.push(next);
+                    continue;
+                }
                 if (!next.rebound && bindsAttributesInNameOrder(next.program) && !attributesInNameOrder(gl, next.webGLProgram)) {
                     next.rebound = true;
                     pending.shift();
