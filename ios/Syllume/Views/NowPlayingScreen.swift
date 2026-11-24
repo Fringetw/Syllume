@@ -448,12 +448,25 @@ struct PlaybackStylePicker: View {
 #if DEBUG
 private struct LocalTransportProbe: View {
     let player: PlaybackModel
+    @State private var stalledReplacements = 0
     var body: some View {
         Text("播放狀態檢查").font(.system(size: 1)).frame(height: 1)
             .accessibilityIdentifier("localTransportProbe").accessibilityValue(player.mediaProbe)
         if ProcessInfo.processInfo.arguments.contains("--spotify-handoff-fixture") {
             Text("交接後的播放狀態").font(.system(size: 1)).frame(height: 1)
                 .accessibilityIdentifier("spotifyHandoffProbe").accessibilityValue(player.handoffFixtureProbe)
+        }
+        if ProcessInfo.processInfo.arguments.contains("--stage-stall-navigation") {
+            Text("歌詞舞台重載次數").font(.system(size: 1)).frame(height: 1)
+                .accessibilityIdentifier("stageNavigationRetries")
+                .accessibilityValue(String(stalledReplacements))
+                .onReceive(NotificationCenter.default.publisher(for: SonnetStage.stalledReplacementNavigation)) { _ in
+                    stalledReplacements += 1
+                    guard stalledReplacements == 1, let track = player.current else { return }
+                    let stamps = "[00:00][00:04][00:08][00:12][00:16][00:20][00:24][00:28]"
+                    player.useLyrics(LyricSearchRecord(id: 1, trackName: track.title, artistName: track.artist ?? "",
+                        albumName: "", duration: player.duration, syncedLyrics: stamps + "Updated navigation lyrics"))
+                }
         }
         if ProcessInfo.processInfo.arguments.contains("--navidrome-live-simulator") {
             Text("Navidrome 曲目資料").font(.system(size: 1)).frame(height: 1)

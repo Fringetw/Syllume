@@ -4,6 +4,9 @@ import WebKit
 // The bundled desktop renderer receives song data once and bounded absolute clock corrections.
 struct SonnetStage: View {
     static let initializationLimit: Duration = .seconds(36)
+    #if DEBUG
+    static let stalledReplacementNavigation = Notification.Name("SyllumeStageStalledReplacementNavigation")
+    #endif
 
     let songID: String
     let title: String
@@ -125,10 +128,11 @@ private struct SonnetWebView: UIViewRepresentable {
     @MainActor final class Coordinator: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
         private enum State { case loading, ready, failed }
         private enum InitializationPhase: Int {
-            case navigation, bridge, font
+            case opening, navigation, bridge, font
 
             var timeAllowance: Duration {
                 switch self {
+                case .opening: .seconds(10)
                 case .navigation, .bridge: .seconds(18)
                 case .font: .seconds(16)
                 }
@@ -149,7 +153,7 @@ private struct SonnetWebView: UIViewRepresentable {
         private(set) var attemptedReload = false
         private var initializationTimeout: Task<Void, Never>?
         private var initializationDeadline: ContinuousClock.Instant?
-        private var initializationPhase = InitializationPhase.navigation
+        private var initializationPhase = InitializationPhase.opening
         private var loadStarted = Date()
         private var lastTime = 0.0
         private var lastStamp = Date.distantPast
@@ -208,10 +212,15 @@ private struct SonnetWebView: UIViewRepresentable {
             if activeSong != songKey {
                 // A page still building the previous song can emit an untagged ready message.
                 if request != nil { discardPage(in: view) }
-                cancelInitialization()
+                if documentID != nil, !loaded {
+                    // The offline document is the same while song metadata changes.
+                    stageCheckpoint("song-updated-during-navigation")
+                } else {
+                    cancelInitialization()
+                    didRetrySongCommand = false
+                    attemptedReload = false
+                }
                 activeSong = songKey
-                didRetrySongCommand = false
-                attemptedReload = false
                 failureDetail = ""
                 currentProbe?.fault = nil
                 transition(to: .loading)
@@ -291,7 +300,7 @@ private struct SonnetWebView: UIViewRepresentable {
         private func startInitialization() {
             guard initializationDeadline == nil else { return }
             loadStarted = Date()
-            initializationPhase = .navigation
+            initializationPhase = .opening
             initializationDeadline = ContinuousClock.now.advanced(by: SonnetStage.initializationLimit)
             scheduleInitializationTimeout()
         }
@@ -315,7 +324,8 @@ private struct SonnetWebView: UIViewRepresentable {
                 catch { return }
                 guard let self, !Task.isCancelled,
                       self.initializationDeadline == initializationDeadline, self.initializationPhase == phase else { return }
-                let navigationSilent = phase == .navigation && !loaded && clock.now < initializationDeadline
+                let navigationSilent = phase.rawValue <= InitializationPhase.navigation.rawValue &&
+                    !loaded && clock.now < initializationDeadline
                 markFailure("等候歌詞動畫逾時。", code: .timeout, mayReload: navigationSilent)
             }
         }
@@ -432,6 +442,9 @@ private struct SonnetWebView: UIViewRepresentable {
             let arguments = ProcessInfo.processInfo.arguments
             if arguments.contains("--stage-stall-navigation") ||
                 (arguments.contains("--stage-stall-first-navigation") && !injectedNavigationStall) {
+                if attemptedReload, arguments.contains("--stage-stall-navigation") {
+                    NotificationCenter.default.post(name: SonnetStage.stalledReplacementNavigation, object: nil)
+                }
                 injectedNavigationStall = true
                 return
             }
@@ -486,7 +499,7 @@ private struct SonnetWebView: UIViewRepresentable {
                 currentProbe?.recoveries += 1
                 stageCheckpoint("navigation-reload")
                 transition(to: .loading)
-                initializationPhase = .navigation
+                initializationPhase = .opening
                 if initializationDeadline == nil { startInitialization() }
                 else { scheduleInitializationTimeout() }
                 loadStage(in: view)
@@ -508,17 +521,17 @@ private struct SonnetWebView: UIViewRepresentable {
             }
         }
 
-        #if DEBUG
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
             stageCheckpoint("navigation-provisional")
+            advanceInitialization(to: .navigation)
         }
 
         func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
             guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }
             stageCheckpoint("navigation-committed")
+            advanceInitialization(to: .navigation)
         }
-        #endif
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard webView === view, let navigation, navigation === self.navigation, parent.rendering else { return }

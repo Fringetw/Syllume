@@ -502,6 +502,10 @@ final class SyllumeUITests: XCTestCase {
     func testLyricStageStopsAfterSilentNavigationRetry() {
         continueAfterFailure = false
         let (app, stage, deadline) = openPlayingSonnetForNavigationFixture("--stage-stall-navigation")
+        // The fixture replaces lyrics as soon as the second silent navigation is installed.
+        let updated = expectation(for: NSPredicate(format: "label CONTAINS %@", "Updated navigation lyrics"),
+                                  evaluatedWith: stage)
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 48), .completed)
         let failed = expectation(for: NSPredicate { _, _ in
             guard let value = stage.value as? String else { return false }
             return value.hasPrefix("載入失敗：等候歌詞動畫逾時。") && value.hasSuffix(" · 已重載")
@@ -511,6 +515,8 @@ final class SyllumeUITests: XCTestCase {
         let observationTimeout = max(45, deadline - ProcessInfo.processInfo.systemUptime + 30)
         XCTAssertEqual(XCTWaiter.wait(for: [failed], timeout: observationTimeout),
                        .completed, "Both attempts must reach the terminal failure state. \(String(describing: stage.value))")
+        XCTAssertEqual(app.staticTexts["stageNavigationRetries"].value as? String, "1",
+                       "A new lyric revision must not give the open document an extra retry.")
         XCTAssertFalse(app.staticTexts["正在準備歌詞動畫"].exists)
         XCTAssertTrue(app.staticTexts["animatedLyricsFallback"].waitForExistence(timeout: 15))
         waitForDemoAudio(app, from: probeTime(app.staticTexts["localTransportProbe"]))
