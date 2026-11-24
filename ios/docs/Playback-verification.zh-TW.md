@@ -1,6 +1,18 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前供側載驗證的版本為 0.4.0 build 58（`b200795`）。此版本需在 Windows 以 Sideloadly 重簽，iPhone 安裝和播放尚待驗證。
+獨立分支 `codex/syllume-player-experience`。目前供側載驗證的版本為 0.4.0 build 59（`ec197bd`）。此版本需在 Windows 以 Sideloadly 重簽，iPhone 安裝和播放尚待驗證。
+
+## 延遲音訊起播與商籟首幀
+
+iOS 26 的受控 HTTP 回歸以 `6b5befb` 重現曲庫音源未能起播。第一個 Range 回應為 2 bytes，下一個請求卡在音檔標頭，10.095 秒後才放行。曲庫音源的 5 秒預檢提早結束。XCTest 最後觀察到 `file|timeout`，只記到本機備援的 AVPlayer 時鐘。`ec197bd` 將遠端音源的單次預檢調整至 15 秒，並保留音檔類型與時長檢查及原本的曲庫起播總期限。這個案例涵蓋曲庫音源預檢。Navidrome 直接選曲走另一條播放流程。 [失敗基準、伺服器日誌與畫面](https://github.com/Fringetw/Syllume/actions/runs/45182634249/artifacts/14821104263) · [修正後的起播回歸](https://github.com/Fringetw/Syllume/actions/runs/45375585791)
+
+build 59 的 iOS 26 起播回歸為 2/2。延遲案例在 10.151 秒放行首段資料，AVPlayer 安裝原 HTTP 音源後從等候進入播放。完全停傳的案例收到 0 bytes，仍成功播放本機備援。此測試使用受控的 loopback HTTP，直接 Navidrome HTTPS 另有量測工作。 [兩項回歸的 XCTest、伺服器與 AVPlayer 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45375585791/artifacts/14911208334) · [直接 Navidrome HTTPS 測試](https://github.com/Fringetw/Syllume/actions/runs/45377120738)
+
+iPhone Release 0.4.0 build 59 已由 Apple Silicon Runner 編譯。已核對 ZIP、ARM64、最低 iOS 17、未簽署狀態與內建離線資源。SHA-256 為 `E2EB0FD6A72870F3D9911DFFAD51AED8381C199EF1DC8A2007F61FE8CF6B66EE`。 [build 59 IPA](https://github.com/Fringetw/Syllume/actions/runs/45375820716/artifacts/14912415429)
+
+新增 WebKit 導航及繪製檢查點後，Apple Silicon iOS 18.6 的錄影曲目測試通過，商籟與繪光皆畫出首幀。Intel 在另一輪完成頁面載入、歌詞字體與 Canvas 裝載，商籟於 13.304 秒進入第一次同步 `renderer.render`，到 27.248 秒達到初始化期限時仍未返回。GPU 尚未返回的具體指令待分辨。 [ARM 檢查點與 XCTest](https://github.com/Fringetw/Syllume/actions/runs/45181678617/artifacts/14823670359) · [Intel 首次繪製檢查點](https://github.com/Fringetw/Syllume/actions/runs/45183571211/artifacts/14825310272)
+
+Intel 這輪有並行 shader 編譯擴充，暖機在 1.5 秒期限後交回 Pixi。`a1d90f1` 修正暖機輪詢遇到第一個未完成的 shader 時，未檢查後面已完成的 shader 的行為。反序完成的單元測試從失敗轉為通過，並保留暖機期限及資源釋放。完整的 Folia 渲染與橋接本機測試為 33/33。此修正晚於 build 59 的 IPA，Intel 的首幀仍待重驗。 [暖機修正](https://github.com/Fringetw/Syllume/commit/a1d90f1) · [Intel 重驗](https://github.com/Fringetw/Syllume/actions/runs/45376828491)
 
 ## YouTube 播放器重開
 
