@@ -186,7 +186,17 @@ struct YouTubePlayerView: UIViewRepresentable {
                 update()
                 return
             }
-            else if type == "blocked" { player.autoplayBlocked(revision: body["commandRevision"] as? Int) }
+            #if DEBUG
+            if type == "fixture-media" {
+                if tracesPlayback, let event = body["event"] as? String, let ready = body["readyState"] as? Int,
+                   let network = body["networkState"] as? Int, let paused = body["paused"] as? Bool,
+                   let time = body["time"] as? Double, let hidden = body["hidden"] as? Bool {
+                    NSLog("[SyllumeYouTube] fixture \(event) ready=\(ready) network=\(network) paused=\(paused) time=\(time) hidden=\(hidden)")
+                }
+                return
+            }
+            #endif
+            if type == "blocked" { player.autoplayBlocked(revision: body["commandRevision"] as? Int) }
             else if type == "error" {
                 let code = body["code"] as? Int ?? -1
                 #if DEBUG
@@ -237,8 +247,10 @@ struct YouTubePlayerView: UIViewRepresentable {
 
         private static var apiLoader: String {
             #if DEBUG
-            if ProcessInfo.processInfo.arguments.contains("--youtube-playback-fixture"),
+            let arguments = ProcessInfo.processInfo.arguments
+            if arguments.contains("--youtube-playback-fixture"),
                let url = Bundle.main.url(forResource: "tide", withExtension: "m4a"), let data = try? Data(contentsOf: url) {
+                let tracesPlayback = arguments.contains("--youtube-device-playback-regression")
                 return """
                 <script>
                 window.YT={Player:class {
@@ -247,12 +259,24 @@ struct YouTubePlayerView: UIViewRepresentable {
                     // Keep the video timeline while the repeating fixture starts at the beginning of its clip.
                     this.clockOffset=options.playerVars.start;this.lastMediaTime=0;
                     document.getElementById(id).textContent='本機播放測試';
+                    if(\(tracesPlayback)) {
+                      for(const event of ['loadedmetadata','canplay','waiting','stalled','playing','pause']) {
+                        this.a.addEventListener(event,()=>this.trace(event));
+                      }
+                    }
                     this.a.addEventListener('error',()=>emit('error',{code:-1,reason:'audio fixture failed to load'}));
                     this.a.addEventListener('loadedmetadata',()=>options.events.onReady(),{once:true});
                     this.a.src='data:audio/mp4;base64,\(data.base64EncodedString())';
                   }
+                  trace(event){
+                    if(!\(tracesPlayback)) return;
+                    emit('fixture-media',{event,readyState:this.a.readyState,networkState:this.a.networkState,
+                      paused:this.a.paused,time:this.a.currentTime,hidden:document.hidden});
+                  }
                   playVideo(){
+                    this.trace('play-request');
                     this.a.play().then(()=>this.o.events.onStateChange()).catch(error=>{
+                      if(error.name==='AbortError') this.trace('play-aborted');
                       if(error.name==='NotAllowedError') this.o.events.onAutoplayBlocked();
                       else if(error.name!=='AbortError') emit('error',{code:-1,reason:'audio fixture play() failed'});
                     });
