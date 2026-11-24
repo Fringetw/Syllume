@@ -34,7 +34,9 @@ struct NativePlaybackClock {
         let bufferActivity = lastBufferAdvance ?? start
         guard let lastAdvance else {
             if waitingForBufferedPlayback { return maximumWait }
-            return min(maximumWait, max(start, bufferActivity) + .seconds(7))
+            // A remote item may receive initial Range probes before it has a playable time range.
+            let initialResponseDeadline = start + .seconds(16)
+            return min(maximumWait, max(initialResponseDeadline, bufferActivity + .seconds(7)))
         }
         return min(maximumWait, max(start, lastAdvance, bufferActivity) + .seconds(12))
     }

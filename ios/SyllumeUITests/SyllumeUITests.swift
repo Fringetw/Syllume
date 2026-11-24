@@ -805,15 +805,14 @@ final class SyllumeUITests: XCTestCase {
         let nowPlaying = app.staticTexts["systemNowPlayingProbe"]
         let published = expectation(for: NSPredicate(format: "value == %@", "0.0|0.0|artwork"), evaluatedWith: nowPlaying)
         XCTAssertEqual(XCTWaiter.wait(for: [published], timeout: 10), .completed)
-        app.terminate()
         app.launchArguments = ["--youtube-sync-fixture", "--youtube-artwork-offline", "--youtube-unavailable-audio-fixture",
                                "--subtitle-fixture", "-Folia.LyricDisplayMode", "cover"]
         for attempt in 1...2 {
+            // XCTest terminates the prior instance when launching a fresh one.
             app.launch()
             app.segmentedControls.buttons["YouTube"].tap()
             XCTAssertTrue(song.waitForExistence(timeout: 15)); song.tap()
             XCTAssertTrue(artwork.waitForExistence(timeout: 10), "Cached cover after offline launch \(attempt)")
-            app.terminate()
         }
     }
 

@@ -3,7 +3,8 @@ enum NativePlaybackClockChecks {
         let start = ContinuousClock().now
         var clock = NativePlaybackClock()
         precondition(clock.observe(0, at: start) == 0)
-        precondition(clock.bufferDeadline(since: start) == start + .seconds(7))
+        precondition(clock.bufferDeadline(since: start) == start + .seconds(16),
+                     "Initial HTTP Range probes must leave time for usable audio to arrive")
         precondition(clock.bufferDeadline(since: start, waitingForBufferedPlayback: true) == start + .seconds(34),
                      "A ready item with buffered data can finish the player's startup buffering window")
 
@@ -35,19 +36,20 @@ enum NativePlaybackClockChecks {
         precondition(clock.bufferDeadline(since: pause) == restart + .seconds(12))
 
         let nextItem = NativePlaybackClock()
-        precondition(nextItem.bufferDeadline(since: restart) == restart + .seconds(7),
+        precondition(nextItem.bufferDeadline(since: restart) == restart + .seconds(16),
                      "The next item must start with no evidence inherited from the old item")
         var loading = NativePlaybackClock()
         loading.rebase(to: 0)
         loading.observeBuffer(through: 4, at: start + .seconds(6))
-        precondition(loading.bufferDeadline(since: start) == start + .seconds(13),
-                     "Real buffer delivery must extend a pending initial play")
+        precondition(loading.bufferDeadline(since: start) == start + .seconds(16),
+                     "Early delivery must preserve the initial response window")
         loading.observeBuffer(through: 4, at: start + .seconds(12))
-        precondition(loading.bufferDeadline(since: start) == start + .seconds(13),
+        precondition(loading.bufferDeadline(since: start) == start + .seconds(16),
                      "A repeated buffer snapshot cannot extend the wait indefinitely")
         loading.observeBuffer(through: .infinity, at: start + .seconds(13))
         loading.observeBuffer(through: 8, at: start + .seconds(13))
-        precondition(loading.bufferDeadline(since: start) == start + .seconds(20))
+        precondition(loading.bufferDeadline(since: start) == start + .seconds(20),
+                     "New buffer after the early probes can extend the wait")
         precondition(loading.observe(2, at: start + .seconds(14)) == 2)
         precondition(loading.bufferDeadline(since: start) == start + .seconds(26))
         print("PASS: native playback clock accepts coarse samples and buffer delivery while bounding unchanged media")
@@ -66,7 +68,7 @@ enum NativePlaybackClockChecks {
             let sample = start + .seconds(elapsed)
             starting.observeBuffer(through: Double(elapsed), at: sample)
             precondition(starting.observe(0, at: sample) == 0)
-            precondition(starting.bufferDeadline(since: start) == start + .seconds(min(34, elapsed + 7)),
+            precondition(starting.bufferDeadline(since: start) == start + .seconds(min(34, max(16, elapsed + 7))),
                          "Even continuous buffer delivery must stop extending startup at 34 seconds")
         }
 
