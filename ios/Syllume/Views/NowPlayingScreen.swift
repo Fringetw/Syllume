@@ -125,7 +125,7 @@ struct NowPlayingScreen: View {
                 DiagnosticsEvents.shared.record(visible ? .immersiveOff : .immersiveOn)
             }
             .onChange(of: player.subtitleInput, initial: true) { _, input in
-                subtitles.load(input, timeline: player.timeline)
+                subtitles.load(input, timeline: player.timeline, navidromeLyrics: player.navidromePlaybackLyrics)
             }
         } else {
             Color.clear.onAppear { dismiss() }

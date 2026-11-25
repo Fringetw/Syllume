@@ -119,7 +119,7 @@ struct LibraryScreen: View {
             refreshYouTubePlaylist()
         }
         .onChange(of: player.subtitleInput, initial: true) { _, next in
-            subtitles.load(next, timeline: player.timeline)
+            subtitles.load(next, timeline: player.timeline, navidromeLyrics: player.navidromePlaybackLyrics)
         }
         .fileImporter(isPresented: $showingImporter,
                       allowedContentTypes: lyricTarget == nil ? [.audio] + Self.lyricTypes : Self.lyricTypes,

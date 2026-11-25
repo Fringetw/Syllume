@@ -76,6 +76,21 @@ enum NavidromeError: LocalizedError {
     }
 }
 
+// The exact server response for the current playback timeline, before display conversion or clipping.
+struct NavidromePlaybackLyrics {
+    let account: NavidromeAccount
+    let trackID: String
+    let revision: UUID
+    let timeline: LyricTimeline
+
+    func lines(for candidate: Track, account: NavidromeAccount, input: SubtitleInput?) -> [LyricLine]? {
+        guard let input, !input.loading, input.revision == revision, input.song.source == "navidrome",
+              input.song.id == trackID, candidate.source == .navidrome, candidate.id == trackID,
+              self.account == account, !timeline.lines.isEmpty else { return nil }
+        return timeline.lines
+    }
+}
+
 struct NavidromeClient: Sendable {
     let account: NavidromeAccount
 

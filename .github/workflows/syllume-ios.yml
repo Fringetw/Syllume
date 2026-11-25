@@ -333,6 +333,17 @@ jobs:
                   or any(counts["unknownPhase"].values())):
               sys.exit("Expected initial cover and lyrics, a new stream on retry, and no repeated metadata.")
           PY
+      - name: Verify the original Navidrome lyrics were requested once
+        if: inputs.navidrome_delayed_start
+        run: |
+          python3 - "$RUNNER_TEMP/SyllumeNavidromePlayback/simulator-request-counts.json" <<'PY'
+          import json, sys
+          with open(sys.argv[1]) as report:
+              reads = json.load(report)["initialRecordingLyricRequests"]
+          print(f"Initial recording getLyricsBySongId requests: {reads}")
+          if reads != 1:
+              sys.exit("Expected one original-lyrics request during initial playback.")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

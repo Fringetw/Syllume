@@ -13,8 +13,11 @@ final class PlaybackModel {
     private(set) var isBuffering = false
     private(set) var position: Double = 0
     private(set) var duration: Double = 0
-    private(set) var timeline = LyricTimeline(lines: []) { didSet { timelineRevision = UUID() } }
+    private(set) var timeline = LyricTimeline(lines: []) {
+        didSet { timelineRevision = UUID(); navidromePlaybackLyrics = nil }
+    }
     private(set) var timelineRevision = UUID()
+    @ObservationIgnored private(set) var navidromePlaybackLyrics: NavidromePlaybackLyrics?
     private(set) var externalPlayback = false
     private(set) var artwork: UIImage?
     var artistPortrait: UIImage? {
@@ -1490,6 +1493,10 @@ final class PlaybackModel {
                 let loaded = try await client.subtitleLyrics(for: track)
                 guard let self, generation == revision, !Task.isCancelled else { return }
                 timeline = loaded?.prepared(for: duration) ?? LyricTimeline(lines: [])
+                if let loaded, !loaded.lines.isEmpty {
+                    navidromePlaybackLyrics = NavidromePlaybackLyrics(account: client.account, trackID: track.id,
+                        revision: timelineRevision, timeline: loaded)
+                }
                 lyricsLoading = false
             } catch {
                 guard let self, generation == revision, !Task.isCancelled else { return }

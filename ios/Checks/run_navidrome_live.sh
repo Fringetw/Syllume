@@ -43,6 +43,7 @@ export_simulator_evidence() {
     fi
     SYLLUME_REDACT_PASSWORD="${password:-}" python3 - "$work_dir" "$simulator_evidence" <<'PY' || true
 import datetime, json, math, os, pathlib, re, shutil, sys
+from urllib.parse import parse_qs, urlsplit
 source, destination = map(pathlib.Path, sys.argv[1:])
 password = os.environ.get("SYLLUME_REDACT_PASSWORD", "")
 
@@ -123,6 +124,28 @@ if offset_file.is_file() and server_log.is_file():
         lines = logfile.read().decode("utf-8", errors="replace").splitlines()
     if partial_line:
         lines = lines[1:]
+    # Track the initially selected recording even if the test reaches the next queue item.
+    # Navidrome emits one HTTP access line per response. Keep credentials and IDs out of the counters.
+    first_stream_id = None
+    lyric_reads = {}
+    access = re.compile(r'HTTP: GET (https://[^"\s]+)')
+    for line in lines:
+        match = access.search(line)
+        if not match:
+            continue
+        url = urlsplit(match.group(1))
+        if url.path not in {"/rest/stream", "/rest/getLyricsBySongId"}:
+            continue
+        track_id = parse_qs(url.query).get("id", [None])[0]
+        if not track_id:
+            continue
+        if url.path == "/rest/stream":
+            if first_stream_id is not None and track_id != first_stream_id:
+                break
+            first_stream_id = track_id
+        else:
+            lyric_reads[track_id] = lyric_reads.get(track_id, 0) + 1
+    counts["initialRecordingLyricRequests"] = lyric_reads.get(first_stream_id, 0)
     request_path = re.compile(r"API: New request (/rest/[A-Za-z0-9]+)(?=[\s\"']|$)")
     timestamp = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})")
     for line in lines:

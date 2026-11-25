@@ -54,6 +54,7 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
     @ObservationIgnored private var probing = false
     @ObservationIgnored private var engineGeneration = UUID()
     @ObservationIgnored private var input: SubtitleInput?
+    @ObservationIgnored private var navidromePlaybackLyrics: NavidromePlaybackLyrics?
     @ObservationIgnored private var raw = LyricTimeline(lines: [])
     @ObservationIgnored private var token = UUID().uuidString
     @ObservationIgnored private var accountKey = UUID().uuidString
@@ -106,12 +107,14 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
         self.library = library
         if self.account != account {
             cancelRequests(); self.account = account; accountKey = UUID().uuidString
+            navidromePlaybackLyrics = nil
             sourceStatus.removeAll(); sourceDiagnostics.removeAll(); engineReport = [:]
         }
         configureEngine()
     }
 
-    func load(_ next: SubtitleInput?, timeline rawTimeline: LyricTimeline) {
+    func load(_ next: SubtitleInput?, timeline rawTimeline: LyricTimeline, navidromeLyrics: NavidromePlaybackLyrics? = nil) {
+        navidromePlaybackLyrics = navidromeLyrics
         guard input != next else { return }
         let sameSong = input?.song.id == next?.song.id && input?.song.source == next?.song.source
         let oldDuration = input?.song.durationMs ?? 0
@@ -471,7 +474,11 @@ final class SubtitleController: NSObject, WKNavigationDelegate {
                     case .local(let track): lines = try await library?.lyrics(for: track)?.lines ?? []
                     case .navidrome(let track):
                         guard let account else { throw SubtitleReadError("not-signed-in") }
-                        lines = try await NavidromeClient(account: account).subtitleLyrics(for: track)?.lines ?? []
+                        if let original = navidromePlaybackLyrics?.lines(for: track, account: account, input: input) {
+                            lines = original
+                        } else {
+                            lines = try await NavidromeClient(account: account).subtitleLyrics(for: track)?.lines ?? []
+                        }
                     case .record(let record):
                         guard record.song.source == provider else { throw SubtitleReadError("invalid-response") }
                         lines = try await SubtitleNetwork.shared.lyrics(record, netease: requestPreferences.neteaseAPI, original: originalLines, current: currentSong)

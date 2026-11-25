@@ -2,6 +2,7 @@ import Foundation
 
 enum SubtitleSourceChecks {
     static func run() throws {
+        try checkNavidromePlaybackLyrics()
         let old = try JSONDecoder().decode(SubtitlePreferences.self, from: Data(#"{"enabled":false,"target":"t","convertOriginal":false,"neteaseAPI":"https://example.com/music"}"#.utf8))
         precondition(!old.enabled && !old.convertOriginal && old.target == "t")
         precondition(old.searchNetease && old.searchQQ && old.searchYouTube)
@@ -139,5 +140,36 @@ enum SubtitleSourceChecks {
         do { _ = try YouTubeCaptionDecoders.embeddedObject("unusual traffic /sorry/", name: "ytInitialData"); preconditionFailure("Challenge became no results") }
         catch let error as SubtitleReadError { precondition(error.code == "verification-required") }
         print("PASS: subtitle source migration, NetEase / QQ translations, YouTube manual tracks, pairing, refusal and URL checks")
+    }
+
+    private static func checkNavidromePlaybackLyrics() throws {
+        let account = try NavidromeAccount(server: "https://music.example", username: "fixture", password: "one")
+        let studio = Track(id: "studio", source: .navidrome, title: "Song", artist: "Singer", album: nil, duration: 30)
+        let live = Track(id: "live", source: .navidrome, title: "Song (Live)", artist: "Singer", album: nil, duration: 30)
+        let word = LyricWord(text: "風", startTime: 29, endTime: 31)
+        let line = LyricLine(startTime: 29, endTime: 31, fullText: "風", translation: "风", words: [word])
+        let raw = LyricTimeline(lines: [line])
+        let song = SubtitleSong(id: studio.id, source: "navidrome", title: studio.title, artist: "Singer", durationMs: 30_000)
+        let input = SubtitleInput(song: song, revision: UUID(), loading: false)
+        let loaded = NavidromePlaybackLyrics(account: account, trackID: studio.id, revision: input.revision, timeline: raw)
+        precondition(raw.prepared(for: 30).lines != raw.lines)
+        precondition(loaded.lines(for: studio, account: account, input: input) == [line])
+        precondition(loaded.lines(for: live, account: account, input: input) == nil)
+        let manual = SubtitleInput(song: song, revision: UUID(), loading: false)
+        precondition(loaded.lines(for: studio, account: account, input: manual) == nil)
+        let loading = SubtitleInput(song: song, revision: input.revision, loading: true)
+        precondition(loaded.lines(for: studio, account: account, input: loading) == nil)
+        let local = SubtitleSong(id: studio.id, source: "local", title: studio.title, artist: "Singer", durationMs: 30_000)
+        let localInput = SubtitleInput(song: local, revision: input.revision, loading: false)
+        precondition(loaded.lines(for: studio, account: account, input: localInput) == nil)
+        for (server, user, password) in [("https://other.example", "fixture", "one"),
+            ("https://music.example", "other", "one"), ("https://music.example", "fixture", "two")] {
+            let changed = try NavidromeAccount(server: server, username: user, password: password)
+            precondition(loaded.lines(for: studio, account: changed, input: input) == nil)
+        }
+        let empty = NavidromePlaybackLyrics(account: account, trackID: studio.id, revision: input.revision,
+                                           timeline: LyricTimeline(lines: []))
+        precondition(empty.lines(for: studio, account: account, input: input) == nil)
+        print("PASS: exact Navidrome subtitle response is scoped to its playback revision, source, recording and account")
     }
 }
