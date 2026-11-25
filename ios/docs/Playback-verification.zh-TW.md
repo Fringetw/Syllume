@@ -1,12 +1,31 @@
 # 播放驗證紀錄
 
-獨立分支 `codex/syllume-player-experience`。目前供側載驗證的版本為 0.4.0 build 59（`ec197bd`）。此版本需在 Windows 以 Sideloadly 重簽，iPhone 安裝和播放尚待驗證。
+獨立分支 `codex/syllume-player-experience`。可供 Windows Sideloadly 重簽的版本為 0.4.0 build 60（`b13ae0d`）。iPhone 安裝、實際出聲與行動網路用量待驗。[未簽署 IPA](https://github.com/Fringetw/Syllume/actions/runs/45380143409/artifacts/14914066563)
+
+## build 60 的實際結果
+
+0.3.17 的 iPhone 行動網路診斷記下 14 次 `playbackFailed`，原因碼都是 `providerAuthorizationRequired`。當下的曲目總長 188 秒，播放位置為 0。該次 Navidrome 未登入，內建 M4A 的解碼、暫停與定位檢查通過。以下的 HTTPS 延遲及 WebKit 回歸各自記錄另外重現的故障；原手機上《HELP!!》是否能起播，仍須側載後檢查。
+
+| 驗證環境 | 結果 |
+| --- | --- |
+| 正式 Navidrome HTTPS，iOS 26.4.1 模擬器，首段音訊受控延遲 | build 60 首次主體回應於 12.038 秒放行。同一個 AVPlayerItem 從空緩衝區等候 12.992 秒後，以速率 1.0 起播，畫面記下 13.002 秒。全程未出現逾時或手動重試。這輪 XCTest 為 0/1，原因是讀取測試診斷欄位失敗。已補上 Navidrome 模式的欄位，並新增同一播放項目結束緩衝的斷言。[日誌與失敗斷言](https://github.com/Fringetw/Syllume/actions/runs/45380136119/artifacts/14913813073) · [修正後重驗](https://github.com/Fringetw/Syllume/actions/runs/45441054077) |
+| iOS 18.6，Apple Silicon，模擬媒體及真實播放器 | 28/28，含歌單 5/5、錄影曲目 1/1、一般回歸 21/21、iPhone SE 大字級 1/1。《HELP!!》的本機測試音軌關閉前為 10.621 秒，重開後進到 13.780 秒，定位後由 92.799 前進至 94.814 秒。《JANE DOE》商籟首幀 8.257 秒，《Lemon》商籟 3.368 秒、繪光 2.397 秒。[XCTest 與畫面](https://github.com/Fringetw/Syllume/actions/runs/45380143409/artifacts/14917105112) · [WebKit 日誌](https://github.com/Fringetw/Syllume/actions/runs/45380143409/artifacts/14915421243) |
+| 霧盞資源取樣 | 在同一部 iOS 18.6 模擬器上各取樣 4 秒，共 3 次。App CPU 時間平均 0.383 秒，實體記憶體峰值平均 63,682 kB。實機 FPS、GPU、整機耗電與行動網路流量待量測。[效能測試](https://github.com/Fringetw/Syllume/actions/runs/45380143409/job/138396748518) |
+| iPhone Release | 已查驗 IPA 的 ZIP CRC、ARM64、版本、最低 iOS 17、未內嵌描述檔。內建商籟、YouTube 與字幕資源與提交相符。IPA 的 SHA-256 為 `61dfc2b0c3a3e916b2668e31c816c4b00ac6c13df63c56a4506fa52e20b06a72`。[build 60 IPA](https://github.com/Fringetw/Syllume/actions/runs/45380143409/artifacts/14914066563) |
+
+build 59 的 iOS 26 常規測試為 14/15，五個 HTTP 情境皆完成，包含暫停時定位停傳，網路恢復後停在 7.513 秒、播放速率 0。商籟成功畫出首幀，但歌詞資料在導航中更新時重設已重載標記，該斷言失敗。Apple Silicon iOS 18.6 為 28/28。Intel iOS 18.6 的歌單為 5/5、錄影曲目 0/1、一般回歸 20/21。錄影曲目的商籟未就緒，一般回歸遇到 XCTest 無障礙連線中斷，SE 大字級工作逾時。[iOS 26](https://github.com/Fringetw/Syllume/actions/runs/45375813223/artifacts/14914615277) · [Apple Silicon](https://github.com/Fringetw/Syllume/actions/runs/45375820716/artifacts/14912854815) · [Intel](https://github.com/Fringetw/Syllume/actions/runs/45375813223/artifacts/14918330484)
+
+`a73339c` 的直接 Navidrome 延遲起播 XCTest 通過 1/1，零跳過。串流第一次放行為 12.173 秒。同一個播放項目等候 15.734 秒後以速率 1.0 起播，時鐘由 0.107332 秒前進至 4.500911 秒，未出現逾時。正式 API 另驗證三筆錄音只有一筆精確配對，串流與下載均和原曲逐位元相符，380,160 bytes 可解碼為 29.975 秒。[播放時鐘與截圖](https://github.com/Fringetw/Syllume/actions/runs/45441054077/artifacts/14943742127) · [正式 API](https://github.com/Fringetw/Syllume/actions/runs/45441054077/artifacts/14944381742)
+
+`0964adb` 的 iOS 26 起播回歸通過 9/9，零跳過。商籟首次導航無回應時，10.082 秒執行一次重載，13.330 秒畫出首幀。兩次導航皆無回應、期間收到新歌詞的測試，20.043 秒結束等待並顯示同步歌詞，音樂繼續播放。Intel iOS 18.6 在同一版通過歌單測試 5/5，但《JANE DOE》仍未畫出首幀。該次導航有回應，13.949 秒開始首次繪製，到 25.578 秒達到期限；未執行後續《Lemon》斷言。[iOS 26 九項啟動回歸](https://github.com/Fringetw/Syllume/actions/runs/45441624959/artifacts/14945149528) · [Intel 日誌與測試](https://github.com/Fringetw/Syllume/actions/runs/45441631223/artifacts/14946800154)
 
 ## 延遲音訊起播與商籟首幀
 
 iOS 26 的受控 HTTP 回歸以 `6b5befb` 重現曲庫音源未能起播。第一個 Range 回應為 2 bytes，下一個請求卡在音檔標頭，10.095 秒後才放行。曲庫音源的 5 秒預檢提早結束。XCTest 最後觀察到 `file|timeout`，只記到本機備援的 AVPlayer 時鐘。`ec197bd` 將遠端音源的單次預檢調整至 15 秒，並保留音檔類型與時長檢查及原本的曲庫起播總期限。這個案例涵蓋曲庫音源預檢。Navidrome 直接選曲走另一條播放流程。 [失敗基準、伺服器日誌與畫面](https://github.com/Fringetw/Syllume/actions/runs/45182634249/artifacts/14821104263) · [修正後的起播回歸](https://github.com/Fringetw/Syllume/actions/runs/45375585791)
 
 build 59 的 iOS 26 起播回歸為 2/2。延遲案例在 10.151 秒放行首段資料，AVPlayer 安裝原 HTTP 音源後從等候進入播放。完全停傳的案例收到 0 bytes，仍成功播放本機備援。此測試使用受控的 loopback HTTP，直接 Navidrome HTTPS 另有量測工作。 [兩項回歸的 XCTest、伺服器與 AVPlayer 紀錄](https://github.com/Fringetw/Syllume/actions/runs/45375585791/artifacts/14911208334) · [直接 Navidrome HTTPS 測試](https://github.com/Fringetw/Syllume/actions/runs/45377120738)
+
+直接 Navidrome HTTPS 基準 `04ca691` 使用正式 Navidrome 和 Swift 客戶端，只有測試代理控制回應時間。第一次 AVPlayer Range 收到 2 bytes，主要資料在首次 GET 後 12.155 秒放行。AVPlayer 在未知時長、空緩衝區並保有播放意圖的狀態，先以約 7 秒的期限觸發逾時，XCTest 讀到 `0.000|0.0`。build 60（`b13ae0d`）將遠端初次起播的等待下限改為 16 秒，仍沿用 34 秒上限與既有的播放後停滯規則。 [直接 HTTPS 失敗基準](https://github.com/Fringetw/Syllume/actions/runs/45377120738/artifacts/14913770042) · [修正後相同條件重驗](https://github.com/Fringetw/Syllume/actions/runs/45380136119)
 
 iPhone Release 0.4.0 build 59 已由 Apple Silicon Runner 編譯。已核對 ZIP、ARM64、最低 iOS 17、未簽署狀態與內建離線資源。SHA-256 為 `E2EB0FD6A72870F3D9911DFFAD51AED8381C199EF1DC8A2007F61FE8CF6B66EE`。 [build 59 IPA](https://github.com/Fringetw/Syllume/actions/runs/45375820716/artifacts/14912415429)
 
