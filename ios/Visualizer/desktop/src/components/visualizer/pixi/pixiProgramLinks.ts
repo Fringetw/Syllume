@@ -51,9 +51,22 @@ const programsOf = (pixi: PixiModule, renderer: WebGLRenderer, stage: Container)
         const program = shader?.glProgram;
         if (program && !found.has(program._key)) found.set(program._key, program);
     };
-    let drawsGraphics = false;
+    const batch = new pixi.DefaultBatcher({ maxTextures: renderer.limits.maxBatchableTextures }).shader;
     const walk = (node: Container) => {
+        // renderFrame has selected the visible shot, but Pixi hasn't propagated global flags yet.
+        // Check each ancestor's local flags so an inactive shot excludes all its descendants.
+        if (node.localDisplayStatus < 7 || !node.includeInBuild) return;
+        if (node instanceof pixi.Mesh) add(node.shader);
+        if (node instanceof pixi.Graphics) {
+            const pipe = renderer.renderPipes.graphics as unknown as { _adaptor: { shader: Shader } };
+            add(node.context.customShader ?? pipe._adaptor.shader);
+        }
+        if (node instanceof pixi.Sprite || node instanceof pixi.Text) add(batch);
+        node.children.forEach(walk);
+        // FilterPipe composites on pop, after drawing the container's contents. FilterSystem
+        // skips disabled filters altogether, including any blur/bloom passes they own.
         for (const filter of node.filters ?? []) {
+            if (!filter.enabled) continue;
             add(filter);
             for (const field of Object.values(filter)) {
                 for (const value of Array.isArray(field) ? field : [field]) {
@@ -61,19 +74,12 @@ const programsOf = (pixi: PixiModule, renderer: WebGLRenderer, stage: Container)
                 }
             }
         }
-        if (node instanceof pixi.Mesh) add(node.shader);
-        if (node instanceof pixi.Graphics) {
-            if (node.context.customShader) add(node.context.customShader);
-            else drawsGraphics = true;
-        }
-        node.children.forEach(walk);
     };
     walk(stage);
     // The batch program is one for the page, made with its first batcher: a batcher made here makes it,
     // or hands back the one there is. Left to the first draw, its link was waited for behind every draw
     // queued before it.
-    add(new pixi.DefaultBatcher({ maxTextures: renderer.limits.maxBatchableTextures }).shader);
-    if (drawsGraphics) add((renderer.renderPipes.graphics as unknown as { _adaptor: { shader: Shader } })._adaptor.shader);
+    add(batch);
     if (renderer.backBuffer.useBackBuffer) add((renderer.backBuffer as unknown as { _bigTriangleShader: Shader })._bigTriangleShader);
     return [...found.values()];
 };

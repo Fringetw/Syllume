@@ -13,6 +13,7 @@ function shaderFixture(t, { complete = () => false, supportsParallel = true } = 
     t.after(() => { delete globalThis.window; });
 
     class Shader {
+        enabled = true;
         constructor(key) { this.glProgram = { _key: key, vertex: '#version 300 es\n', fragment: '' }; }
     }
     class GlProgramData {
@@ -41,7 +42,8 @@ function shaderFixture(t, { complete = () => false, supportsParallel = true } = 
         isContextLost: () => false,
     };
     const pixi = {
-        VERSION: '8.21.0', RendererType: { WEBGL: 1 }, Shader, Mesh: class {}, Graphics: class {}, GlProgramData,
+        VERSION: '8.21.0', RendererType: { WEBGL: 1 }, Shader, Mesh: class {}, Graphics: class {},
+        Sprite: class {}, Text: class {}, GlProgramData,
         DefaultBatcher: class { shader = new Shader(2); },
         compileShader(_gl, type) {
             const shader = { type, id: allocatedShaders.length };
@@ -53,7 +55,7 @@ function shaderFixture(t, { complete = () => false, supportsParallel = true } = 
     const previous = {};
     const cache = { 3: previous };
     const renderer = { type: 1, gl, shader: { _programDataHash: cache }, limits: { maxBatchableTextures: 8 }, backBuffer: {} };
-    const stage = { children: [], filters: [new Shader(1), new Shader(3)] };
+    const stage = { localDisplayStatus: 7, includeInBuild: true, children: [], filters: [new Shader(1), new Shader(3)] };
 
     async function finish(promise) {
         let settled = false;
@@ -97,6 +99,39 @@ test('completed shader warmup caches linked programs and keeps their GL programs
     assert.deepEqual(gl.deletedShaders, gl.allocatedShaders);
     assert.deepEqual([gl.cache[1].program, gl.cache[2].program], gl.allocatedPrograms);
     assert.equal(gl.cache[3], gl.previous);
+});
+
+test('first draw skips disabled filters, their passes and hidden shots until they become active', async t => {
+    const gl = shaderFixture(t, { complete: () => true });
+    const { Shader } = gl.pixi;
+    const transition = new Shader(4);
+    transition.enabled = false;
+    transition.passes = [new Shader(5), new Shader(6)];
+    const hiddenShot = { localDisplayStatus: 5, includeInBuild: true, children: [], filters: [new Shader(7)] };
+    gl.stage.filters.push(transition);
+    gl.stage.children.push(hiddenShot);
+
+    const warm = () => gl.finish(linkPixiPrograms(gl.pixi, gl.renderer, gl.stage, 'test', undefined, 25));
+    assert.equal(await warm(), true);
+    assert.equal(gl.allocatedPrograms.length, 2);
+    assert.deepEqual(Object.keys(gl.cache), ['1', '2', '3']);
+
+    transition.enabled = true;
+    hiddenShot.localDisplayStatus = 7;
+    assert.equal(await warm(), true);
+    assert.equal(gl.allocatedPrograms.length, 6);
+    assert.deepEqual(Object.keys(gl.cache), ['1', '2', '3', '4', '5', '6', '7']);
+});
+
+test('submits visible child geometry before the filter that composites it', async t => {
+    const gl = shaderFixture(t, { complete: () => true });
+    const mesh = Object.assign(new gl.pixi.Mesh(), {
+        localDisplayStatus: 7, includeInBuild: true, shader: new gl.pixi.Shader(4), children: [],
+    });
+    const sprite = Object.assign(new gl.pixi.Sprite(), { localDisplayStatus: 7, includeInBuild: true, children: [] });
+    gl.stage.children.push(mesh, sprite);
+    assert.equal(await gl.finish(linkPixiPrograms(gl.pixi, gl.renderer, gl.stage, 'test', undefined, 25)), true);
+    assert.deepEqual(gl.allocatedPrograms, [gl.cache[4].program, gl.cache[2].program, gl.cache[1].program]);
 });
 
 test('shader warmup hands off a completed link behind an unfinished earlier program', async t => {
